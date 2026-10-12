@@ -1,0 +1,42 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Same as integration-tests-base.yaml, but backed by hop-beam-image, which adds the Hop fat jar
+# at /tmp/hop-fatjar.jar. Only the Beam-based projects (spark, flink, gcp) extend this service.
+# hop-beam-image is FROM hop-base-image, so the base image must be built first (run-tests-docker.sh
+# builds the base image up-front and this beam image on demand when a Beam project runs).
+services:
+  integration_test:
+    image: hop-beam-image
+    build:
+      context: ../../.
+      dockerfile: docker/integration-tests/unit-tests-beam.Dockerfile
+      args:
+        HOP_SPARK_CLIENT_VERSION: ${HOP_SPARK_CLIENT_VERSION:-}
+    volumes:
+      - ../../integration-tests/:/files
+      # Same GCP key mount as integration-tests-base.yaml: hop-beam-image is FROM hop-base-image,
+      # so it only carries the placeholder and needs the real key mounted in as well.
+      - ${GCP_KEY_HOST_PATH:-./resource/dummyfile}:/tmp/google-key-apache-hop-it.json:ro
+    environment:
+      - FLASK_ENV=docker
+      # Keep driver Spark client pack in sync with the fat jar (empty = default pack)
+      - HOP_SPARK_CLIENT_VERSION=${HOP_SPARK_CLIENT_VERSION:-}
+      # Optional workflow basename filter (substring or glob). Set by run-tests-docker.sh.
+      - TEST_FILTER=${TEST_FILTER:-}
+      - SKIP_GOOGLE_SHEETS=${SKIP_GOOGLE_SHEETS:-false}
+    command: [ "bash", "-c", "/files/scripts/run-tests.sh ${PROJECT_NAME}" ]

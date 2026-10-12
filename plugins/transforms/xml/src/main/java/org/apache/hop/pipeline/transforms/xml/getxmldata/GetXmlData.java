@@ -1,0 +1,1263 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.pipeline.transforms.xml.getxmldata;
+
+import static org.apache.hop.pipeline.transforms.xml.getxmldata.GetXmlDataField.getElementTypeDesc;
+import static org.apache.hop.pipeline.transforms.xml.getxmldata.GetXmlDataField.getResultTypeCode;
+
+import java.io.InputStream;
+import java.io.StringReader;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.zip.GZIPInputStream;
+import org.apache.commons.vfs2.FileObject;
+import org.apache.commons.vfs2.FileSystemException;
+import org.apache.hc.client5.http.classic.HttpClient;
+import org.apache.hc.client5.http.classic.methods.HttpGet;
+import org.apache.hc.core5.http.ClassicHttpResponse;
+import org.apache.hc.core5.http.Header;
+import org.apache.hc.core5.http.HttpEntity;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.ResultFile;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.exception.HopRuntimeException;
+import org.apache.hop.core.exception.HopTransformException;
+import org.apache.hop.core.fileinput.FileInputList;
+import org.apache.hop.core.io.CountingInputStream;
+import org.apache.hop.core.row.IRowMeta;
+import org.apache.hop.core.row.IValueMeta;
+import org.apache.hop.core.row.RowDataUtil;
+import org.apache.hop.core.row.RowMeta;
+import org.apache.hop.core.row.value.ValueMetaFactory;
+import org.apache.hop.core.util.HttpClientManager;
+import org.apache.hop.core.util.Utils;
+import org.apache.hop.core.vfs.HopVfs;
+import org.apache.hop.i18n.BaseMessages;
+import org.apache.hop.lineage.LineageFileIoEmitter;
+import org.apache.hop.lineage.LineageHttpIoEmitter;
+import org.apache.hop.lineage.model.FileIoContentSchema;
+import org.apache.hop.lineage.model.FileIoOperation;
+import org.apache.hop.lineage.model.FileIoPathSyntax;
+import org.apache.hop.lineage.model.FileIoTabularColumn;
+import org.apache.hop.lineage.model.HttpDirection;
+import org.apache.hop.lineage.model.HttpLineagePayload;
+import org.apache.hop.pipeline.Pipeline;
+import org.apache.hop.pipeline.PipelineMeta;
+import org.apache.hop.pipeline.transform.BaseTransform;
+import org.apache.hop.pipeline.transform.TransformMeta;
+import org.apache.hop.pipeline.transforms.xml.Dom4JUtil;
+import org.dom4j.Element;
+import org.dom4j.ElementHandler;
+import org.dom4j.ElementPath;
+import org.dom4j.Namespace;
+import org.dom4j.Node;
+import org.dom4j.XPath;
+import org.dom4j.io.SAXReader;
+import org.dom4j.tree.AbstractNode;
+
+/**
+ * Read XML files, parse them and convert them to rows and writes these to one or more output
+ * streams.
+ */
+public class GetXmlData extends BaseTransform<GetXmlDataMeta, GetXmlDataData> {
+  private static final Class<?> PKG = GetXmlDataMeta.class;
+  public static final String CONST_GET_XMLDATA_LOG_UNABLE_CREATE_DOCUMENT =
+      "GetXMLData.Log.UnableCreateDocument";
+  public static final String CONST_GET_XMLDATA_LOG_LOOP_FILE_OCCURENCES =
+      "GetXMLData.Log.LoopFileOccurences";
+  public static final String CONST_GET_XMLDATA_LOG_UNABLE_APPLY_XPATH =
+      "GetXMLData.Log.UnableApplyXPath";
+
+  private Object[] prevRow = null; // A pre-allocated spot for the previous row
+
+  public GetXmlData(
+      TransformMeta transformMeta,
+      GetXmlDataMeta meta,
+      GetXmlDataData data,
+      int copyNr,
+      PipelineMeta pipelineMeta,
+      Pipeline trans) {
+    super(transformMeta, meta, data, copyNr, pipelineMeta, trans);
+  }
+
+  protected boolean setDocument(
+      String stringXML, FileObject file, boolean isInXMLField, boolean readurl)
+      throws HopException {
+
+    this.prevRow = buildEmptyRow(); // pre-allocate previous row
+
+    try {
+      SAXReader reader = Dom4JUtil.getSAXReader();
+      data.stopPruning = false;
+      // Validate XML against specified schema?
+      if (meta.isValidating()) {
+        reader.setValidation(true);
+        reader.setFeature("http://apache.org/xml/features/validation/schema", true);
+      } else {
+        // Ignore DTD declarations
+        reader.setEntityResolver(new IgnoreDtdEntityResolver());
+      }
+
+      // Ignore comments?
+      if (meta.isIgnoreComments()) {
+        reader.setIgnoreComments(true);
+      }
+
+      if (data.prunePath != null) {
+        // when pruning is on: reader.read() below will wait until all is processed in the handler
+        if (isDetailed()) {
+          logDetailed(BaseMessages.getString(PKG, "GetXMLData.Log.StreamingMode.Activated"));
+        }
+        if (data.PathValue.equals(data.prunePath)) {
+          // Edge case, but if true, there will only ever be one item in the list
+          data.an = new ArrayList<>(1); // pre-allocate array and sizes
+          data.an.add(null);
+        }
+        reader.addHandler(
+            data.prunePath,
+            new ElementHandler() {
+              @Override
+              public void onStart(ElementPath path) {
+                // do nothing here...
+              }
+
+              @Override
+              public void onEnd(ElementPath path) {
+                long rowLimit = meta.getRowLimit();
+                if (isStopped() || (rowLimit > 0 && data.rownr > rowLimit)) {
+                  // when a large file is processed and it should be stopped it is still reading the
+                  // hole thing
+                  // the only solution I see is to prune / detach the document and this will lead
+                  // into a
+                  // NPE or other errors depending on the parsing location - this will be treated in
+                  // the catch part below
+                  // any better idea is welcome
+                  if (isBasic()) {
+                    logBasic(BaseMessages.getString(PKG, "GetXMLData.Log.StreamingMode.Stopped"));
+                  }
+                  data.stopPruning = true;
+                  path.getCurrent().getDocument().detach(); // trick to stop reader
+                  return;
+                }
+
+                // process a ROW element
+                if (isDebug()) {
+                  logDebug(
+                      BaseMessages.getString(PKG, "GetXMLData.Log.StreamingMode.StartProcessing"));
+                }
+                Element row = path.getCurrent();
+                try {
+                  // Pass over the row instead of just the document. If
+                  // if there's only one row, there's no need to
+                  // go back to the whole document.
+                  processStreaming(row);
+                } catch (Exception e) {
+                  // catch the HopException or others and forward to caller, e.g. when applyXPath()
+                  // has a problem
+                  throw new HopRuntimeException(e);
+                }
+                // prune the tree
+                row.detach();
+                if (isDebug()) {
+                  logDebug(
+                      BaseMessages.getString(PKG, "GetXMLData.Log.StreamingMode.EndProcessing"));
+                }
+              }
+            });
+      }
+
+      if (isInXMLField) {
+        // read string to parse
+        data.document = reader.read(new StringReader(stringXML));
+      } else if (readurl && HopVfs.startsWithScheme(stringXML, variables)) {
+        CountingInputStream countingIs =
+            new CountingInputStream(HopVfs.getInputStream(stringXML, variables));
+        try {
+          data.document = reader.read(countingIs);
+          long bytesRead = countingIs.getCount();
+          dataVolumeIn = (dataVolumeIn != null ? dataVolumeIn : 0L) + bytesRead;
+          if (bytesRead > 0) {
+            try {
+              FileObject src = HopVfs.getFileObject(stringXML, variables);
+              LineageFileIoEmitter.emitTransformFileIo(
+                  this,
+                  FileIoOperation.READ,
+                  src,
+                  null,
+                  bytesRead,
+                  true,
+                  null,
+                  xmlFileReadContentSchema());
+            } catch (Exception ignored) {
+              // optional lineage
+            }
+          }
+        } finally {
+          BaseTransform.closeQuietly(countingIs);
+        }
+      } else if (readurl) {
+        long httpStart = System.currentTimeMillis();
+        Integer httpStatus = null;
+        Long httpRespBytes = null;
+        boolean httpOk = false;
+        ClassicHttpResponse response = null;
+        try {
+          HttpClient client = HttpClientManager.getInstance().createDefaultClient();
+          HttpGet method = new HttpGet(stringXML);
+          method.addHeader("Accept-Encoding", "gzip");
+          response = (ClassicHttpResponse) client.execute(method);
+          httpStatus = response.getCode();
+          Header contentEncoding = response.getFirstHeader("Content-Encoding");
+          HttpEntity responseEntity = response.getEntity();
+          if (responseEntity != null) {
+            if (contentEncoding != null) {
+              String acceptEncodingValue = contentEncoding.getValue();
+              if (acceptEncodingValue.contains("gzip")) {
+                CountingInputStream countingIn =
+                    new CountingInputStream(new GZIPInputStream(responseEntity.getContent()));
+                data.document = reader.read(countingIn);
+                httpRespBytes = countingIn.getCount();
+              }
+            } else {
+              CountingInputStream countingIn = new CountingInputStream(responseEntity.getContent());
+              data.document = reader.read(countingIn);
+              httpRespBytes = countingIn.getCount();
+            }
+          }
+          httpOk = true;
+        } finally {
+          try {
+            LineageHttpIoEmitter.emitTransformHttpIo(
+                this,
+                new HttpLineagePayload(
+                    HttpDirection.CLIENT,
+                    "GET",
+                    stringXML,
+                    httpStatus,
+                    null,
+                    httpRespBytes != null && httpRespBytes > 0 ? httpRespBytes : null,
+                    System.currentTimeMillis() - httpStart,
+                    httpOk,
+                    null));
+          } catch (Exception ignored) {
+            // optional lineage
+          }
+          if (response != null) {
+            try {
+              response.close();
+            } catch (Exception ignored) {
+              // optional
+            }
+          }
+        }
+      } else {
+        // get encoding. By default UTF-8
+        String encoding = Const.UTF_8;
+        if (!Utils.isEmpty(meta.getEncoding())) {
+          encoding = meta.getEncoding();
+        }
+        InputStream is = HopVfs.getInputStream(file);
+        CountingInputStream countingIs = new CountingInputStream(is);
+        try {
+          reader.setEncoding(encoding);
+          data.document = reader.read(countingIs);
+          long bytesRead = countingIs.getCount();
+          dataVolumeIn = (dataVolumeIn != null ? dataVolumeIn : 0L) + bytesRead;
+          if (file != null && bytesRead > 0) {
+            try {
+              LineageFileIoEmitter.emitTransformFileIo(
+                  this,
+                  FileIoOperation.READ,
+                  file,
+                  null,
+                  bytesRead,
+                  true,
+                  null,
+                  xmlFileReadContentSchema());
+            } catch (Exception ignored) {
+              // optional lineage
+            }
+          }
+        } finally {
+          BaseTransform.closeQuietly(countingIs);
+        }
+      }
+
+      if (meta.isNameSpaceAware()) {
+        prepareNSMap(data.document.getRootElement());
+      }
+    } catch (Exception e) {
+      if (data.stopPruning) {
+        // ignore error when pruning
+        return false;
+      } else {
+        throw new HopException(e);
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Process chunk of data in streaming mode. Called only by the handler when pruning is true. Not
+   * allowed in combination with meta.getIsInFields(), but could be redesigned later on.
+   */
+  private void processStreaming(Element row) throws HopException {
+    data.document = row.getDocument();
+
+    if (meta.isNameSpaceAware()) {
+      prepareNSMap(data.document.getRootElement());
+    }
+    if (isDebug()) {
+      logDebug(BaseMessages.getString(PKG, "GetXMLData.Log.StreamingMode.ApplyXPath"));
+    }
+    // If the prune path and the path are the same, then
+    // we're processing one row at a time through here.
+    if (data.PathValue.equals(data.prunePath)) {
+      data.an.set(0, (AbstractNode) row);
+      data.nodesize = 1; // it's always just one row.
+      data.nodenr = 0;
+      if (isDebug()) {
+        logDebug(BaseMessages.getString(PKG, "GetXMLData.Log.StreamingMode.ProcessingRows"));
+      }
+      Object[] r = getXmlRowPutRowWithErrorhandling();
+      if (!data.errorInRowButContinue) { // do not put out the row but continue
+        putRowOut(
+            r); // false when limit is reached, functionality is there but we can not stop reading
+        // the hole file
+        // (slow but works)
+      }
+      data.nodesize = 0;
+      data.nodenr = 0;
+      return;
+    } else {
+      if (!applyXPath()) {
+        throw new HopException(
+            BaseMessages.getString(PKG, CONST_GET_XMLDATA_LOG_UNABLE_APPLY_XPATH));
+      }
+    }
+    // main loop through the data until limit is reached or transformation is stopped
+    // similar functionality like in BaseTransform.runTransformThread
+    if (isDebug()) {
+      logDebug(BaseMessages.getString(PKG, "GetXMLData.Log.StreamingMode.ProcessingRows"));
+    }
+    boolean cont = true;
+    while (data.nodenr < data.nodesize && cont && !isStopped()) {
+      Object[] r = getXmlRowPutRowWithErrorhandling();
+      if (data.errorInRowButContinue) {
+        continue; // do not put out the row but continue
+      }
+      cont =
+          putRowOut(
+              r); // false when limit is reached, functionality is there but we can not stop reading
+      // the hole
+      // file (slow but works)
+    }
+    if (isDebug()) {
+      logDebug(BaseMessages.getString(PKG, "GetXMLData.Log.StreamingMode.FreeMemory"));
+    }
+    // free allocated memory
+    data.an.clear();
+    data.nodesize = data.an.size();
+    data.nodenr = 0;
+  }
+
+  public void prepareNSMap(Element l) {
+    List<Namespace> namespacesList = l.declaredNamespaces();
+    for (Namespace ns : namespacesList) {
+      if (ns.getPrefix().trim().isEmpty()) {
+        data.NAMESPACE.put("pre" + data.NSPath.size(), ns.getURI());
+        String path = "";
+        Element element = l;
+        while (element != null) {
+          if (!Utils.isEmpty(element.getNamespacePrefix())) {
+            path =
+                GetXmlDataMeta.N0DE_SEPARATOR
+                    + element.getNamespacePrefix()
+                    + ":"
+                    + element.getName()
+                    + path;
+          } else {
+            path = GetXmlDataMeta.N0DE_SEPARATOR + element.getName() + path;
+          }
+          element = element.getParent();
+        }
+        data.NSPath.add(path);
+      } else {
+        data.NAMESPACE.put(ns.getPrefix(), ns.getURI());
+      }
+    }
+
+    List<Element> elementsList = l.elements();
+    for (Element e : elementsList) {
+      prepareNSMap(e);
+    }
+  }
+
+  /**
+   * Build an empty row based on the meta-data.
+   *
+   * @return empty row built
+   */
+  private Object[] buildEmptyRow() {
+    return RowDataUtil.allocateRowData(data.outputRowMeta.size());
+  }
+
+  private void handleMissingFiles() throws HopException {
+    List<FileObject> nonExistantFiles = data.files.getNonExistentFiles();
+    if (!nonExistantFiles.isEmpty()) {
+      String message = FileInputList.getRequiredFilesDescription(nonExistantFiles);
+      logError(
+          BaseMessages.getString(PKG, "GetXMLData.Log.RequiredFilesTitle"),
+          BaseMessages.getString(PKG, "GetXMLData.Log.RequiredFiles", message));
+
+      throw new HopException(
+          BaseMessages.getString(PKG, "GetXMLData.Log.RequiredFilesMissing", message));
+    }
+
+    List<FileObject> nonAccessibleFiles = data.files.getNonAccessibleFiles();
+    if (!nonAccessibleFiles.isEmpty()) {
+      String message = FileInputList.getRequiredFilesDescription(nonAccessibleFiles);
+      logError(
+          BaseMessages.getString(PKG, "GetXMLData.Log.RequiredFilesTitle"),
+          BaseMessages.getString(PKG, "GetXMLData.Log.RequiredNotAccessibleFiles", message));
+
+      throw new HopException(
+          BaseMessages.getString(PKG, "GetXMLData.Log.RequiredNotAccessibleFilesMissing", message));
+    }
+  }
+
+  private boolean ReadNextString() {
+
+    // Loop so that, when error handling is enabled, we can skip an offending input row and
+    // immediately continue with the next one without recursing.
+    while (true) {
+      try {
+        // Grab another row ...
+        data.readrow = getRow();
+
+        if (data.readrow == null) {
+          // finished processing!
+
+          if (isDetailed()) {
+            logDetailed(BaseMessages.getString(PKG, "GetXMLData.Log.FinishedProcessing"));
+          }
+          return false;
+        }
+
+        if (first) {
+          first = false;
+
+          data.nrReadRow = getInputRowMeta().size();
+          data.inputRowMeta = getInputRowMeta();
+          data.outputRowMeta = data.inputRowMeta.clone();
+          meta.getFields(
+              data.outputRowMeta, getTransformName(), null, null, this, metadataProvider);
+
+          // Get total previous fields
+          data.totalpreviousfields = data.inputRowMeta.size();
+
+          // Create convert meta-data objects that will contain Date & Number formatters
+          data.convertRowMeta = new RowMeta();
+          for (IValueMeta valueMeta : data.convertRowMeta.getValueMetaList()) {
+            data.convertRowMeta.addValueMeta(
+                ValueMetaFactory.cloneValueMeta(valueMeta, IValueMeta.TYPE_STRING));
+          }
+
+          // For String to <type> conversions, we allocate a conversion meta data row as well...
+          //
+          data.convertRowMeta = data.outputRowMeta.cloneToType(IValueMeta.TYPE_STRING);
+
+          // Check is XML field is provided
+          if (Utils.isEmpty(meta.getXmlField())) {
+            logError(BaseMessages.getString(PKG, "GetXMLData.Log.NoField"));
+            throw new HopException(BaseMessages.getString(PKG, "GetXMLData.Log.NoField"));
+          }
+
+          // cache the position of the field
+          if (data.indexOfXmlField < 0) {
+            data.indexOfXmlField = getInputRowMeta().indexOfValue(meta.getXmlField());
+            if (data.indexOfXmlField < 0) {
+              // The field is unreachable !
+              logError(
+                  BaseMessages.getString(
+                      PKG, "GetXMLData.Log.ErrorFindingField", meta.getXmlField()));
+              throw new HopException(
+                  BaseMessages.getString(
+                      PKG, "GetXMLData.Exception.CouldnotFindField", meta.getXmlField()));
+            }
+          }
+        }
+
+        if (meta.isInFields()) {
+          // get XML field value
+          String fieldvalue = getInputRowMeta().getString(data.readrow, data.indexOfXmlField);
+
+          if (isDetailed()) {
+            logDetailed(
+                BaseMessages.getString(
+                    PKG, "GetXMLData.Log.XMLStream", meta.getXmlField(), fieldvalue));
+          }
+
+          try {
+            if (meta.isAFile()) {
+              FileObject file = null;
+              try {
+                // XML source is a file.
+                file = HopVfs.getFileObject(resolve(fieldvalue), variables);
+
+                if (meta.isIgnoreEmptyFile() && file.getContent().getSize() == 0) {
+                  logBasic(
+                      BaseMessages.getString(
+                          PKG, "GetXMLData.Error.FileSizeZero", "" + file.getName()));
+                  continue;
+                }
+
+                // Open the XML document
+                if (!setDocument(null, file, false, false)) {
+                  throw new HopException(
+                      BaseMessages.getString(PKG, CONST_GET_XMLDATA_LOG_UNABLE_CREATE_DOCUMENT));
+                }
+
+                if (!applyXPath()) {
+                  throw new HopException(
+                      BaseMessages.getString(PKG, CONST_GET_XMLDATA_LOG_UNABLE_APPLY_XPATH));
+                }
+
+                addFileToResultFilesname(file);
+
+                if (isDetailed()) {
+                  logDetailed(
+                      BaseMessages.getString(
+                          PKG,
+                          CONST_GET_XMLDATA_LOG_LOOP_FILE_OCCURENCES,
+                          "" + data.nodesize,
+                          file.getName().getBaseName()));
+                }
+
+              } catch (Exception e) {
+                throw new HopException(e);
+              } finally {
+                try {
+                  if (file != null) {
+                    file.close();
+                  }
+                } catch (Exception e) {
+                  // Ignore close errors
+                }
+              }
+            } else {
+              boolean url = false;
+              boolean xmltring = true;
+              if (meta.isReadUrl()) {
+                url = true;
+                xmltring = false;
+              }
+
+              // Open the XML document
+              if (!setDocument(fieldvalue, null, xmltring, url)) {
+                throw new HopException(
+                    BaseMessages.getString(PKG, CONST_GET_XMLDATA_LOG_UNABLE_CREATE_DOCUMENT));
+              }
+
+              // Apply XPath and set node list
+              if (!applyXPath()) {
+                throw new HopException(
+                    BaseMessages.getString(PKG, CONST_GET_XMLDATA_LOG_UNABLE_APPLY_XPATH));
+              }
+              if (isDetailed()) {
+                logDetailed(
+                    BaseMessages.getString(
+                        PKG, CONST_GET_XMLDATA_LOG_LOOP_FILE_OCCURENCES, "" + data.nodesize));
+              }
+            }
+          } catch (HopException e) {
+            // A problem while reading or parsing the XML coming from the input field is a
+            // per-row data error (e.g. the field is null or the content is not valid XML).
+            // When error handling is enabled, divert the offending input row to the error
+            // stream and continue with the next one instead of aborting the whole transform.
+            if (getTransformMeta().isDoingErrorHandling()) {
+              // Keep the same row structure processPutRow() uses so both error paths align.
+              Object[] errorRowData =
+                  RowDataUtil.createResizedCopy(data.readrow, data.outputRowMeta.size());
+              putError(
+                  data.outputRowMeta,
+                  errorRowData,
+                  1,
+                  e.toString(),
+                  meta.getXmlField(),
+                  "GetXMLData002");
+              continue;
+            }
+            throw e;
+          }
+        }
+        return true;
+      } catch (Exception e) {
+        logError(BaseMessages.getString(PKG, "GetXMLData.Log.UnexpectedError", e.toString()));
+        stopAll();
+        logError(Const.getStackTracker(e));
+        setErrors(1);
+        return false;
+      }
+    }
+  }
+
+  private void addFileToResultFilesname(FileObject file) {
+    if (meta.isAddResultFile()) {
+      // Add this to the result file names...
+      ResultFile resultFile =
+          new ResultFile(
+              ResultFile.FILE_TYPE_GENERAL, file, getPipelineMeta().getName(), getTransformName());
+      resultFile.setComment(BaseMessages.getString(PKG, "GetXMLData.Log.FileAddedResult"));
+      addResultFile(resultFile);
+    }
+  }
+
+  public String addNSPrefix(String path, String loopPath) {
+    if (!data.NSPath.isEmpty()) {
+      String fullPath = loopPath;
+      if (!path.equals(fullPath)) {
+        for (String tmp : path.split(GetXmlDataMeta.N0DE_SEPARATOR)) {
+          if (tmp.equals("src/main")) {
+            fullPath = fullPath.substring(0, fullPath.lastIndexOf(GetXmlDataMeta.N0DE_SEPARATOR));
+          } else {
+            fullPath += GetXmlDataMeta.N0DE_SEPARATOR + tmp;
+          }
+        }
+      }
+      int[] indexs = new int[fullPath.split(GetXmlDataMeta.N0DE_SEPARATOR).length - 1];
+      java.util.Arrays.fill(indexs, -1);
+      int length = 0;
+      for (int i = 0; i < data.NSPath.size(); i++) {
+        if (data.NSPath.get(i).length() > length && fullPath.startsWith(data.NSPath.get(i))) {
+          java.util.Arrays.fill(
+              indexs,
+              data.NSPath.get(i).split(GetXmlDataMeta.N0DE_SEPARATOR).length - 2,
+              indexs.length,
+              i);
+          length = data.NSPath.get(i).length();
+        }
+      }
+
+      StringBuilder newPath = new StringBuilder();
+      String[] pathStrs = path.split(GetXmlDataMeta.N0DE_SEPARATOR);
+      for (int i = 0; i < pathStrs.length; i++) {
+        String tmp = pathStrs[i];
+        if (!newPath.isEmpty()) {
+          newPath.append(GetXmlDataMeta.N0DE_SEPARATOR);
+        }
+        if (!tmp.isEmpty()
+            && !tmp.contains(":")
+            && !tmp.contains(".")
+            && !tmp.contains(GetXmlDataMeta.AT)) {
+          int index = indexs[i + indexs.length - pathStrs.length];
+          if (index >= 0) {
+            newPath.append("pre").append(index).append(":").append(tmp);
+          } else {
+            newPath.append(tmp);
+          }
+        } else {
+          newPath.append(tmp);
+        }
+      }
+      return newPath.toString();
+    }
+    return path;
+  }
+
+  private boolean applyXPath() {
+    try {
+      XPath xpath = data.document.createXPath(data.PathValue);
+      if (meta.isNameSpaceAware()) {
+        xpath = data.document.createXPath(addNSPrefix(data.PathValue, data.PathValue));
+        xpath.setNamespaceURIs(data.NAMESPACE);
+      }
+      // get nodes list
+      data.an = xpath.selectNodes(data.document);
+      data.nodesize = data.an.size();
+      data.nodenr = 0;
+    } catch (Exception e) {
+      logError(BaseMessages.getString(PKG, "GetXMLData.Log.ErrorApplyXPath", e.getMessage()));
+      return false;
+    }
+    return true;
+  }
+
+  private boolean openNextFile() throws HopTransformException {
+    int fileNrOnEntry = data.filenr;
+    try {
+      if (data.filenr >= data.files.nrOfFiles()) {
+        // finished processing!
+
+        if (isDetailed()) {
+          logDetailed(BaseMessages.getString(PKG, "GetXMLData.Log.FinishedProcessing"));
+        }
+        return false;
+      }
+      // get file
+      data.file = data.files.getFile(data.filenr);
+      data.filename = HopVfs.getFilename(data.file);
+      // Add additional fields?
+      if (!Utils.isEmpty(meta.getShortFileFieldName())) {
+        data.shortFilename = data.file.getName().getBaseName();
+      }
+      if (!Utils.isEmpty(meta.getPathFieldName())) {
+        data.path = HopVfs.getFilename(data.file.getParent());
+      }
+      if (!Utils.isEmpty(meta.getHiddenFieldName())) {
+        data.hidden = data.file.isHidden();
+      }
+      if (!Utils.isEmpty(meta.getExtensionFieldName())) {
+        data.extension = data.file.getName().getExtension();
+      }
+      if (meta.getLastModificationTimeFieldName() != null
+          && !meta.getLastModificationTimeFieldName().isEmpty()) {
+        data.lastModificationDateTime = new Date(data.file.getContent().getLastModifiedTime());
+      }
+      if (!Utils.isEmpty(meta.getUriNameFieldName())) {
+        data.uriName = data.file.getName().getURI();
+      }
+      if (!Utils.isEmpty(meta.getRootUriNameFieldName())) {
+        data.rootUriName = data.file.getName().getRootURI();
+      }
+      // Check if file is empty
+      long fileSize;
+      try {
+        fileSize = data.file.getContent().getSize();
+      } catch (FileSystemException e) {
+        fileSize = -1;
+      }
+
+      if (!Utils.isEmpty(meta.getSizeFieldName())) {
+        data.size = fileSize;
+      }
+      // Move file pointer ahead!
+      data.filenr++;
+
+      if (meta.isIgnoreEmptyFile() && fileSize == 0) {
+        // log only basic as a warning (was before logError)
+        logBasic(
+            BaseMessages.getString(PKG, "GetXMLData.Error.FileSizeZero", "" + data.file.getName()));
+        openNextFile();
+
+      } else {
+        if (isDetailed()) {
+          logDetailed(
+              BaseMessages.getString(PKG, "GetXMLData.Log.OpeningFile", data.file.toString()));
+        }
+
+        // Open the XML document
+        if (!setDocument(null, data.file, false, false)) {
+          if (data.stopPruning) {
+            return false; // ignore error when stopped while pruning
+          }
+          throw new HopException(
+              BaseMessages.getString(PKG, CONST_GET_XMLDATA_LOG_UNABLE_CREATE_DOCUMENT));
+        }
+
+        // Apply XPath and set node list
+        if (data.prunePath == null
+            && !applyXPath()) { // this was already done in processStreaming()
+          throw new HopException(
+              BaseMessages.getString(PKG, CONST_GET_XMLDATA_LOG_UNABLE_APPLY_XPATH));
+        }
+
+        addFileToResultFilesname(data.file);
+
+        if (isDetailed()) {
+          logDetailed(
+              BaseMessages.getString(PKG, "GetXMLData.Log.FileOpened", data.file.toString()));
+          logDetailed(
+              BaseMessages.getString(
+                  PKG,
+                  CONST_GET_XMLDATA_LOG_LOOP_FILE_OCCURENCES,
+                  "" + data.nodesize,
+                  data.file.getName().getBaseName()));
+        }
+      }
+    } catch (Exception e) {
+      String message =
+          BaseMessages.getString(
+              PKG,
+              "GetXMLData.Log.UnableToOpenFile",
+              "" + data.filenr,
+              data.file == null ? "" : data.file.toString(),
+              e.toString());
+
+      if (getTransformMeta().isDoingErrorHandling()) {
+        // Reading the same document from a field already diverts a parse failure to the error hop.
+        // Do the same for a file: send this one to error handling and carry on with the next file
+        // rather than killing the pipeline.
+        logBasic(message);
+        putError(data.outputRowMeta, buildEmptyRow(), 1, message, null, "GetXMLData002");
+        if (data.filenr <= fileNrOnEntry) {
+          // The failure happened before the file pointer moved on, so step over this file
+          // explicitly -- otherwise we would retry it forever.
+          data.filenr = fileNrOnEntry + 1;
+        }
+        return openNextFile();
+      }
+
+      logError(message);
+      stopAll();
+      setErrors(1);
+      return false;
+    }
+    return true;
+  }
+
+  @Override
+  public boolean processRow() throws HopException {
+    if (first && !meta.isInFields()) {
+      first = false;
+
+      data.files = meta.getFiles(this);
+
+      if (!meta.isDoNotFailIfNoFile() && data.files.nrOfFiles() == 0) {
+        throw new HopException(BaseMessages.getString(PKG, "GetXMLData.Log.NoFiles"));
+      }
+
+      handleMissingFiles();
+
+      // Create the output row meta-data
+      data.outputRowMeta = new RowMeta();
+
+      meta.getFields(data.outputRowMeta, getTransformName(), null, null, this, metadataProvider);
+
+      // Create convert meta-data objects that will contain Date & Number formatters
+      // For String to <type> conversions, we allocate a conversion meta data row as well...
+      //
+      data.convertRowMeta = data.outputRowMeta.cloneToType(IValueMeta.TYPE_STRING);
+    }
+    // Grab a row
+    Object[] r = getXmlRow();
+    if (data.errorInRowButContinue) {
+      return true; // continue without putting the row out
+    }
+    if (r == null) {
+      setOutputDone(); // signal end to receiver(s)
+      return false; // end of data or error.
+    }
+
+    return putRowOut(r);
+  }
+
+  private boolean putRowOut(Object[] r) throws HopException {
+    if (isRowLevel()) {
+      logRowlevel(
+          BaseMessages.getString(PKG, "GetXMLData.Log.ReadRow", data.outputRowMeta.getString(r)));
+    }
+    incrementLinesInput();
+    data.rownr++;
+    putRow(data.outputRowMeta, r); // copy row to output rowset(s)
+
+    if (meta.getRowLimit() > 0 && data.rownr > meta.getRowLimit()) {
+      // limit has been reached: stop now.
+      setOutputDone();
+      return false;
+    }
+
+    return true;
+  }
+
+  private Object[] getXmlRow() throws HopException {
+
+    if (!meta.isInFields()) {
+      while ((data.nodenr >= data.nodesize || data.file == null)) {
+        if (!openNextFile()) {
+          data.errorInRowButContinue = false; // stop in all cases
+          return null;
+        }
+      }
+    }
+    return getXmlRowPutRowWithErrorhandling();
+  }
+
+  private Object[] getXmlRowPutRowWithErrorhandling() throws HopException {
+    // Build an empty row based on the meta-data
+    Object[] r;
+    data.errorInRowButContinue = false;
+    try {
+      if (meta.isInFields()) {
+        while ((data.nodenr >= data.nodesize || data.readrow == null)) {
+          if (!ReadNextString()) {
+            return null;
+          }
+          if (data.readrow == null) {
+            return null;
+          }
+        }
+      }
+
+      r = processPutRow(data.an.get(data.nodenr));
+    } catch (Exception e) {
+      throw new HopException(BaseMessages.getString(PKG, "GetXMLData.Error.UnableReadFile"), e);
+    }
+
+    return r;
+  }
+
+  private Object[] processPutRow(Node node) throws HopException {
+    // Create new row...
+    Object[] outputRowData = buildEmptyRow();
+
+    // Create new row or clone
+    if (meta.isInFields()) {
+      System.arraycopy(data.readrow, 0, outputRowData, 0, data.nrReadRow);
+    }
+    try {
+      data.nodenr++;
+
+      // Read fields...
+      for (int i = 0; i < data.nrInputFields; i++) {
+        // Get field
+        GetXmlDataField xmlDataField = meta.getInputFields().get(i);
+        // Get the Path to look for
+        String xPathValue = xmlDataField.getResolvedXPath();
+
+        if (meta.isUseToken()) {
+          // See if user use Token inside path field
+          // The syntax is : @_Fieldname-
+          // Apache Hop will search for Fieldname value and replace it
+          // Fieldname must be defined before the current node
+          xPathValue = substituteToken(xPathValue, outputRowData);
+          if (isDetailed()) {
+            logDetailed(xPathValue);
+          }
+        }
+
+        // Get node value
+        String nodevalue;
+
+        // Handle namespaces
+        if (meta.isNameSpaceAware()) {
+          XPath xpathField = node.createXPath(addNSPrefix(xPathValue, data.PathValue));
+          xpathField.setNamespaceURIs(data.NAMESPACE);
+          if (xmlDataField
+              .getResultType()
+              .equals(getResultTypeCode(GetXmlDataField.RESULT_TYPE_VALUE_OF))) {
+            nodevalue = xpathField.valueOf(node);
+          } else {
+            Node n = xpathField.selectSingleNode(node);
+            if (n != null) {
+              nodevalue = n.asXML();
+            } else {
+              nodevalue = "";
+            }
+          }
+        } else {
+          if (xmlDataField
+              .getResultType()
+              .equals(getResultTypeCode(GetXmlDataField.RESULT_TYPE_VALUE_OF))) {
+            nodevalue = node.valueOf(xPathValue);
+          } else {
+            Node n = node.selectSingleNode(xPathValue);
+            if (n != null) {
+              nodevalue = n.asXML();
+            } else {
+              nodevalue = "";
+            }
+          }
+        }
+
+        // Do trimming
+        switch (xmlDataField.getTrimType()) {
+          case "left":
+            nodevalue = Const.ltrim(nodevalue);
+            break;
+          case "right":
+            nodevalue = Const.rtrim(nodevalue);
+            break;
+          case "both":
+            nodevalue = Const.trim(nodevalue);
+            break;
+          default:
+            break;
+        }
+
+        // Do conversions
+        //
+        IValueMeta targetValueMeta = data.outputRowMeta.getValueMeta(data.totalpreviousfields + i);
+        IValueMeta sourceValueMeta = data.convertRowMeta.getValueMeta(data.totalpreviousfields + i);
+        outputRowData[data.totalpreviousfields + i] =
+            targetValueMeta.convertData(sourceValueMeta, nodevalue);
+
+        // Do we need to repeat this field if it is null?
+        if (meta.getInputFields().get(i).isRepeat()
+            && data.previousRow != null
+            && Utils.isEmpty(nodevalue)) {
+          outputRowData[data.totalpreviousfields + i] =
+              data.previousRow[data.totalpreviousfields + i];
+        }
+      } // End of loop over fields...
+
+      int rowIndex = data.totalpreviousfields + data.nrInputFields;
+
+      // See if we need to add the filename to the row...
+      if (meta.isIncludeFilename() && !Utils.isEmpty(meta.getFilenameField())) {
+        outputRowData[rowIndex++] = data.filename;
+      }
+      // See if we need to add the row number to the row...
+      if (meta.isIncludeRowNumber() && !Utils.isEmpty(meta.getRowNumberField())) {
+        outputRowData[rowIndex++] = data.rownr;
+      }
+      // Possibly add short filename...
+      if (!Utils.isEmpty(meta.getShortFileFieldName())) {
+        outputRowData[rowIndex++] = data.shortFilename;
+      }
+      // Add Extension
+      if (!Utils.isEmpty(meta.getExtensionFieldName())) {
+        outputRowData[rowIndex++] = data.extension;
+      }
+      // add path
+      if (!Utils.isEmpty(meta.getPathFieldName())) {
+        outputRowData[rowIndex++] = data.path;
+      }
+      // Add Size
+      if (!Utils.isEmpty(meta.getSizeFieldName())) {
+        outputRowData[rowIndex++] = data.size;
+      }
+      // add Hidden
+      if (!Utils.isEmpty(meta.getHiddenFieldName())) {
+        outputRowData[rowIndex++] = data.hidden;
+      }
+      // Add modification date
+      if (meta.getLastModificationTimeFieldName() != null
+          && !meta.getLastModificationTimeFieldName().isEmpty()) {
+        outputRowData[rowIndex++] = data.lastModificationDateTime;
+      }
+      // Add Uri
+      if (!Utils.isEmpty(meta.getUriNameFieldName())) {
+        outputRowData[rowIndex++] = data.uriName;
+      }
+      // Add RootUri
+      if (!Utils.isEmpty(meta.getRootUriNameFieldName())) {
+        outputRowData[rowIndex] = data.rootUriName;
+      }
+
+      IRowMeta irow = getInputRowMeta();
+
+      if (irow == null) {
+        data.previousRow = outputRowData;
+      } else {
+        // clone to previously allocated array to make sure next transform doesn't
+        // change it in between...
+        System.arraycopy(outputRowData, 0, this.prevRow, 0, outputRowData.length);
+        // Pick up everything else that needs a real deep clone
+        data.previousRow = irow.cloneRow(outputRowData, this.prevRow);
+      }
+    } catch (Exception e) {
+      if (getTransformMeta().isDoingErrorHandling()) {
+        // Simply add this row to the error row
+        putError(data.outputRowMeta, outputRowData, 1, e.toString(), null, "GetXMLData001");
+        data.errorInRowButContinue = true;
+        return null;
+      } else {
+        logError(e.toString());
+        throw new HopException(e.toString());
+      }
+    }
+    return outputRowData;
+  }
+
+  public String substituteToken(String aString, Object[] outputRowData) {
+    if (aString == null) {
+      return null;
+    }
+
+    StringBuilder buffer = new StringBuilder();
+
+    String rest = aString;
+
+    // search for closing string
+    int i = rest.indexOf(data.tokenStart);
+    while (i > -1) {
+      int j = rest.indexOf(data.tokenEnd, i + data.tokenStart.length());
+      // search for closing string
+      if (j > -1) {
+        String varName = rest.substring(i + data.tokenStart.length(), j);
+        Object value = varName;
+
+        for (int k = 0; k < data.nrInputFields; k++) {
+          GetXmlDataField tmpXmlInputField = meta.getInputFields().get(k);
+          if (tmpXmlInputField.getName().equalsIgnoreCase(varName)) {
+            value = "'" + outputRowData[data.totalpreviousfields + k] + "'";
+          }
+        }
+        buffer.append(rest.substring(0, i));
+        buffer.append(value);
+        rest = rest.substring(j + data.tokenEnd.length());
+      } else {
+        // no closing tag found; end the search
+        buffer.append(rest);
+        rest = "";
+      }
+      // keep searching
+      i = rest.indexOf(data.tokenEnd);
+    }
+    buffer.append(rest);
+    return buffer.toString();
+  }
+
+  /** Loop XPath and field XPaths read from the XML file (resolved where init has run). */
+  private FileIoContentSchema xmlFileReadContentSchema() {
+    if (meta.getInputFields() == null || meta.getInputFields().isEmpty()) {
+      return null;
+    }
+    List<FileIoTabularColumn> cols = new ArrayList<>();
+    if (data != null && !Utils.isEmpty(data.PathValue)) {
+      cols.add(
+          new FileIoTabularColumn(
+              "(loopXPath)", "Node", -1, -1, data.PathValue, FileIoPathSyntax.XPATH, true));
+    } else if (!Utils.isEmpty(meta.getLoopXPath())) {
+      cols.add(
+          new FileIoTabularColumn(
+              "(loopXPath)",
+              "Node",
+              -1,
+              -1,
+              resolve(meta.getLoopXPath()),
+              FileIoPathSyntax.XPATH,
+              true));
+    }
+    for (GetXmlDataField f : meta.getInputFields()) {
+      String xp = f.getResolvedXPath();
+      if (Utils.isEmpty(xp)) {
+        xp = resolve(f.getXPath());
+      }
+      cols.add(
+          new FileIoTabularColumn(
+              f.getName(),
+              f.getType(),
+              f.getLength(),
+              f.getPrecision(),
+              Utils.isEmpty(xp) ? null : xp,
+              FileIoPathSyntax.XPATH,
+              f.isRepeat()));
+    }
+    return FileIoContentSchema.tabularWithMergedTree("xml", cols);
+  }
+
+  @Override
+  public boolean init() {
+
+    if (super.init()) {
+      data.rownr = 1L;
+      data.nrInputFields = meta.getInputFields().size();
+
+      // correct attribute path if needed
+      // do it once
+      for (int i = 0; i < data.nrInputFields; i++) {
+        GetXmlDataField xmlDataField = meta.getInputFields().get(i);
+        // Resolve variable substitution
+        String xPathValue = resolve(xmlDataField.getXPath());
+        if (xmlDataField
+            .getElementType()
+            .equals(getElementTypeDesc(GetXmlDataField.ELEMENT_TYPE_ATTRIBUTE))) {
+          // We have an attribute
+          // do we need to add leading @?
+          // Only put @ to the last element in path, not in front at all
+          int last = xPathValue.lastIndexOf(GetXmlDataMeta.N0DE_SEPARATOR);
+          if (last > -1) {
+            last++;
+            String attribut = xPathValue.substring(last);
+            if (!attribut.startsWith(GetXmlDataMeta.AT)) {
+              xPathValue = xPathValue.substring(0, last) + GetXmlDataMeta.AT + attribut;
+            }
+          } else {
+            if (!xPathValue.startsWith(GetXmlDataMeta.AT)) {
+              xPathValue = GetXmlDataMeta.AT + xPathValue;
+            }
+          }
+        }
+        xmlDataField.setResolvedXPath(xPathValue);
+      }
+
+      data.PathValue = resolve(meta.getLoopXPath());
+      if (Utils.isEmpty(data.PathValue)) {
+        logError(BaseMessages.getString(PKG, "GetXMLData.Error.EmptyPath"));
+        return false;
+      }
+      if (!data.PathValue.substring(0, 1).equals(GetXmlDataMeta.N0DE_SEPARATOR)) {
+        data.PathValue = GetXmlDataMeta.N0DE_SEPARATOR + data.PathValue;
+      }
+      if (isDetailed()) {
+        logDetailed(BaseMessages.getString(PKG, "GetXMLData.Log.LoopXPath", data.PathValue));
+      }
+
+      data.prunePath = resolve(meta.getPrunePath());
+      if (data.prunePath != null) {
+        if (Utils.isEmpty(data.prunePath.trim())) {
+          data.prunePath = null;
+        } else {
+          // ensure a leading slash
+          if (!data.prunePath.startsWith(GetXmlDataMeta.N0DE_SEPARATOR)) {
+            data.prunePath = GetXmlDataMeta.N0DE_SEPARATOR + data.prunePath;
+          }
+          // check if other conditions apply that do not allow pruning
+          if (meta.isInFields()) {
+            data.prunePath = null; // not possible by design, could be changed later on
+          }
+        }
+      }
+
+      return true;
+    }
+    return false;
+  }
+
+  @Override
+  public void dispose() {
+    if (data.file != null) {
+      try {
+        data.file.close();
+      } catch (Exception e) {
+        // Ignore close errors
+      }
+    }
+    if (data.an != null) {
+      data.an.clear();
+      data.an = null;
+    }
+    if (data.NAMESPACE != null) {
+      data.NAMESPACE.clear();
+      data.NAMESPACE = null;
+    }
+    if (data.NSPath != null) {
+      data.NSPath.clear();
+      data.NSPath = null;
+    }
+    if (data.readrow != null) {
+      data.readrow = null;
+    }
+    if (data.document != null) {
+      data.document = null;
+    }
+    if (data.fr != null) {
+      BaseTransform.closeQuietly(data.fr);
+    }
+    if (data.is != null) {
+      BaseTransform.closeQuietly(data.is);
+    }
+    if (data.files != null) {
+      data.files = null;
+    }
+    super.dispose();
+  }
+}

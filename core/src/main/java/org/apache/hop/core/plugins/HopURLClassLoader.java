@@ -1,0 +1,227 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.core.plugins;
+
+import java.io.InputStream;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.security.ProtectionDomain;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
+
+public class HopURLClassLoader extends URLClassLoader {
+
+  private String name;
+  private final ConcurrentHashMap<Class<?>, Object> cache = new ConcurrentHashMap<>();
+
+  public HopURLClassLoader(URL[] url, ClassLoader classLoader) {
+    super(url, classLoader);
+  }
+
+  public HopURLClassLoader(URL[] url, ClassLoader classLoader, String name) {
+    this(url, classLoader);
+    this.name = name;
+  }
+
+  public <T> T get(final Class<T> key) {
+    return key.cast(cache.get(key));
+  }
+
+  public <T> T computeIfAbsent(final Class<T> key, Supplier<T> provider) {
+    return key.cast(cache.computeIfAbsent(key, k -> provider));
+  }
+
+  /**
+   * Public entry point to add a jar to this classloader at runtime, e.g. a JDBC driver downloaded
+   * while Hop is running. After this the classes in the jar become loadable without a restart.
+   *
+   * @param url the jar URL to add
+   */
+  public void addJar(URL url) {
+    addURL(url);
+  }
+
+  @Override
+  protected void addURL(URL url) {
+    super.addURL(url);
+    // invalidate the cache since it is wrong if related to the classloader,
+    // do not lock since we assume addURL is called in a safe context
+    cache.values().stream()
+        .filter(AutoCloseable.class::isInstance)
+        .map(AutoCloseable.class::cast)
+        .forEach(
+            it -> {
+              try {
+                it.close();
+              } catch (final Exception e) {
+                // no-op
+              }
+            });
+    cache.clear();
+  }
+
+  @Override
+  public String toString() {
+    return super.toString() + " : " + name;
+  }
+
+  public void setName(String name) {
+    this.name = name;
+  }
+
+  @Override
+  public String getName() {
+    return name;
+  }
+
+  protected Class<?> loadClassFromThisLoader(String arg0, boolean arg1)
+      throws ClassNotFoundException {
+    Class<?> clz;
+    if ((clz = findLoadedClass(arg0)) != null) {
+      if (arg1) {
+        resolveClass(clz);
+      }
+      return clz;
+    }
+
+    if ((clz = findClass(arg0)) != null) {
+      if (arg1) {
+        resolveClass(clz);
+      }
+      return clz;
+    }
+    return clz;
+  }
+
+  /**
+   * Packages a plugin must share with the core classloader so objects can cross the boundary (Hop
+   * core types, the Jackson streaming/databind API, SLF4J). Jackson *modules* are deliberately not
+   * listed: plugins bring their own — e.g. jackson-module-scala is compiled per Scala version, so
+   * the Beam engine (Scala 2.12) and the native Spark engine (Scala 2.13) each need the copy in
+   * their own lib, and a parent-first lookup of the wrong one fails at runtime with "no Creators"
+   * when Spark deserializes its own Scala classes.
+   */
+  private static final String[] SYSTEM_PARENT_FIRST_PACKAGES = {
+    "org.apache.hop.core.",
+    "com.fasterxml.jackson.core.",
+    "com.fasterxml.jackson.databind.",
+    "com.fasterxml.jackson.annotation.",
+    "org.slf4j."
+  };
+
+  protected boolean isParentFirst(String name) {
+    if (name != null) {
+      for (String pkg : SYSTEM_PARENT_FIRST_PACKAGES) {
+        if (name.startsWith(pkg)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  protected Class<?> loadClassFromParent(String name, boolean resolve)
+      throws ClassNotFoundException {
+    Class<?> clz;
+    if (getParent() != null && (clz = getParent().loadClass(name)) != null) {
+      if (resolve) {
+        resolveClass(clz);
+      }
+      return clz;
+    }
+    throw new ClassNotFoundException("Could not find :" + name);
+  }
+
+  @Override
+  protected synchronized Class<?> loadClass(String name, boolean resolve)
+      throws ClassNotFoundException {
+    if (isParentFirst(name)) {
+      try {
+        return loadClassFromParent(name, resolve);
+      } catch (ClassNotFoundException | NoClassDefFoundError e) {
+        // Fall back to loading from this classloader
+      }
+    }
+    try {
+      return loadClassFromThisLoader(name, resolve);
+    } catch (ClassNotFoundException | NoClassDefFoundError | SecurityException exception) {
+      try {
+        return loadClassFromParent(name, resolve);
+      } catch (Exception parentException) {
+        throw new ClassNotFoundException(
+            "Unable to load class '" + name + "' in this classloader or in the parent", exception);
+      }
+    }
+  }
+
+  /*
+   * Cglib doe's not creates custom class loader (to access package methods and classes ) it uses reflection to invoke
+   * "defineClass", but you can call protected method in subclass without problems:
+   */
+  public Class<?> loadClass(String name, ProtectionDomain protectionDomain) {
+    Class<?> loaded = findLoadedClass(name);
+    if (loaded == null) {
+      // Get the jar, load the bytes from the jar file, construct class from scratch as in snippet
+      // below...
+
+      String newName = name.replace('.', '/');
+      InputStream is = getResourceAsStream(newName);
+      byte[] driverBytes = toBytes(is);
+
+      loaded = super.defineClass(name, driverBytes, 0, driverBytes.length, protectionDomain);
+    }
+    return loaded;
+  }
+
+  private byte[] toBytes(InputStream is) {
+    byte[] retval = new byte[0];
+    try {
+      int a = is.available();
+      while (a > 0) {
+        byte[] buffer = new byte[a];
+        is.read(buffer);
+
+        byte[] newretval = new byte[retval.length + a];
+
+        for (int i = 0; i < retval.length; i++) {
+          newretval[i] = retval[i]; // old part
+        }
+        for (int i = 0; i < a; i++) {
+          newretval[retval.length + i] = buffer[i]; // new part
+        }
+
+        retval = newretval;
+
+        a = is.available(); // see what's left
+      }
+      return retval;
+    } catch (Exception e) {
+      // TODO: Throw error here!!
+      return null;
+    }
+  }
+
+  @Override
+  public URL getResource(String name) {
+    URL url = findResource(name);
+    if (url == null && getParent() != null) {
+      url = getParent().getResource(name);
+    }
+    return url;
+  }
+}

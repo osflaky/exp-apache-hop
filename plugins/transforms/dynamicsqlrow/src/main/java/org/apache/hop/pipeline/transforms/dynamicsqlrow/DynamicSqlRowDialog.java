@@ -1,0 +1,463 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.pipeline.transforms.dynamicsqlrow;
+
+import java.util.Arrays;
+import java.util.List;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.Props;
+import org.apache.hop.core.database.DatabaseMeta;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.row.IRowMeta;
+import org.apache.hop.core.util.Utils;
+import org.apache.hop.core.variables.IVariables;
+import org.apache.hop.i18n.BaseMessages;
+import org.apache.hop.pipeline.PipelineMeta;
+import org.apache.hop.ui.core.PropsUi;
+import org.apache.hop.ui.core.dialog.BaseDialog;
+import org.apache.hop.ui.core.dialog.ErrorDialog;
+import org.apache.hop.ui.core.dialog.MessageBox;
+import org.apache.hop.ui.core.widget.MetaSelectionLine;
+import org.apache.hop.ui.core.widget.SQLStyledTextComp;
+import org.apache.hop.ui.core.widget.StyledTextComp;
+import org.apache.hop.ui.core.widget.TextComposite;
+import org.apache.hop.ui.pipeline.transform.BaseTransformDialog;
+import org.apache.hop.ui.util.EnvironmentUtils;
+import org.eclipse.swt.SWT;
+import org.eclipse.swt.custom.CCombo;
+import org.eclipse.swt.custom.ScrolledComposite;
+import org.eclipse.swt.events.FocusAdapter;
+import org.eclipse.swt.events.FocusEvent;
+import org.eclipse.swt.events.FocusListener;
+import org.eclipse.swt.events.KeyAdapter;
+import org.eclipse.swt.events.KeyEvent;
+import org.eclipse.swt.events.MouseAdapter;
+import org.eclipse.swt.events.MouseEvent;
+import org.eclipse.swt.events.SelectionAdapter;
+import org.eclipse.swt.events.SelectionEvent;
+import org.eclipse.swt.graphics.Cursor;
+import org.eclipse.swt.graphics.Rectangle;
+import org.eclipse.swt.layout.FillLayout;
+import org.eclipse.swt.layout.FormAttachment;
+import org.eclipse.swt.layout.FormData;
+import org.eclipse.swt.layout.FormLayout;
+import org.eclipse.swt.widgets.Button;
+import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Label;
+import org.eclipse.swt.widgets.Shell;
+import org.eclipse.swt.widgets.Text;
+
+public class DynamicSqlRowDialog extends BaseTransformDialog {
+  private static final Class<?> PKG = DynamicSqlRowMeta.class;
+
+  private boolean gotPreviousFields = false;
+
+  private MetaSelectionLine<DatabaseMeta> wConnection;
+
+  private TextComposite wSqlComposite;
+
+  private Text wLimit;
+
+  private Button wOuter;
+
+  private Button wuseVars;
+
+  private Label wlPosition;
+
+  private CCombo wSqlFieldName;
+
+  private Button wqueryOnlyOnChange;
+
+  private final DynamicSqlRowMeta input;
+
+  public DynamicSqlRowDialog(
+      Shell parent,
+      IVariables variables,
+      DynamicSqlRowMeta transformMeta,
+      PipelineMeta pipelineMeta) {
+    super(parent, variables, transformMeta, pipelineMeta);
+    input = transformMeta;
+  }
+
+  @Override
+  public String open() {
+    createShell(BaseMessages.getString(PKG, "DynamicSQLRowDialog.Shell.Title"));
+
+    buildButtonBar().ok(e -> ok()).cancel(e -> cancel()).build();
+
+    ScrolledComposite sc = new ScrolledComposite(shell, SWT.V_SCROLL | SWT.H_SCROLL);
+    PropsUi.setLook(sc);
+    sc.setLayout(new FillLayout());
+    FormData fdSc = new FormData();
+    fdSc.left = new FormAttachment(0, margin);
+    fdSc.top = new FormAttachment(wSpacer, margin);
+    fdSc.right = new FormAttachment(100, -margin);
+    fdSc.bottom = new FormAttachment(wOk, -margin);
+    sc.setLayoutData(fdSc);
+
+    Composite wContent = new Composite(sc, SWT.NONE);
+    PropsUi.setLook(wContent);
+    FormLayout formLayout = new FormLayout();
+    formLayout.marginWidth = PropsUi.getFormMargin();
+    formLayout.marginHeight = PropsUi.getFormMargin();
+    wContent.setLayout(formLayout);
+
+    // Connection line
+    wConnection = addConnectionLine(wContent, null, input.getConnection(), lsMod);
+    if (input.getDatabaseMeta() == null && pipelineMeta.nrDatabases() == 1) {
+      wConnection.select(0);
+    }
+    wConnection.addListener(SWT.Selection, e -> getSqlReservedWords());
+
+    // SQLFieldName field
+    Label wlSqlFieldName = new Label(wContent, SWT.RIGHT);
+    wlSqlFieldName.setText(BaseMessages.getString(PKG, "DynamicSQLRowDialog.SQLFieldName.Label"));
+    PropsUi.setLook(wlSqlFieldName);
+    FormData fdlSqlFieldName = new FormData();
+    fdlSqlFieldName.left = new FormAttachment(0, 0);
+    fdlSqlFieldName.right = new FormAttachment(middle, -margin);
+    fdlSqlFieldName.top = new FormAttachment(wConnection, margin);
+    wlSqlFieldName.setLayoutData(fdlSqlFieldName);
+    wSqlFieldName = new CCombo(wContent, SWT.BORDER | SWT.READ_ONLY);
+    wSqlFieldName.setEditable(true);
+    PropsUi.setLook(wSqlFieldName);
+    wSqlFieldName.addModifyListener(lsMod);
+    FormData fdSqlFieldName = new FormData();
+    fdSqlFieldName.left = new FormAttachment(middle, 0);
+    fdSqlFieldName.top = new FormAttachment(wConnection, margin);
+    fdSqlFieldName.right = new FormAttachment(100, 0);
+    wSqlFieldName.setLayoutData(fdSqlFieldName);
+    wSqlFieldName.addFocusListener(
+        new FocusListener() {
+          @Override
+          public void focusLost(FocusEvent e) {
+            // Do nothing
+          }
+
+          @Override
+          public void focusGained(FocusEvent e) {
+            Cursor busy = new Cursor(shell.getDisplay(), SWT.CURSOR_WAIT);
+            shell.setCursor(busy);
+            get();
+            shell.setCursor(null);
+            busy.dispose();
+          }
+        });
+
+    // Limit the number of lines returns
+    Label wlLimit = new Label(wContent, SWT.RIGHT);
+    wlLimit.setText(BaseMessages.getString(PKG, "DynamicSQLRowDialog.Limit.Label"));
+    PropsUi.setLook(wlLimit);
+    FormData fdlLimit = new FormData();
+    fdlLimit.left = new FormAttachment(0, 0);
+    fdlLimit.right = new FormAttachment(middle, -margin);
+    fdlLimit.top = new FormAttachment(wSqlFieldName, margin);
+    wlLimit.setLayoutData(fdlLimit);
+    wLimit = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wLimit);
+    wLimit.addModifyListener(lsMod);
+    FormData fdLimit = new FormData();
+    fdLimit.left = new FormAttachment(middle, 0);
+    fdLimit.right = new FormAttachment(100, 0);
+    fdLimit.top = new FormAttachment(wSqlFieldName, margin);
+    wLimit.setLayoutData(fdLimit);
+
+    // Outer join?
+    Label wlOuter = new Label(wContent, SWT.RIGHT);
+    wlOuter.setText(BaseMessages.getString(PKG, "DynamicSQLRowDialog.Outerjoin.Label"));
+    wlOuter.setToolTipText(BaseMessages.getString(PKG, "DynamicSQLRowDialog.Outerjoin.Tooltip"));
+    PropsUi.setLook(wlOuter);
+    FormData fdlOuter = new FormData();
+    fdlOuter.left = new FormAttachment(0, 0);
+    fdlOuter.right = new FormAttachment(middle, -margin);
+    fdlOuter.top = new FormAttachment(wLimit, margin);
+    wlOuter.setLayoutData(fdlOuter);
+    wOuter = new Button(wContent, SWT.CHECK);
+    PropsUi.setLook(wOuter);
+    wOuter.setToolTipText(wlOuter.getToolTipText());
+    FormData fdOuter = new FormData();
+    fdOuter.left = new FormAttachment(middle, 0);
+    fdOuter.top = new FormAttachment(wlOuter, 0, SWT.CENTER);
+    wOuter.setLayoutData(fdOuter);
+    wOuter.addSelectionListener(
+        new SelectionAdapter() {
+          @Override
+          public void widgetSelected(SelectionEvent e) {
+            input.setChanged();
+          }
+        });
+
+    // useVars ?
+    Label wluseVars = new Label(wContent, SWT.RIGHT);
+    wluseVars.setText(BaseMessages.getString(PKG, "DynamicSQLRowDialog.useVarsjoin.Label"));
+    wluseVars.setToolTipText(
+        BaseMessages.getString(PKG, "DynamicSQLRowDialog.useVarsjoin.Tooltip"));
+    PropsUi.setLook(wluseVars);
+    FormData fdluseVars = new FormData();
+    fdluseVars.left = new FormAttachment(0, 0);
+    fdluseVars.right = new FormAttachment(middle, -margin);
+    fdluseVars.top = new FormAttachment(wOuter, margin);
+    wluseVars.setLayoutData(fdluseVars);
+    wuseVars = new Button(wContent, SWT.CHECK);
+    PropsUi.setLook(wuseVars);
+    wuseVars.setToolTipText(wluseVars.getToolTipText());
+    FormData fduseVars = new FormData();
+    fduseVars.left = new FormAttachment(middle, 0);
+    fduseVars.top = new FormAttachment(wluseVars, 0, SWT.CENTER);
+    wuseVars.setLayoutData(fduseVars);
+    wuseVars.addSelectionListener(
+        new SelectionAdapter() {
+          @Override
+          public void widgetSelected(SelectionEvent e) {
+            input.setChanged();
+          }
+        });
+
+    // queryOnlyOnChange ?
+    Label wlqueryOnlyOnChange = new Label(wContent, SWT.RIGHT);
+    wlqueryOnlyOnChange.setText(
+        BaseMessages.getString(PKG, "DynamicSQLRowDialog.queryOnlyOnChangejoin.Label"));
+    wlqueryOnlyOnChange.setToolTipText(
+        BaseMessages.getString(PKG, "DynamicSQLRowDialog.queryOnlyOnChangejoin.Tooltip"));
+    PropsUi.setLook(wlqueryOnlyOnChange);
+    FormData fdlqueryOnlyOnChange = new FormData();
+    fdlqueryOnlyOnChange.left = new FormAttachment(0, 0);
+    fdlqueryOnlyOnChange.right = new FormAttachment(middle, -margin);
+    fdlqueryOnlyOnChange.top = new FormAttachment(wuseVars, margin);
+    wlqueryOnlyOnChange.setLayoutData(fdlqueryOnlyOnChange);
+    wqueryOnlyOnChange = new Button(wContent, SWT.CHECK);
+    PropsUi.setLook(wqueryOnlyOnChange);
+    wqueryOnlyOnChange.setToolTipText(wlqueryOnlyOnChange.getToolTipText());
+    FormData fdqueryOnlyOnChange = new FormData();
+    fdqueryOnlyOnChange.left = new FormAttachment(middle, 0);
+    fdqueryOnlyOnChange.top = new FormAttachment(wlqueryOnlyOnChange, 0, SWT.CENTER);
+    wqueryOnlyOnChange.setLayoutData(fdqueryOnlyOnChange);
+    wqueryOnlyOnChange.addSelectionListener(
+        new SelectionAdapter() {
+          @Override
+          public void widgetSelected(SelectionEvent e) {
+            input.setChanged();
+          }
+        });
+
+    // SQL label, then editor, then position label below editor
+    Label wlSql = new Label(wContent, SWT.NONE);
+    wlSql.setText(BaseMessages.getString(PKG, "DynamicSQLRowDialog.SQL.Label"));
+    PropsUi.setLook(wlSql);
+    FormData fdlSql = new FormData();
+    fdlSql.left = new FormAttachment(0, 0);
+    fdlSql.top = new FormAttachment(wqueryOnlyOnChange, margin);
+    wlSql.setLayoutData(fdlSql);
+
+    wSqlComposite =
+        EnvironmentUtils.getInstance().isWeb()
+            ? new StyledTextComp(
+                variables,
+                wContent,
+                SWT.MULTI | SWT.LEFT | SWT.BORDER | SWT.H_SCROLL | SWT.V_SCROLL,
+                TextComposite.STYLE_TYPE_SQL)
+            : new SQLStyledTextComp(
+                variables,
+                wContent,
+                SWT.MULTI | SWT.LEFT | SWT.BORDER | SWT.H_SCROLL | SWT.V_SCROLL);
+    wSqlComposite.addLineStyleListener(getSqlReservedWords());
+    PropsUi.setLook(wSqlComposite, Props.WIDGET_STYLE_FIXED);
+    FormData fdSql = new FormData();
+    fdSql.left = new FormAttachment(0, 0);
+    fdSql.top = new FormAttachment(wlSql, margin);
+    fdSql.right = new FormAttachment(100, 0);
+
+    wlPosition = new Label(wContent, SWT.NONE);
+    PropsUi.setLook(wlPosition);
+    FormData fdlPosition = new FormData();
+    fdlPosition.left = new FormAttachment(0, 0);
+    fdlPosition.right = new FormAttachment(100, 0);
+    fdlPosition.bottom = new FormAttachment(100, 0);
+    wlPosition.setLayoutData(fdlPosition);
+
+    fdSql.bottom = new FormAttachment(wlPosition, -margin);
+    fdSql.height = 200;
+    wSqlComposite.setLayoutData(fdSql);
+
+    wContent.pack();
+    Rectangle bounds = wContent.getBounds();
+    sc.setContent(wContent);
+    sc.setExpandHorizontal(true);
+    sc.setExpandVertical(true);
+    sc.setMinWidth(bounds.width);
+    sc.setMinHeight(bounds.height);
+
+    wSqlComposite.addModifyListener(arg0 -> setPosition());
+
+    wSqlComposite.addKeyListener(
+        new KeyAdapter() {
+          @Override
+          public void keyPressed(KeyEvent e) {
+            setPosition();
+          }
+
+          @Override
+          public void keyReleased(KeyEvent e) {
+            setPosition();
+          }
+        });
+    wSqlComposite.addFocusListener(
+        new FocusAdapter() {
+          @Override
+          public void focusGained(FocusEvent e) {
+            setPosition();
+          }
+
+          @Override
+          public void focusLost(FocusEvent e) {
+            setPosition();
+          }
+        });
+    wSqlComposite.addMouseListener(
+        new MouseAdapter() {
+          @Override
+          public void mouseDoubleClick(MouseEvent e) {
+            setPosition();
+          }
+
+          @Override
+          public void mouseDown(MouseEvent e) {
+            setPosition();
+          }
+
+          @Override
+          public void mouseUp(MouseEvent e) {
+            setPosition();
+          }
+        });
+
+    wSqlComposite.addModifyListener(lsMod);
+
+    getData();
+    input.setChanged(backupChanged);
+    focusTransformName();
+    BaseDialog.defaultShellHandling(shell, c -> ok(), c -> cancel());
+
+    return transformName;
+  }
+
+  private List<String> getSqlReservedWords() {
+    String connection = wConnection != null ? wConnection.getText() : input.getConnection();
+
+    // Do not search keywords when connection is empty
+    if (Utils.isEmpty(connection)) {
+      return List.of();
+    }
+
+    // If connection is a variable that can't be resolved
+    if (variables.resolve(connection).startsWith("${")) {
+      return List.of();
+    }
+
+    DatabaseMeta databaseMeta = pipelineMeta.findDatabase(connection, variables);
+    if (databaseMeta == null) {
+      return List.of();
+    }
+    return Arrays.stream(databaseMeta.getReservedWords()).toList();
+  }
+
+  public void setPosition() {
+    int lineNumber = wSqlComposite.getLineNumber();
+    int columnNumber = wSqlComposite.getColumnNumber();
+    wlPosition.setText(
+        BaseMessages.getString(
+            PKG, "DynamicSQLRowDialog.Position.Label", "" + lineNumber, "" + columnNumber));
+  }
+
+  /** Copy information from the meta-data input to the dialog fields. */
+  public void getData() {
+    if (log.isDebug()) {
+      logDebug(BaseMessages.getString(PKG, "DynamicSQLRowDialog.Log.GettingKeyInfo"));
+    }
+
+    wSqlComposite.setText(Const.NVL(input.getSql(), ""));
+    wLimit.setText("" + input.getRowLimit());
+    wOuter.setSelection(input.isOuterJoin());
+    wuseVars.setSelection(input.isReplaceVariables());
+    if (input.getSqlFieldName() != null) {
+      wSqlFieldName.setText(input.getSqlFieldName());
+    }
+    wqueryOnlyOnChange.setSelection(input.isQueryOnlyOnChange());
+
+    if (input.getConnection() != null) {
+      wConnection.setText(input.getConnection());
+      input.setDatabaseMeta(pipelineMeta.findDatabase(input.getConnection(), variables));
+    }
+  }
+
+  private void cancel() {
+    transformName = null;
+    input.setChanged(backupChanged);
+    dispose();
+  }
+
+  private void ok() {
+    if (Utils.isEmpty(wTransformName.getText())) {
+      return;
+    }
+
+    input.setConnection(wConnection.getText());
+    input.setRowLimit(Const.toIntExpanded(wLimit.getText(), 0));
+    input.setSql(wSqlComposite.getText());
+    input.setSqlFieldName(wSqlFieldName.getText());
+    input.setOuterJoin(wOuter.getSelection());
+    input.setReplaceVariables(wuseVars.getSelection());
+    input.setQueryOnlyOnChange(wqueryOnlyOnChange.getSelection());
+
+    transformName = wTransformName.getText(); // return value
+
+    if (pipelineMeta.findDatabase(wConnection.getText(), variables) == null) {
+      MessageBox mb = new MessageBox(shell, SWT.OK | SWT.ICON_ERROR);
+      mb.setMessage(
+          BaseMessages.getString(PKG, "DynamicSQLRowDialog.InvalidConnection.DialogMessage"));
+      mb.setText(BaseMessages.getString(PKG, "DynamicSQLRowDialog.InvalidConnection.DialogTitle"));
+      mb.open();
+    }
+
+    dispose();
+  }
+
+  private void get() {
+    if (!gotPreviousFields) {
+      gotPreviousFields = true;
+      try {
+        String sqlfield = wSqlFieldName.getText();
+        wSqlFieldName.removeAll();
+        IRowMeta r = pipelineMeta.getPrevTransformFields(variables, transformName);
+        if (r != null) {
+          wSqlFieldName.removeAll();
+          wSqlFieldName.setItems(r.getFieldNames());
+        }
+        if (sqlfield != null) {
+          wSqlFieldName.setText(sqlfield);
+        }
+      } catch (HopException ke) {
+        new ErrorDialog(
+            shell,
+            BaseMessages.getString(PKG, "DynamicSQLRowDialog.FailedToGetFields.DialogTitle"),
+            BaseMessages.getString(PKG, "DynamicSQLRowDialog.FailedToGetFields.DialogMessage"),
+            ke);
+      }
+    }
+  }
+}

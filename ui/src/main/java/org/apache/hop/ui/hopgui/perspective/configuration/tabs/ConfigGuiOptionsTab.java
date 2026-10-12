@@ -1,0 +1,1798 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ */
+
+package org.apache.hop.ui.hopgui.perspective.configuration.tabs;
+
+import java.util.function.Consumer;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.Props;
+import org.apache.hop.core.config.HopConfig;
+import org.apache.hop.core.gui.plugin.GuiPlugin;
+import org.apache.hop.core.gui.plugin.tab.GuiTab;
+import org.apache.hop.core.gui.plugin.toolbar.GuiToolbarElement;
+import org.apache.hop.core.util.EnvUtil;
+import org.apache.hop.history.AuditManager;
+import org.apache.hop.history.AuditState;
+import org.apache.hop.i18n.BaseMessages;
+import org.apache.hop.i18n.GlobalMessages;
+import org.apache.hop.i18n.LanguageChoice;
+import org.apache.hop.ui.core.PropsUi;
+import org.apache.hop.ui.core.dialog.BaseDialog;
+import org.apache.hop.ui.core.dialog.ErrorDialog;
+import org.apache.hop.ui.core.gui.GuiResource;
+import org.apache.hop.ui.core.gui.GuiToolbarWidgets;
+import org.apache.hop.ui.core.gui.IToolbarContainer;
+import org.apache.hop.ui.core.widget.OsHelper;
+import org.apache.hop.ui.hopgui.HopGui;
+import org.apache.hop.ui.hopgui.ToolbarFacade;
+import org.apache.hop.ui.hopgui.perspective.configuration.ConfigurationPerspective;
+import org.apache.hop.ui.util.EnvironmentUtils;
+import org.eclipse.swt.SWT;
+import org.eclipse.swt.custom.CTabFolder;
+import org.eclipse.swt.custom.CTabItem;
+import org.eclipse.swt.custom.ScrolledComposite;
+import org.eclipse.swt.events.PaintEvent;
+import org.eclipse.swt.graphics.Font;
+import org.eclipse.swt.graphics.FontData;
+import org.eclipse.swt.graphics.Image;
+import org.eclipse.swt.graphics.Point;
+import org.eclipse.swt.graphics.Rectangle;
+import org.eclipse.swt.layout.FillLayout;
+import org.eclipse.swt.layout.FormAttachment;
+import org.eclipse.swt.layout.FormData;
+import org.eclipse.swt.layout.FormLayout;
+import org.eclipse.swt.widgets.Button;
+import org.eclipse.swt.widgets.Canvas;
+import org.eclipse.swt.widgets.Combo;
+import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Control;
+import org.eclipse.swt.widgets.Display;
+import org.eclipse.swt.widgets.Event;
+import org.eclipse.swt.widgets.ExpandBar;
+import org.eclipse.swt.widgets.ExpandItem;
+import org.eclipse.swt.widgets.FontDialog;
+import org.eclipse.swt.widgets.Label;
+import org.eclipse.swt.widgets.Listener;
+import org.eclipse.swt.widgets.Shell;
+import org.eclipse.swt.widgets.Text;
+
+@GuiPlugin
+public class ConfigGuiOptionsTab {
+  private static final Class<?> PKG = BaseDialog.class;
+  public static final String ENTER_OPTIONS_DIALOG_ENTER_NUMBER_HINT =
+      "EnterOptionsDialog.EnterNumber.Hint";
+
+  public static final String GUI_PLUGIN_TOOLBAR_PARENT_ID = "ConfigGuiOptionsTab-Toolbar";
+  public static final String TOOLBAR_ITEM_EXPAND_ALL =
+      "ConfigGuiOptionsTab-Toolbar-10010-ExpandAll";
+  public static final String TOOLBAR_ITEM_COLLAPSE_ALL =
+      "ConfigGuiOptionsTab-Toolbar-10020-CollapseAll";
+
+  private Composite lookComp;
+  private ScrolledComposite lookScrolledComposite;
+
+  private FontData fixedFontData;
+  private Font fixedFont;
+  private FontData graphFontData;
+  private Font graphFont;
+
+  private Canvas wFixedCanvas;
+  private Canvas wGraphCanvas;
+
+  private Text wIconSize;
+  private Text wLineWidth;
+  private Text wMiddlePct;
+  private Combo wGlobalZoom;
+  private Text wGridSize;
+  private Label wlGridSize; // Label for grid size (for enable/disable)
+  private Button wDarkMode;
+
+  /** Hop Web only: follow system light/dark mode; when true, Dark mode checkbox is disabled. */
+  private Button wWebFollowSystemTheme;
+
+  private Button wShowCanvasGrid;
+  private Button wHideViewport;
+  private Button wUseDoubleClick;
+  private Button wUseRightClickForContextDialog;
+  private Button wUseMenusInsteadOfContextDialog;
+  private Button wDialogsOnAnyScreen;
+  private Button wDrawBorderAroundCanvasNames;
+  private Button wEnableInfiniteMove;
+  private Button wDisableZoomScrolling;
+  private Button wMetricsOnTransforms;
+  private Button wHideMenuBar;
+  private Button wShowTableViewToolbar;
+  private Button wShowTextCompositeToolbar;
+  private Text wMaxPreviewCellLength;
+  private Button wShowPreviewLineBreaks;
+  private Button wMetricsPanelShowUnits;
+  private Button wMetricsPanelDynamicColumnResize;
+  private Button wMetricsPanelShowInput;
+  private Button wMetricsPanelShowRead;
+  private Button wMetricsPanelShowOutput;
+  private Button wMetricsPanelShowUpdated;
+  private Button wMetricsPanelShowRejected;
+  private Button wMetricsPanelShowBuffersInput;
+  private Button wMetricsPanelShowDataVolume;
+  private Button wMetricsPanelShowDataVolumeIn;
+  private Button wMetricsPanelShowDataVolumeOut;
+  private Combo wDefaultLocale;
+
+  private Combo wAutoLayoutDirection;
+  private Text wAutoLayoutLayerSpacing;
+  private Text wAutoLayoutNodeSpacing;
+  private Text wAutoLayoutCrossingIterations;
+  private Button wAutoLayoutMoveNotes;
+
+  /** Auto-layout direction codes, parallel to the localized labels shown in the combo. */
+  private static final String[] AUTO_LAYOUT_DIRECTION_CODES = {
+    "LEFT_RIGHT", "RIGHT_LEFT", "TOP_BOTTOM", "BOTTOM_TOP"
+  };
+
+  private boolean isReloading = false; // Flag to prevent saving during reload
+  private boolean isInitializing = false; // Flag to prevent saving during initialization
+
+  public ConfigGuiOptionsTab() {
+    // This instance is created in the GuiPlugin system by calling this constructor, after which it
+    // calls the addGuiOptionsTab() method.
+  }
+
+  /**
+   * Reload values from PropsUi into the widgets. This is useful when values are changed outside of
+   * the options dialog.
+   */
+  public void reloadValues() {
+    if (wIconSize == null || wIconSize.isDisposed()) {
+      return; // Tab not yet initialized or already disposed
+    }
+
+    // Set flag to prevent saveValues from being triggered during reload
+    isReloading = true;
+
+    try {
+      PropsUi props = PropsUi.getInstance();
+
+      // Reload all values from PropsUi
+      fixedFontData = props.getFixedFont();
+      graphFontData = props.getGraphFont();
+
+      // Recreate fonts
+      Shell shell = wIconSize.getShell();
+      Display display = shell.getDisplay();
+      if (fixedFont != null && !fixedFont.isDisposed()) {
+        fixedFont.dispose();
+      }
+      fixedFont = new Font(display, fixedFontData);
+      if (graphFont != null && !graphFont.isDisposed()) {
+        graphFont.dispose();
+      }
+      graphFont = new Font(display, graphFontData);
+
+      // Redraw canvases
+      wFixedCanvas.redraw();
+      wGraphCanvas.redraw();
+
+      // Reload text fields and checkboxes
+      wIconSize.setText(Integer.toString(props.getIconSize()));
+      wLineWidth.setText(Integer.toString(props.getLineWidth()));
+      wMiddlePct.setText(Integer.toString(props.getMiddlePct()));
+      wGridSize.setText(Integer.toString(props.getCanvasGridSize()));
+      wShowCanvasGrid.setSelection(props.isShowCanvasGridEnabled());
+
+      if (wAutoLayoutDirection != null && !wAutoLayoutDirection.isDisposed()) {
+        int directionIndex =
+            Const.indexOfString(props.getAutoLayoutDirection(), AUTO_LAYOUT_DIRECTION_CODES);
+        wAutoLayoutDirection.select(Math.max(0, directionIndex));
+        wAutoLayoutLayerSpacing.setText(Integer.toString(props.getAutoLayoutLayerSpacing()));
+        wAutoLayoutNodeSpacing.setText(Integer.toString(props.getAutoLayoutNodeSpacing()));
+        wAutoLayoutCrossingIterations.setText(
+            Integer.toString(props.getAutoLayoutCrossingIterations()));
+        wAutoLayoutMoveNotes.setSelection(props.isAutoLayoutMoveNotes());
+      }
+
+      wHideViewport.setSelection(!props.isHideViewportEnabled()); // Inverted logic
+      wUseDoubleClick.setSelection(props.useDoubleClick());
+      wUseRightClickForContextDialog.setSelection(props.useRightClickForContextDialog());
+      wUseMenusInsteadOfContextDialog.setSelection(props.useMenusInsteadOfContextDialog());
+      if (wDialogsOnAnyScreen != null) {
+        wDialogsOnAnyScreen.setSelection(props.isDialogsOnAnyScreenEnabled());
+      }
+      wDrawBorderAroundCanvasNames.setSelection(props.isBorderDrawnAroundCanvasNames());
+      wEnableInfiniteMove.setSelection(props.isInfiniteCanvasMoveEnabled());
+      wHideMenuBar.setSelection(props.isHidingMenuBar());
+      wShowTableViewToolbar.setSelection(props.isShowTableViewToolbar());
+      if (wShowTextCompositeToolbar != null && !wShowTextCompositeToolbar.isDisposed()) {
+        wShowTextCompositeToolbar.setSelection(props.isShowTextCompositeToolbar());
+      }
+      if (wMaxPreviewCellLength != null && !wMaxPreviewCellLength.isDisposed()) {
+        wMaxPreviewCellLength.setText(Integer.toString(props.getMaxPreviewCellLength()));
+      }
+      if (wShowPreviewLineBreaks != null && !wShowPreviewLineBreaks.isDisposed()) {
+        wShowPreviewLineBreaks.setSelection(props.isShowPreviewLineBreaksAsSymbols());
+      }
+      if (wMetricsPanelShowUnits != null && !wMetricsPanelShowUnits.isDisposed()) {
+        wMetricsPanelShowUnits.setSelection(props.isMetricsPanelShowUnits());
+        if (wMetricsPanelDynamicColumnResize != null
+            && !wMetricsPanelDynamicColumnResize.isDisposed()) {
+          wMetricsPanelDynamicColumnResize.setSelection(props.isMetricsPanelDynamicColumnResize());
+        }
+        wMetricsPanelShowInput.setSelection(props.isMetricsPanelShowInput());
+        wMetricsPanelShowRead.setSelection(props.isMetricsPanelShowRead());
+        wMetricsPanelShowOutput.setSelection(props.isMetricsPanelShowOutput());
+        wMetricsPanelShowUpdated.setSelection(props.isMetricsPanelShowUpdated());
+        wMetricsPanelShowRejected.setSelection(props.isMetricsPanelShowRejected());
+        wMetricsPanelShowBuffersInput.setSelection(props.isMetricsPanelShowBuffersInput());
+        wMetricsPanelShowDataVolume.setSelection(props.isMetricsPanelShowDataVolume());
+        boolean dataVolumeVarEnabled =
+            Const.toBoolean(
+                HopGui.getInstance().getVariables().getVariable(Const.HOP_METRIC_DATA_VOLUME, "N"));
+        wMetricsPanelShowDataVolume.setEnabled(dataVolumeVarEnabled);
+        if (wMetricsPanelShowDataVolumeIn != null && !wMetricsPanelShowDataVolumeIn.isDisposed()) {
+          wMetricsPanelShowDataVolumeIn.setSelection(props.isMetricsPanelShowDataVolumeIn());
+          wMetricsPanelShowDataVolumeIn.setEnabled(dataVolumeVarEnabled);
+        }
+        if (wMetricsPanelShowDataVolumeOut != null
+            && !wMetricsPanelShowDataVolumeOut.isDisposed()) {
+          wMetricsPanelShowDataVolumeOut.setSelection(props.isMetricsPanelShowDataVolumeOut());
+          wMetricsPanelShowDataVolumeOut.setEnabled(dataVolumeVarEnabled);
+        }
+      }
+      // On macOS (and other non-Windows), dark mode follows system; sync from system so UI and
+      // props match. In Web environment, isSystemDarkTheme() is not available.
+      boolean darkMode;
+      if (EnvironmentUtils.getInstance().isWeb() || Const.isWindows()) {
+        darkMode = props.isDarkMode();
+      } else {
+        darkMode = Display.isSystemDarkTheme();
+        props.setDarkMode(darkMode);
+      }
+      wDarkMode.setSelection(darkMode);
+      // Hop Web: load follow-system and dark mode from audit; disable Dark mode when follow system
+      if (EnvironmentUtils.getInstance().isWeb() && wWebFollowSystemTheme != null) {
+        boolean followSystem = true;
+        try {
+          AuditState themeState =
+              AuditManager.retrieveState(
+                  HopGui.getInstance().getLog(), "hop-web", "preferences", "theme");
+          if (themeState != null) {
+            followSystem = themeState.extractBoolean("followSystem", true);
+            darkMode = themeState.extractBoolean("darkMode", darkMode);
+            wDarkMode.setSelection(darkMode);
+          }
+        } catch (Exception ignored) {
+          // ignore
+        }
+        wWebFollowSystemTheme.setSelection(followSystem);
+        wDarkMode.setEnabled(!followSystem);
+      }
+
+      // Reload global zoom
+      String globalZoomFactor = Integer.toString((int) (props.getGlobalZoomFactor() * 100)) + '%';
+      wGlobalZoom.setText(globalZoomFactor);
+
+      // Reload default locale
+      int idxDefault =
+          Const.indexOfString(
+              LanguageChoice.getInstance().getDefaultLocale().toString(),
+              GlobalMessages.localeCodes);
+      if (idxDefault >= 0) {
+        wDefaultLocale.select(idxDefault);
+      }
+    } finally {
+      // Always reset the flag
+      isReloading = false;
+    }
+  }
+
+  @GuiTab(
+      id = "10100-config-perspective-gui-options-tab",
+      parentId = ConfigurationPerspective.CONFIG_PERSPECTIVE_TABS,
+      description = "GUI options tab")
+  public void addGuiOptionsTab(CTabFolder wTabFolder) {
+    // Set initialization flag to prevent saving during widget creation
+    isInitializing = true;
+
+    Shell shell = wTabFolder.getShell();
+    PropsUi props = PropsUi.getInstance();
+    int margin = PropsUi.getMargin();
+
+    CTabItem wLookTab = new CTabItem(wTabFolder, SWT.NONE);
+    wLookTab.setFont(GuiResource.getInstance().getFontDefault());
+    wLookTab.setText(BaseMessages.getString(PKG, "EnterOptionsDialog.LookAndFeel.Label"));
+    wLookTab.setImage(GuiResource.getInstance().getImageColor());
+
+    ScrolledComposite sLookComp = new ScrolledComposite(wTabFolder, SWT.V_SCROLL | SWT.H_SCROLL);
+    sLookComp.setLayout(new FillLayout());
+
+    Composite wLookComp = new Composite(sLookComp, SWT.NONE);
+    PropsUi.setLook(wLookComp);
+
+    FormLayout lookLayout = new FormLayout();
+    lookLayout.marginWidth = PropsUi.getFormMargin();
+    lookLayout.marginHeight = PropsUi.getFormMargin();
+    wLookComp.setLayout(lookLayout);
+
+    // Initialize fonts
+    fixedFontData = props.getFixedFont();
+    fixedFont = new Font(shell.getDisplay(), fixedFontData);
+    graphFontData = props.getGraphFont();
+    graphFont = new Font(shell.getDisplay(), graphFontData);
+
+    // Track the last control for vertical positioning
+    Control lastControl = null;
+
+    // Expand all / Collapse all toolbar for the sections below
+    IToolbarContainer expandToolbarContainer =
+        ToolbarFacade.createToolbarContainer(wLookComp, SWT.WRAP | SWT.LEFT | SWT.HORIZONTAL);
+    Control expandToolbar = expandToolbarContainer.getControl();
+    GuiToolbarWidgets expandToolbarWidgets = new GuiToolbarWidgets();
+    expandToolbarWidgets.registerGuiPluginObject(this);
+    expandToolbarWidgets.createToolbarWidgets(expandToolbarContainer, GUI_PLUGIN_TOOLBAR_PARENT_ID);
+    FormData fdExpandToolbar = new FormData();
+    fdExpandToolbar.left = new FormAttachment(0, 0);
+    fdExpandToolbar.top = new FormAttachment(0, margin);
+    expandToolbar.setLayoutData(fdExpandToolbar);
+    expandToolbar.pack();
+    PropsUi.setLook(expandToolbar, Props.WIDGET_STYLE_TOOLBAR);
+    lookComp = wLookComp;
+    lookScrolledComposite = sLookComp;
+    lastControl = expandToolbar;
+
+    // Preferred language - at the top
+    Control[] defaultLocaleControls =
+        createComboField(
+            wLookComp,
+            "EnterOptionsDialog.DefaultLocale.Label",
+            null,
+            GlobalMessages.localeDescr,
+            lastControl,
+            margin);
+    wDefaultLocale = (Combo) defaultLocaleControls[1];
+    int idxDefault =
+        Const.indexOfString(
+            LanguageChoice.getInstance().getDefaultLocale().toString(), GlobalMessages.localeCodes);
+    if (idxDefault >= 0) {
+      wDefaultLocale.select(idxDefault);
+    }
+    lastControl = wDefaultLocale;
+
+    // Hide menu bar - at the top
+    wHideMenuBar =
+        createCheckbox(
+            wLookComp,
+            "EnterOptionsDialog.HideMenuBar.Label",
+            "EnterOptionsDialog.HideMenuBar.ToolTip",
+            props.isHidingMenuBar(),
+            lastControl,
+            margin);
+    lastControl = wHideMenuBar;
+
+    // Dark mode (Windows and Hop Web: user can toggle; macOS/other desktop follows system)
+    wDarkMode =
+        createCheckbox(
+            wLookComp,
+            "EnterOptionsDialog.DarkMode.Label",
+            null,
+            props.isDarkMode(),
+            lastControl,
+            margin);
+    wDarkMode.setEnabled(Const.isWindows() || EnvironmentUtils.getInstance().isWeb());
+    lastControl = wDarkMode;
+
+    // Hop Web only: follow system dark mode (disables Dark mode checkbox)
+    if (EnvironmentUtils.getInstance().isWeb()) {
+      wWebFollowSystemTheme =
+          createCheckbox(
+              wLookComp,
+              "EnterOptionsDialog.WebFollowSystemTheme.Label",
+              "EnterOptionsDialog.WebFollowSystemTheme.ToolTip",
+              false,
+              lastControl,
+              margin);
+      wWebFollowSystemTheme.addListener(
+          SWT.Selection,
+          e -> {
+            if (wDarkMode != null && !wDarkMode.isDisposed()) {
+              wDarkMode.setEnabled(!wWebFollowSystemTheme.getSelection());
+            }
+          });
+      lastControl = wWebFollowSystemTheme;
+    }
+
+    // General appearance section - using ExpandBar
+    ExpandBar appearanceExpandBar = new ExpandBar(wLookComp, SWT.NONE);
+    PropsUi.setLook(appearanceExpandBar);
+
+    FormData fdAppearanceExpandBar = new FormData();
+    fdAppearanceExpandBar.left = new FormAttachment(0, 0);
+    fdAppearanceExpandBar.right = new FormAttachment(100, 0);
+    fdAppearanceExpandBar.top = new FormAttachment(lastControl, 2 * margin);
+    appearanceExpandBar.setLayoutData(fdAppearanceExpandBar);
+
+    // Create expandable item for appearance
+    Composite appearanceContent = new Composite(appearanceExpandBar, SWT.NONE);
+    PropsUi.setLook(appearanceContent);
+    FormLayout appearanceLayout = new FormLayout();
+    appearanceLayout.marginWidth = PropsUi.getFormMargin();
+    appearanceLayout.marginHeight = PropsUi.getFormMargin();
+    appearanceContent.setLayout(appearanceLayout);
+
+    // Appearance controls inside the expandable content
+    Control lastAppearanceControl = null;
+
+    // Global zoom (at the top)
+    Control[] globalZoomControls =
+        createComboField(
+            appearanceContent,
+            "EnterOptionsDialog.GlobalZoom.Label",
+            null,
+            PropsUi.getGlobalZoomFactorLevels(),
+            lastAppearanceControl,
+            margin);
+    wGlobalZoom = (Combo) globalZoomControls[1];
+    String globalZoomFactor = Integer.toString((int) (props.getGlobalZoomFactor() * 100)) + '%';
+    wGlobalZoom.setText(globalZoomFactor);
+    lastAppearanceControl = wGlobalZoom;
+
+    // Icon size
+    Control[] iconSizeControls =
+        createTextField(
+            appearanceContent,
+            "EnterOptionsDialog.IconSize.Label",
+            null,
+            Integer.toString(props.getIconSize()),
+            lastAppearanceControl,
+            margin);
+    wIconSize = (Text) iconSizeControls[1];
+    wIconSize.setMessage(BaseMessages.getString(PKG, ENTER_OPTIONS_DIALOG_ENTER_NUMBER_HINT));
+    wIconSize.addListener(
+        SWT.Verify,
+        e -> {
+          String currentText = ((Text) e.widget).getText();
+          String newText =
+              currentText.substring(0, e.start) + e.text + currentText.substring(e.end);
+          if (!newText.isEmpty() && !newText.matches("\\d+")) {
+            e.doit = false;
+          }
+        });
+    lastAppearanceControl = wIconSize;
+
+    // Line width
+    Control[] lineWidthControls =
+        createTextField(
+            appearanceContent,
+            "EnterOptionsDialog.LineWidth.Label",
+            null,
+            Integer.toString(props.getLineWidth()),
+            lastAppearanceControl,
+            margin);
+    wLineWidth = (Text) lineWidthControls[1];
+    wLineWidth.setMessage(BaseMessages.getString(PKG, ENTER_OPTIONS_DIALOG_ENTER_NUMBER_HINT));
+    wLineWidth.addListener(
+        SWT.Verify,
+        e -> {
+          String currentText = ((Text) e.widget).getText();
+          String newText =
+              currentText.substring(0, e.start) + e.text + currentText.substring(e.end);
+          if (!newText.isEmpty() && !newText.matches("\\d+")) {
+            e.doit = false;
+          }
+        });
+    lastAppearanceControl = wLineWidth;
+
+    // Dialog middle percentage
+    Control[] middlePctControls =
+        createTextField(
+            appearanceContent,
+            "EnterOptionsDialog.DialogMiddlePercentage.Label",
+            null,
+            Integer.toString(props.getMiddlePct()),
+            lastAppearanceControl,
+            margin);
+    wMiddlePct = (Text) middlePctControls[1];
+    wMiddlePct.setMessage(BaseMessages.getString(PKG, ENTER_OPTIONS_DIALOG_ENTER_NUMBER_HINT));
+    wMiddlePct.addListener(
+        SWT.Verify,
+        e -> {
+          String currentText = ((Text) e.widget).getText();
+          String newText =
+              currentText.substring(0, e.start) + e.text + currentText.substring(e.end);
+          if (!newText.isEmpty() && !newText.matches("\\d+")) {
+            e.doit = false;
+          }
+        });
+
+    // Create the general appearance expand item
+    ExpandItem appearanceItem = new ExpandItem(appearanceExpandBar, SWT.NONE);
+    appearanceItem.setText(
+        BaseMessages.getString(PKG, "EnterOptionsDialog.Section.GeneralAppearance"));
+    appearanceItem.setControl(appearanceContent);
+    appearanceItem.setHeight(appearanceContent.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+    appearanceItem.setExpanded(true); // Start expanded
+
+    // Add expand/collapse listeners for space reclamation
+    appearanceExpandBar.addListener(
+        SWT.Expand,
+        e ->
+            Display.getCurrent()
+                .asyncExec(
+                    () -> {
+                      if (!wLookComp.isDisposed() && !sLookComp.isDisposed()) {
+                        wLookComp.layout();
+                        sLookComp.setMinHeight(wLookComp.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+                      }
+                    }));
+    appearanceExpandBar.addListener(
+        SWT.Collapse,
+        e ->
+            Display.getCurrent()
+                .asyncExec(
+                    () -> {
+                      if (!wLookComp.isDisposed() && !sLookComp.isDisposed()) {
+                        wLookComp.layout();
+                        sLookComp.setMinHeight(wLookComp.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+                      }
+                    }));
+
+    lastControl = appearanceExpandBar;
+
+    // macOS section: only there, since it only concerns how macOS attaches dialogs to windows.
+    if (OsHelper.isMac()) {
+      lastControl =
+          addSection(
+              wLookComp,
+              sLookComp,
+              lastControl,
+              margin,
+              "EnterOptionsDialog.Section.MacOs",
+              content ->
+                  wDialogsOnAnyScreen =
+                      createCheckbox(
+                          content,
+                          "EnterOptionsDialog.DialogsOnAnyScreen.Label",
+                          "EnterOptionsDialog.DialogsOnAnyScreen.ToolTip",
+                          props.isDialogsOnAnyScreenEnabled(),
+                          null,
+                          margin));
+    }
+
+    // Fonts section - using ExpandBar
+    ExpandBar fontsExpandBar = new ExpandBar(wLookComp, SWT.NONE);
+    PropsUi.setLook(fontsExpandBar);
+
+    FormData fdFontsExpandBar = new FormData();
+    fdFontsExpandBar.left = new FormAttachment(0, 0);
+    fdFontsExpandBar.right = new FormAttachment(100, 0);
+    fdFontsExpandBar.top = new FormAttachment(lastControl, 2 * margin);
+    fontsExpandBar.setLayoutData(fdFontsExpandBar);
+
+    // Create expandable item for fonts
+    Composite fontsContent = new Composite(fontsExpandBar, SWT.NONE);
+    PropsUi.setLook(fontsContent);
+    FormLayout fontsLayout = new FormLayout();
+    fontsLayout.marginWidth = PropsUi.getFormMargin();
+    fontsLayout.marginHeight = PropsUi.getFormMargin();
+    fontsContent.setLayout(fontsLayout);
+
+    // Fonts inside the expandable content
+    Control lastFontControl = null;
+
+    // Fixed width font
+    Control[] fixedFontControls =
+        createFontPicker(
+            fontsContent,
+            "EnterOptionsDialog.FixedWidthFont.Label",
+            shell,
+            lastFontControl,
+            margin);
+    wFixedCanvas = (Canvas) fixedFontControls[0];
+    wFixedCanvas.addPaintListener(this::paintFixedFont);
+    wFixedCanvas.addListener(SWT.MouseDown, e -> editFixedFont(shell));
+    Button wbFixedFont = (Button) fixedFontControls[1];
+    wbFixedFont.addListener(SWT.Selection, e -> editFixedFont(shell));
+    Button wdFixedFont = (Button) fixedFontControls[2];
+    wdFixedFont.addListener(SWT.Selection, e -> resetFixedFont(shell));
+    lastFontControl = wFixedCanvas;
+
+    // Graph font
+    Control[] graphFontControls =
+        createFontPicker(
+            fontsContent, "EnterOptionsDialog.GraphFont.Label", shell, lastFontControl, margin);
+    wGraphCanvas = (Canvas) graphFontControls[0];
+    wGraphCanvas.addPaintListener(this::drawGraphFont);
+    wGraphCanvas.addListener(SWT.MouseDown, e -> editGraphFont(shell));
+    Button wbGraphFont = (Button) graphFontControls[1];
+    wbGraphFont.addListener(SWT.Selection, e -> editGraphFont(shell));
+    Button wdGraphFont = (Button) graphFontControls[2];
+    wdGraphFont.addListener(SWT.Selection, e -> resetGraphFont(shell, props));
+
+    // Create the fonts expand item
+    ExpandItem fontsItem = new ExpandItem(fontsExpandBar, SWT.NONE);
+    fontsItem.setText(BaseMessages.getString(PKG, "EnterOptionsDialog.Section.Fonts"));
+    fontsItem.setControl(fontsContent);
+    fontsItem.setHeight(fontsContent.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+    fontsItem.setExpanded(true); // Start expanded
+
+    // Add expand/collapse listeners for space reclamation
+    fontsExpandBar.addListener(
+        SWT.Expand,
+        e ->
+            Display.getCurrent()
+                .asyncExec(
+                    () -> {
+                      if (!wLookComp.isDisposed() && !sLookComp.isDisposed()) {
+                        wLookComp.layout();
+                        sLookComp.setMinHeight(wLookComp.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+                      }
+                    }));
+    fontsExpandBar.addListener(
+        SWT.Collapse,
+        e ->
+            Display.getCurrent()
+                .asyncExec(
+                    () -> {
+                      if (!wLookComp.isDisposed() && !sLookComp.isDisposed()) {
+                        wLookComp.layout();
+                        sLookComp.setMinHeight(wLookComp.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+                      }
+                    }));
+
+    lastControl = fontsExpandBar;
+
+    // Pipeline & Workflow canvas section - using ExpandBar
+    ExpandBar canvasExpandBar = new ExpandBar(wLookComp, SWT.NONE);
+    PropsUi.setLook(canvasExpandBar);
+
+    FormData fdCanvasExpandBar = new FormData();
+    fdCanvasExpandBar.left = new FormAttachment(0, 0);
+    fdCanvasExpandBar.right = new FormAttachment(100, 0);
+    fdCanvasExpandBar.top = new FormAttachment(lastControl, 2 * margin);
+    canvasExpandBar.setLayoutData(fdCanvasExpandBar);
+
+    // Create expandable item for canvas settings
+    Composite canvasContent = new Composite(canvasExpandBar, SWT.NONE);
+    PropsUi.setLook(canvasContent);
+    FormLayout canvasLayout = new FormLayout();
+    canvasLayout.marginWidth = PropsUi.getFormMargin();
+    canvasLayout.marginHeight = PropsUi.getFormMargin();
+    canvasContent.setLayout(canvasLayout);
+
+    // Show canvas grid checkbox inside the expandable content
+    Control lastCanvasControl = null;
+    wShowCanvasGrid =
+        createCheckbox(
+            canvasContent,
+            "EnterOptionsDialog.ShowCanvasGrid.Label",
+            "EnterOptionsDialog.ShowCanvasGrid.ToolTip",
+            props.isShowCanvasGridEnabled(),
+            lastCanvasControl,
+            margin);
+    lastCanvasControl = wShowCanvasGrid;
+
+    // Grid size - placed under Show canvas grid checkbox
+    Control[] gridSizeControls =
+        createTextField(
+            canvasContent,
+            "EnterOptionsDialog.GridSize.Label",
+            "EnterOptionsDialog.GridSize.ToolTip",
+            Integer.toString(props.getCanvasGridSize()),
+            lastCanvasControl,
+            margin);
+    wGridSize = (Text) gridSizeControls[1];
+    wlGridSize = (Label) gridSizeControls[0];
+    wGridSize.setMessage(BaseMessages.getString(PKG, ENTER_OPTIONS_DIALOG_ENTER_NUMBER_HINT));
+    wGridSize.addListener(
+        SWT.Verify,
+        e -> {
+          String currentText = ((Text) e.widget).getText();
+          String newText =
+              currentText.substring(0, e.start) + e.text + currentText.substring(e.end);
+          if (!newText.isEmpty() && !newText.matches("\\d+")) {
+            e.doit = false;
+          }
+        });
+
+    lastCanvasControl = wGridSize;
+
+    // Show viewport checkbox (inverted logic from hideViewport)
+    wHideViewport =
+        createCheckbox(
+            canvasContent,
+            "EnterOptionsDialog.ShowViewport.Label",
+            "EnterOptionsDialog.ShowViewport.ToolTip",
+            !props.isHideViewportEnabled(),
+            lastCanvasControl,
+            margin);
+    lastCanvasControl = wHideViewport;
+
+    // Use double click on canvas
+    wUseDoubleClick =
+        createCheckbox(
+            canvasContent,
+            "EnterOptionsDialog.UseDoubleClickOnCanvas.Label",
+            null,
+            props.useDoubleClick(),
+            lastCanvasControl,
+            margin);
+    lastCanvasControl = wUseDoubleClick;
+
+    // Use right click for the context dialog
+    wUseRightClickForContextDialog =
+        createCheckbox(
+            canvasContent,
+            "EnterOptionsDialog.UseRightClickForContextDialog.Label",
+            "EnterOptionsDialog.UseRightClickForContextDialog.ToolTip",
+            props.useRightClickForContextDialog(),
+            lastCanvasControl,
+            margin);
+    lastCanvasControl = wUseRightClickForContextDialog;
+
+    // Use menus instead of the context dialog
+    wUseMenusInsteadOfContextDialog =
+        createCheckbox(
+            canvasContent,
+            "EnterOptionsDialog.UseMenusInsteadOfContextDialog.Label",
+            "EnterOptionsDialog.UseMenusInsteadOfContextDialog.ToolTip",
+            props.useMenusInsteadOfContextDialog(),
+            lastCanvasControl,
+            margin);
+    lastCanvasControl = wUseMenusInsteadOfContextDialog;
+
+    // Draw border around canvas names
+    wDrawBorderAroundCanvasNames =
+        createCheckbox(
+            canvasContent,
+            "EnterOptionsDialog.DrawBorderAroundCanvasNamesOnCanvas.Label",
+            null,
+            props.isBorderDrawnAroundCanvasNames(),
+            lastCanvasControl,
+            margin);
+    lastCanvasControl = wDrawBorderAroundCanvasNames;
+
+    // Enable infinite move
+    wEnableInfiniteMove =
+        createCheckbox(
+            canvasContent,
+            "EnterOptionsDialog.EnableInfiniteMove.Label",
+            "EnterOptionsDialog.EnableInfiniteMove.ToolTip",
+            props.isInfiniteCanvasMoveEnabled(),
+            lastCanvasControl,
+            margin);
+    lastCanvasControl = wEnableInfiniteMove;
+
+    // Disable zoom scrolling
+    wDisableZoomScrolling =
+        createCheckbox(
+            canvasContent,
+            "EnterOptionsDialog.DisableZoomScrolling.Label",
+            "EnterOptionsDialog.DisableZoomScrolling.ToolTip",
+            props.isZoomScrollingDisabled(),
+            lastCanvasControl,
+            margin);
+    lastCanvasControl = wDisableZoomScrolling;
+
+    // Show metrics above running transforms?
+    wMetricsOnTransforms =
+        createCheckbox(
+            canvasContent,
+            "EnterOptionsDialog.ShowMetricsOnSelectedTransforms.Label",
+            "EnterOptionsDialog.ShowMetricsOnSelectedTransforms.ToolTip",
+            props.isShowingMetricsAboveRunningTransforms(),
+            lastCanvasControl,
+            margin);
+
+    // Create the expand item
+    ExpandItem canvasItem = new ExpandItem(canvasExpandBar, SWT.NONE);
+    canvasItem.setText(
+        BaseMessages.getString(PKG, "EnterOptionsDialog.Section.PipelineWorkflowCanvas"));
+    canvasItem.setControl(canvasContent);
+    canvasItem.setHeight(canvasContent.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+    canvasItem.setExpanded(true); // Start expanded
+
+    // Add expand/collapse listeners for space reclamation
+    canvasExpandBar.addListener(
+        SWT.Expand,
+        e ->
+            Display.getCurrent()
+                .asyncExec(
+                    () -> {
+                      if (!wLookComp.isDisposed() && !sLookComp.isDisposed()) {
+                        wLookComp.layout();
+                        sLookComp.setMinHeight(wLookComp.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+                      }
+                    }));
+    canvasExpandBar.addListener(
+        SWT.Collapse,
+        e ->
+            Display.getCurrent()
+                .asyncExec(
+                    () -> {
+                      if (!wLookComp.isDisposed() && !sLookComp.isDisposed()) {
+                        wLookComp.layout();
+                        sLookComp.setMinHeight(wLookComp.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+                      }
+                    }));
+
+    lastControl = canvasExpandBar;
+
+    // Auto-layout section - using ExpandBar
+    ExpandBar autoLayoutExpandBar = new ExpandBar(wLookComp, SWT.NONE);
+    PropsUi.setLook(autoLayoutExpandBar);
+
+    FormData fdAutoLayoutExpandBar = new FormData();
+    fdAutoLayoutExpandBar.left = new FormAttachment(0, 0);
+    fdAutoLayoutExpandBar.right = new FormAttachment(100, 0);
+    fdAutoLayoutExpandBar.top = new FormAttachment(lastControl, 2 * margin);
+    autoLayoutExpandBar.setLayoutData(fdAutoLayoutExpandBar);
+
+    Composite autoLayoutContent = new Composite(autoLayoutExpandBar, SWT.NONE);
+    PropsUi.setLook(autoLayoutContent);
+    FormLayout autoLayoutLayout = new FormLayout();
+    autoLayoutLayout.marginWidth = PropsUi.getFormMargin();
+    autoLayoutLayout.marginHeight = PropsUi.getFormMargin();
+    autoLayoutContent.setLayout(autoLayoutLayout);
+
+    Control lastAutoLayoutControl = null;
+
+    // Direction
+    String[] directionLabels = {
+      BaseMessages.getString(PKG, "EnterOptionsDialog.AutoLayout.Direction.LeftRight"),
+      BaseMessages.getString(PKG, "EnterOptionsDialog.AutoLayout.Direction.RightLeft"),
+      BaseMessages.getString(PKG, "EnterOptionsDialog.AutoLayout.Direction.TopBottom"),
+      BaseMessages.getString(PKG, "EnterOptionsDialog.AutoLayout.Direction.BottomTop")
+    };
+    Control[] directionControls =
+        createComboField(
+            autoLayoutContent,
+            "EnterOptionsDialog.AutoLayout.Direction.Label",
+            "EnterOptionsDialog.AutoLayout.Direction.ToolTip",
+            directionLabels,
+            lastAutoLayoutControl,
+            margin);
+    wAutoLayoutDirection = (Combo) directionControls[1];
+    int directionIndex =
+        Const.indexOfString(props.getAutoLayoutDirection(), AUTO_LAYOUT_DIRECTION_CODES);
+    wAutoLayoutDirection.select(Math.max(0, directionIndex));
+    lastAutoLayoutControl = wAutoLayoutDirection;
+
+    // Layer spacing
+    Control[] layerSpacingControls =
+        createTextField(
+            autoLayoutContent,
+            "EnterOptionsDialog.AutoLayout.LayerSpacing.Label",
+            "EnterOptionsDialog.AutoLayout.LayerSpacing.ToolTip",
+            Integer.toString(props.getAutoLayoutLayerSpacing()),
+            lastAutoLayoutControl,
+            margin);
+    wAutoLayoutLayerSpacing = (Text) layerSpacingControls[1];
+    wAutoLayoutLayerSpacing.setMessage(
+        BaseMessages.getString(PKG, ENTER_OPTIONS_DIALOG_ENTER_NUMBER_HINT));
+    wAutoLayoutLayerSpacing.addListener(SWT.Verify, this::verifyNumber);
+    lastAutoLayoutControl = wAutoLayoutLayerSpacing;
+
+    // Node spacing
+    Control[] nodeSpacingControls =
+        createTextField(
+            autoLayoutContent,
+            "EnterOptionsDialog.AutoLayout.NodeSpacing.Label",
+            "EnterOptionsDialog.AutoLayout.NodeSpacing.ToolTip",
+            Integer.toString(props.getAutoLayoutNodeSpacing()),
+            lastAutoLayoutControl,
+            margin);
+    wAutoLayoutNodeSpacing = (Text) nodeSpacingControls[1];
+    wAutoLayoutNodeSpacing.setMessage(
+        BaseMessages.getString(PKG, ENTER_OPTIONS_DIALOG_ENTER_NUMBER_HINT));
+    wAutoLayoutNodeSpacing.addListener(SWT.Verify, this::verifyNumber);
+    lastAutoLayoutControl = wAutoLayoutNodeSpacing;
+
+    // Crossing-reduction iterations
+    Control[] iterationsControls =
+        createTextField(
+            autoLayoutContent,
+            "EnterOptionsDialog.AutoLayout.CrossingIterations.Label",
+            "EnterOptionsDialog.AutoLayout.CrossingIterations.ToolTip",
+            Integer.toString(props.getAutoLayoutCrossingIterations()),
+            lastAutoLayoutControl,
+            margin);
+    wAutoLayoutCrossingIterations = (Text) iterationsControls[1];
+    wAutoLayoutCrossingIterations.setMessage(
+        BaseMessages.getString(PKG, ENTER_OPTIONS_DIALOG_ENTER_NUMBER_HINT));
+    wAutoLayoutCrossingIterations.addListener(SWT.Verify, this::verifyNumber);
+    lastAutoLayoutControl = wAutoLayoutCrossingIterations;
+
+    // Move notes with their nearest node
+    wAutoLayoutMoveNotes =
+        createCheckbox(
+            autoLayoutContent,
+            "EnterOptionsDialog.AutoLayout.MoveNotes.Label",
+            "EnterOptionsDialog.AutoLayout.MoveNotes.ToolTip",
+            props.isAutoLayoutMoveNotes(),
+            lastAutoLayoutControl,
+            margin);
+
+    ExpandItem autoLayoutItem = new ExpandItem(autoLayoutExpandBar, SWT.NONE);
+    autoLayoutItem.setText(BaseMessages.getString(PKG, "EnterOptionsDialog.Section.AutoLayout"));
+    autoLayoutItem.setControl(autoLayoutContent);
+    autoLayoutItem.setHeight(autoLayoutContent.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+    autoLayoutItem.setExpanded(true);
+
+    autoLayoutExpandBar.addListener(
+        SWT.Expand,
+        e ->
+            Display.getCurrent()
+                .asyncExec(
+                    () -> {
+                      if (!wLookComp.isDisposed() && !sLookComp.isDisposed()) {
+                        wLookComp.layout();
+                        sLookComp.setMinHeight(wLookComp.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+                      }
+                    }));
+    autoLayoutExpandBar.addListener(
+        SWT.Collapse,
+        e ->
+            Display.getCurrent()
+                .asyncExec(
+                    () -> {
+                      if (!wLookComp.isDisposed() && !sLookComp.isDisposed()) {
+                        wLookComp.layout();
+                        sLookComp.setMinHeight(wLookComp.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+                      }
+                    }));
+
+    lastControl = autoLayoutExpandBar;
+
+    // Tables & grids section - using ExpandBar
+    ExpandBar tablesExpandBar = new ExpandBar(wLookComp, SWT.NONE);
+    PropsUi.setLook(tablesExpandBar);
+
+    FormData fdTablesExpandBar = new FormData();
+    fdTablesExpandBar.left = new FormAttachment(0, 0);
+    fdTablesExpandBar.right = new FormAttachment(100, 0);
+    fdTablesExpandBar.top = new FormAttachment(lastControl, 2 * margin);
+    tablesExpandBar.setLayoutData(fdTablesExpandBar);
+
+    // Create expandable item for tables & grids
+    Composite tablesContent = new Composite(tablesExpandBar, SWT.NONE);
+    PropsUi.setLook(tablesContent);
+    FormLayout tablesLayout = new FormLayout();
+    tablesLayout.marginWidth = PropsUi.getFormMargin();
+    tablesLayout.marginHeight = PropsUi.getFormMargin();
+    tablesContent.setLayout(tablesLayout);
+
+    // Show toolbar checkbox inside the expandable content
+    Control lastTablesControl = null;
+    wShowTableViewToolbar =
+        createCheckbox(
+            tablesContent,
+            "EnterOptionsDialog.ShowTableViewToolbar.Label",
+            "EnterOptionsDialog.ShowTableViewToolbar.ToolTip",
+            props.isShowTableViewToolbar(),
+            lastTablesControl,
+            margin);
+    lastTablesControl = wShowTableViewToolbar;
+
+    wShowTextCompositeToolbar =
+        createCheckbox(
+            tablesContent,
+            "EnterOptionsDialog.ShowTextCompositeToolbar.Label",
+            "EnterOptionsDialog.ShowTextCompositeToolbar.ToolTip",
+            props.isShowTextCompositeToolbar(),
+            lastTablesControl,
+            margin);
+    lastTablesControl = wShowTextCompositeToolbar;
+
+    // Maximum number of characters shown in a preview grid cell before it is truncated.
+    Control[] maxPreviewCellLengthControls =
+        createTextField(
+            tablesContent,
+            "EnterOptionsDialog.MaxPreviewCellLength.Label",
+            "EnterOptionsDialog.MaxPreviewCellLength.ToolTip",
+            Integer.toString(props.getMaxPreviewCellLength()),
+            lastTablesControl,
+            margin);
+    wMaxPreviewCellLength = (Text) maxPreviewCellLengthControls[1];
+    wMaxPreviewCellLength.setMessage(
+        BaseMessages.getString(PKG, ENTER_OPTIONS_DIALOG_ENTER_NUMBER_HINT));
+    wMaxPreviewCellLength.addListener(SWT.Verify, this::verifyNumber);
+    lastTablesControl = wMaxPreviewCellLength;
+
+    // Show line breaks / tabs as symbols in preview cells (default off: cut at the first break).
+    wShowPreviewLineBreaks =
+        createCheckbox(
+            tablesContent,
+            "EnterOptionsDialog.ShowPreviewLineBreaks.Label",
+            "EnterOptionsDialog.ShowPreviewLineBreaks.ToolTip",
+            props.isShowPreviewLineBreaksAsSymbols(),
+            lastTablesControl,
+            margin);
+
+    // Create the expand item
+    ExpandItem tablesItem = new ExpandItem(tablesExpandBar, SWT.NONE);
+    tablesItem.setText(BaseMessages.getString(PKG, "EnterOptionsDialog.Section.TablesGrids"));
+    tablesItem.setControl(tablesContent);
+    tablesItem.setHeight(tablesContent.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+    tablesItem.setExpanded(true); // Start expanded
+
+    // Add expand/collapse listeners for space reclamation
+    tablesExpandBar.addListener(
+        SWT.Expand,
+        e ->
+            Display.getCurrent()
+                .asyncExec(
+                    () -> {
+                      if (!wLookComp.isDisposed() && !sLookComp.isDisposed()) {
+                        wLookComp.layout();
+                        sLookComp.setMinHeight(wLookComp.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+                      }
+                    }));
+    tablesExpandBar.addListener(
+        SWT.Collapse,
+        e ->
+            Display.getCurrent()
+                .asyncExec(
+                    () -> {
+                      if (!wLookComp.isDisposed() && !sLookComp.isDisposed()) {
+                        wLookComp.layout();
+                        sLookComp.setMinHeight(wLookComp.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+                      }
+                    }));
+
+    lastControl = tablesExpandBar;
+
+    // Metrics panel section - using ExpandBar
+    ExpandBar metricsPanelExpandBar = new ExpandBar(wLookComp, SWT.NONE);
+    PropsUi.setLook(metricsPanelExpandBar);
+
+    FormData fdMetricsPanelExpandBar = new FormData();
+    fdMetricsPanelExpandBar.left = new FormAttachment(0, 0);
+    fdMetricsPanelExpandBar.right = new FormAttachment(100, 0);
+    fdMetricsPanelExpandBar.top = new FormAttachment(lastControl, 2 * margin);
+    metricsPanelExpandBar.setLayoutData(fdMetricsPanelExpandBar);
+
+    Composite metricsPanelContent = new Composite(metricsPanelExpandBar, SWT.NONE);
+    PropsUi.setLook(metricsPanelContent);
+    FormLayout metricsPanelLayout = new FormLayout();
+    metricsPanelLayout.marginWidth = PropsUi.getFormMargin();
+    metricsPanelLayout.marginHeight = PropsUi.getFormMargin();
+    metricsPanelContent.setLayout(metricsPanelLayout);
+
+    Control lastMetricsPanelControl = null;
+    wMetricsPanelShowUnits =
+        createCheckbox(
+            metricsPanelContent,
+            "EnterOptionsDialog.MetricsPanel.ShowUnits.Label",
+            "EnterOptionsDialog.MetricsPanel.ShowUnits.ToolTip",
+            props.isMetricsPanelShowUnits(),
+            lastMetricsPanelControl,
+            margin);
+    lastMetricsPanelControl = wMetricsPanelShowUnits;
+
+    wMetricsPanelDynamicColumnResize =
+        createCheckbox(
+            metricsPanelContent,
+            "EnterOptionsDialog.MetricsPanel.DynamicColumnResize.Label",
+            "EnterOptionsDialog.MetricsPanel.DynamicColumnResize.ToolTip",
+            props.isMetricsPanelDynamicColumnResize(),
+            lastMetricsPanelControl,
+            margin);
+    lastMetricsPanelControl = wMetricsPanelDynamicColumnResize;
+
+    wMetricsPanelShowInput =
+        createCheckbox(
+            metricsPanelContent,
+            "EnterOptionsDialog.MetricsPanel.ShowInput.Label",
+            null,
+            props.isMetricsPanelShowInput(),
+            lastMetricsPanelControl,
+            margin);
+    lastMetricsPanelControl = wMetricsPanelShowInput;
+
+    wMetricsPanelShowRead =
+        createCheckbox(
+            metricsPanelContent,
+            "EnterOptionsDialog.MetricsPanel.ShowRead.Label",
+            null,
+            props.isMetricsPanelShowRead(),
+            lastMetricsPanelControl,
+            margin);
+    lastMetricsPanelControl = wMetricsPanelShowRead;
+
+    wMetricsPanelShowOutput =
+        createCheckbox(
+            metricsPanelContent,
+            "EnterOptionsDialog.MetricsPanel.ShowOutput.Label",
+            null,
+            props.isMetricsPanelShowOutput(),
+            lastMetricsPanelControl,
+            margin);
+    lastMetricsPanelControl = wMetricsPanelShowOutput;
+
+    wMetricsPanelShowUpdated =
+        createCheckbox(
+            metricsPanelContent,
+            "EnterOptionsDialog.MetricsPanel.ShowUpdated.Label",
+            null,
+            props.isMetricsPanelShowUpdated(),
+            lastMetricsPanelControl,
+            margin);
+    lastMetricsPanelControl = wMetricsPanelShowUpdated;
+
+    wMetricsPanelShowRejected =
+        createCheckbox(
+            metricsPanelContent,
+            "EnterOptionsDialog.MetricsPanel.ShowRejected.Label",
+            null,
+            props.isMetricsPanelShowRejected(),
+            lastMetricsPanelControl,
+            margin);
+    lastMetricsPanelControl = wMetricsPanelShowRejected;
+
+    wMetricsPanelShowBuffersInput =
+        createCheckbox(
+            metricsPanelContent,
+            "EnterOptionsDialog.MetricsPanel.ShowBuffersInput.Label",
+            null,
+            props.isMetricsPanelShowBuffersInput(),
+            lastMetricsPanelControl,
+            margin);
+    lastMetricsPanelControl = wMetricsPanelShowBuffersInput;
+
+    wMetricsPanelShowDataVolume =
+        createCheckbox(
+            metricsPanelContent,
+            "EnterOptionsDialog.MetricsPanel.ShowDataVolume.Label",
+            "EnterOptionsDialog.MetricsPanel.ShowDataVolume.ToolTip",
+            props.isMetricsPanelShowDataVolume(),
+            lastMetricsPanelControl,
+            margin);
+    lastMetricsPanelControl = wMetricsPanelShowDataVolume;
+    wMetricsPanelShowDataVolumeIn =
+        createCheckbox(
+            metricsPanelContent,
+            "EnterOptionsDialog.MetricsPanel.ShowDataVolumeIn.Label",
+            "EnterOptionsDialog.MetricsPanel.ShowDataVolumeIn.ToolTip",
+            props.isMetricsPanelShowDataVolumeIn(),
+            lastMetricsPanelControl,
+            margin);
+    lastMetricsPanelControl = wMetricsPanelShowDataVolumeIn;
+    wMetricsPanelShowDataVolumeOut =
+        createCheckbox(
+            metricsPanelContent,
+            "EnterOptionsDialog.MetricsPanel.ShowDataVolumeOut.Label",
+            "EnterOptionsDialog.MetricsPanel.ShowDataVolumeOut.ToolTip",
+            props.isMetricsPanelShowDataVolumeOut(),
+            lastMetricsPanelControl,
+            margin);
+    lastMetricsPanelControl = wMetricsPanelShowDataVolumeOut;
+    boolean dataVolumeVarEnabled =
+        Const.toBoolean(
+            HopGui.getInstance().getVariables().getVariable(Const.HOP_METRIC_DATA_VOLUME, "N"));
+    wMetricsPanelShowDataVolume.setEnabled(dataVolumeVarEnabled);
+    wMetricsPanelShowDataVolumeIn.setEnabled(dataVolumeVarEnabled);
+    wMetricsPanelShowDataVolumeOut.setEnabled(dataVolumeVarEnabled);
+
+    ExpandItem metricsPanelItem = new ExpandItem(metricsPanelExpandBar, SWT.NONE);
+    metricsPanelItem.setText(
+        BaseMessages.getString(PKG, "EnterOptionsDialog.Section.MetricsPanel"));
+    metricsPanelItem.setControl(metricsPanelContent);
+    metricsPanelItem.setHeight(metricsPanelContent.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+    metricsPanelItem.setExpanded(true);
+
+    metricsPanelExpandBar.addListener(
+        SWT.Expand,
+        e ->
+            Display.getCurrent()
+                .asyncExec(
+                    () -> {
+                      if (!wLookComp.isDisposed() && !sLookComp.isDisposed()) {
+                        wLookComp.layout();
+                        sLookComp.setMinHeight(wLookComp.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+                      }
+                    }));
+    metricsPanelExpandBar.addListener(
+        SWT.Collapse,
+        e ->
+            Display.getCurrent()
+                .asyncExec(
+                    () -> {
+                      if (!wLookComp.isDisposed() && !sLookComp.isDisposed()) {
+                        wLookComp.layout();
+                        sLookComp.setMinHeight(wLookComp.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+                      }
+                    }));
+
+    lastControl = metricsPanelExpandBar;
+
+    FormData fdLookComp = new FormData();
+    fdLookComp.left = new FormAttachment(0, 0);
+    fdLookComp.right = new FormAttachment(100, 0);
+    fdLookComp.top = new FormAttachment(0, 0);
+    fdLookComp.bottom = new FormAttachment(100, 100);
+    wLookComp.setLayoutData(fdLookComp);
+
+    wLookComp.pack();
+
+    Rectangle bounds = wLookComp.getBounds();
+    sLookComp.setContent(wLookComp);
+    sLookComp.setExpandHorizontal(true);
+    sLookComp.setExpandVertical(true);
+    sLookComp.setMinWidth(bounds.width);
+    sLookComp.setMinHeight(bounds.height);
+
+    wLookTab.setControl(sLookComp);
+
+    // Reset initialization flag so saveValues can work normally
+    isInitializing = false;
+  }
+
+  private void drawGraphFont(PaintEvent pe) {
+    pe.gc.setFont(graphFont);
+    Rectangle max = wGraphCanvas.getBounds();
+    String name = graphFontData.getName() + " - " + graphFontData.getHeight();
+    Point size = pe.gc.textExtent(name);
+
+    pe.gc.drawText(name, (max.width - size.x) / 2, (max.height - size.y) / 2, true);
+  }
+
+  private void editGraphFont(Shell shell) {
+    FontDialog fd = new FontDialog(shell);
+    fd.setFontList(new FontData[] {graphFontData});
+    FontData newfd = fd.open();
+    if (newfd != null) {
+      graphFontData = newfd;
+      graphFont.dispose();
+      graphFont = new Font(shell.getDisplay(), graphFontData);
+      wGraphCanvas.redraw();
+      saveValues();
+    }
+  }
+
+  private void resetGraphFont(Shell shell, PropsUi props) {
+    graphFont.dispose();
+
+    graphFontData = props.getDefaultFontData();
+    graphFont = new Font(shell.getDisplay(), graphFontData);
+    wGraphCanvas.redraw();
+    saveValues();
+  }
+
+  private void resetFixedFont(Shell shell) {
+    fixedFontData =
+        new FontData(
+            PropsUi.getInstance().getFixedFont().getName(),
+            PropsUi.getInstance().getFixedFont().getHeight(),
+            PropsUi.getInstance().getFixedFont().getStyle());
+    fixedFont.dispose();
+    fixedFont = new Font(shell.getDisplay(), fixedFontData);
+    wFixedCanvas.redraw();
+    saveValues();
+  }
+
+  private void editFixedFont(Shell shell) {
+    FontDialog fd = new FontDialog(shell);
+    fd.setFontList(new FontData[] {fixedFontData});
+    FontData newfd = fd.open();
+    if (newfd != null) {
+      fixedFontData = newfd;
+      fixedFont.dispose();
+      fixedFont = new Font(shell.getDisplay(), fixedFontData);
+      wFixedCanvas.redraw();
+      saveValues();
+    }
+  }
+
+  private void paintFixedFont(PaintEvent pe) {
+    pe.gc.setFont(fixedFont);
+    Rectangle max = wFixedCanvas.getBounds();
+    String name = fixedFontData.getName() + " - " + fixedFontData.getHeight();
+    Point size = pe.gc.textExtent(name);
+
+    pe.gc.drawText(name, (max.width - size.x) / 2, (max.height - size.y) / 2, true);
+  }
+
+  /**
+   * Setting the layout of a <i>Reset</i> option button. Either a button image is set - if existing
+   * - or a text.
+   *
+   * @param button The button
+   */
+  private FormData layoutResetOptionButton(Button button) {
+    FormData fd = new FormData();
+    Image editButton = GuiResource.getInstance().getImageResetOption();
+    if (editButton != null) {
+      button.setImage(editButton);
+      button.setBackground(GuiResource.getInstance().getColorWhite());
+      fd.width = editButton.getBounds().width + 20;
+      fd.height = editButton.getBounds().height;
+    } else {
+      button.setText(BaseMessages.getString(PKG, "EnterOptionsDialog.Button.Reset"));
+    }
+
+    button.setToolTipText(BaseMessages.getString(PKG, "EnterOptionsDialog.Button.Reset.Tooltip"));
+    return fd;
+  }
+
+  /**
+   * Setting the layout of an <i>Edit</i> option button. Either a button image is set - if existing
+   * - or a text.
+   *
+   * @param button The button
+   */
+  private FormData layoutEditOptionButton(Button button) {
+    FormData fd = new FormData();
+    Image editButton = GuiResource.getInstance().getImageEdit();
+    if (editButton != null) {
+      button.setImage(editButton);
+      button.setBackground(GuiResource.getInstance().getColorWhite());
+      fd.width = editButton.getBounds().width + 20;
+      fd.height = editButton.getBounds().height;
+    } else {
+      button.setText(BaseMessages.getString(PKG, "EnterOptionsDialog.Button.Edit"));
+    }
+
+    button.setToolTipText(BaseMessages.getString(PKG, "EnterOptionsDialog.Button.Edit.Tooltip"));
+    return fd;
+  }
+
+  private void saveValues() {
+    // Don't save if we're currently reloading values or initializing widgets
+    if (isReloading || isInitializing) {
+      return;
+    }
+
+    PropsUi props = PropsUi.getInstance();
+
+    props.setFixedFont(fixedFontData);
+    props.setGraphFont(graphFontData);
+    props.setIconSize(Const.toInt(wIconSize.getText(), props.getIconSize()));
+    props.setLineWidth(Const.toInt(wLineWidth.getText(), props.getLineWidth()));
+    props.setMiddlePct(Const.toInt(wMiddlePct.getText(), props.getMiddlePct()));
+    props.setCanvasGridSize(Const.toInt(wGridSize.getText(), 1));
+    int directionIndex = wAutoLayoutDirection.getSelectionIndex();
+    if (directionIndex < 0 || directionIndex >= AUTO_LAYOUT_DIRECTION_CODES.length) {
+      directionIndex = 0;
+    }
+    props.setAutoLayoutDirection(AUTO_LAYOUT_DIRECTION_CODES[directionIndex]);
+    props.setAutoLayoutLayerSpacing(
+        Const.toInt(wAutoLayoutLayerSpacing.getText(), props.getAutoLayoutLayerSpacing()));
+    props.setAutoLayoutNodeSpacing(
+        Const.toInt(wAutoLayoutNodeSpacing.getText(), props.getAutoLayoutNodeSpacing()));
+    props.setAutoLayoutCrossingIterations(
+        Const.toInt(
+            wAutoLayoutCrossingIterations.getText(), props.getAutoLayoutCrossingIterations()));
+    props.setAutoLayoutMoveNotes(wAutoLayoutMoveNotes.getSelection());
+    props.setGlobalZoomFactor(Const.toDouble(wGlobalZoom.getText().replace("%", ""), 100) / 100);
+    props.setShowCanvasGridEnabled(wShowCanvasGrid.getSelection());
+    props.setHideViewportEnabled(
+        !wHideViewport.getSelection()); // Inverted: checkbox is "show", property is "hide"
+    props.setUseDoubleClickOnCanvas(wUseDoubleClick.getSelection());
+    props.setUseRightClickForContextDialog(wUseRightClickForContextDialog.getSelection());
+    props.setUseMenusInsteadOfContextDialog(wUseMenusInsteadOfContextDialog.getSelection());
+    if (wDialogsOnAnyScreen != null) {
+      props.setDialogsOnAnyScreenEnabled(wDialogsOnAnyScreen.getSelection());
+    }
+    props.setDrawBorderAroundCanvasNames(wDrawBorderAroundCanvasNames.getSelection());
+    props.setInfiniteCanvasMoveEnabled(wEnableInfiniteMove.getSelection());
+    props.setZoomScrollingDisabled(wDisableZoomScrolling.getSelection());
+    props.setShowingMetricsAboveRunningTransforms(wMetricsOnTransforms.getSelection());
+    // On macOS (and other non-Windows), dark mode follows system; persist system theme, not
+    // checkbox. In Web environment, isSystemDarkTheme() is not available.
+    boolean previousDarkMode = props.isDarkMode();
+    boolean darkMode;
+    if (EnvironmentUtils.getInstance().isWeb() || Const.isWindows()) {
+      darkMode = wDarkMode.getSelection();
+    } else {
+      darkMode = Display.isSystemDarkTheme();
+    }
+    props.setDarkMode(darkMode);
+    props.setHidingMenuBar(wHideMenuBar.getSelection());
+    props.setShowTableViewToolbar(wShowTableViewToolbar.getSelection());
+    if (wShowTextCompositeToolbar != null && !wShowTextCompositeToolbar.isDisposed()) {
+      props.setShowTextCompositeToolbar(wShowTextCompositeToolbar.getSelection());
+    }
+    props.setMaxPreviewCellLength(
+        Const.toInt(wMaxPreviewCellLength.getText(), props.getMaxPreviewCellLength()));
+    props.setShowPreviewLineBreaksAsSymbols(wShowPreviewLineBreaks.getSelection());
+    props.setMetricsPanelShowUnits(wMetricsPanelShowUnits.getSelection());
+    if (wMetricsPanelDynamicColumnResize != null
+        && !wMetricsPanelDynamicColumnResize.isDisposed()) {
+      props.setMetricsPanelDynamicColumnResize(wMetricsPanelDynamicColumnResize.getSelection());
+    }
+    props.setMetricsPanelShowInput(wMetricsPanelShowInput.getSelection());
+    props.setMetricsPanelShowRead(wMetricsPanelShowRead.getSelection());
+    props.setMetricsPanelShowOutput(wMetricsPanelShowOutput.getSelection());
+    props.setMetricsPanelShowUpdated(wMetricsPanelShowUpdated.getSelection());
+    props.setMetricsPanelShowRejected(wMetricsPanelShowRejected.getSelection());
+    props.setMetricsPanelShowBuffersInput(wMetricsPanelShowBuffersInput.getSelection());
+    boolean dataVolumeVarEnabled =
+        Const.toBoolean(
+            HopGui.getInstance().getVariables().getVariable(Const.HOP_METRIC_DATA_VOLUME, "N"));
+    props.setMetricsPanelShowDataVolume(
+        dataVolumeVarEnabled && wMetricsPanelShowDataVolume.getSelection());
+    props.setMetricsPanelShowDataVolumeIn(
+        dataVolumeVarEnabled && wMetricsPanelShowDataVolumeIn.getSelection());
+    props.setMetricsPanelShowDataVolumeOut(
+        dataVolumeVarEnabled && wMetricsPanelShowDataVolumeOut.getSelection());
+
+    int defaultLocaleIndex = wDefaultLocale.getSelectionIndex();
+    if (defaultLocaleIndex < 0 || defaultLocaleIndex >= GlobalMessages.localeCodes.length) {
+      // Code hardening, when the combo-box ever gets in a strange state,
+      // use the first language as default (should be English)
+      defaultLocaleIndex = 0;
+    }
+    String defaultLocale = GlobalMessages.localeCodes[defaultLocaleIndex];
+    LanguageChoice.getInstance().setDefaultLocale(EnvUtil.createLocale(defaultLocale));
+
+    if (EnvironmentUtils.getInstance().isWeb()) {
+      // Hop Web: store theme in audit (per-user); followSystem = follow OS/browser dark mode
+      boolean followSystem = wWebFollowSystemTheme != null && wWebFollowSystemTheme.getSelection();
+      darkMode = followSystem ? props.isDarkMode() : wDarkMode.getSelection();
+      props.setDarkMode(darkMode);
+
+      // Retrieve previous theme state from audit to detect change
+      boolean previousAuditFollowSystem = true;
+      boolean previousAuditDarkMode = darkMode;
+      try {
+        AuditState themeState =
+            AuditManager.retrieveState(
+                HopGui.getInstance().getLog(), "hop-web", "preferences", "theme");
+        if (themeState != null) {
+          previousAuditFollowSystem = themeState.extractBoolean("followSystem", true);
+          previousAuditDarkMode = themeState.extractBoolean("darkMode", previousAuditDarkMode);
+        }
+      } catch (Exception ignored) {
+        // ignore
+      }
+
+      java.util.Map<String, Object> themeStateMap = new java.util.HashMap<>();
+      themeStateMap.put("followSystem", Boolean.valueOf(followSystem));
+      themeStateMap.put("darkMode", Boolean.valueOf(darkMode));
+      AuditManager.storeState(
+          HopGui.getInstance().getLog(), "hop-web", "preferences", "theme", themeStateMap);
+
+      // Don't persist dark mode to HopConfig when in web (restore props value before save)
+      props.setDarkMode(previousDarkMode);
+      try {
+        HopConfig.getInstance().saveToFile();
+      } catch (Exception e) {
+        new ErrorDialog(
+            HopGui.getInstance().getShell(), "Error", "Error saving configuration to file", e);
+      }
+      props.setDarkMode(darkMode);
+
+      boolean themeChanged =
+          previousAuditFollowSystem != followSystem
+              || (!followSystem && previousAuditDarkMode != darkMode);
+      if (themeChanged) {
+        HopGui.getInstance()
+            .notifyWebThemePreferenceChanged(followSystem ? null : Boolean.valueOf(darkMode));
+      }
+    } else {
+      try {
+        HopConfig.getInstance().saveToFile();
+      } catch (Exception e) {
+        new ErrorDialog(
+            HopGui.getInstance().getShell(), "Error", "Error saving configuration to file", e);
+      }
+    }
+  }
+
+  /**
+   * Creates a text field with label above it.
+   *
+   * @param parent The parent composite
+   * @param labelKey The message key for the label text
+   * @param tooltipKey Optional tooltip message key (can be null)
+   * @param initialValue The initial text value
+   * @param lastControl The last control to attach to
+   * @param margin The margin to use
+   * @return An array containing [Label, Text] controls
+   */
+  /** Expand or collapse every section (ExpandBar) on the Look &amp; Feel tab and relayout. */
+  private void setAllSectionsExpanded(
+      Composite lookComp, ScrolledComposite scrolled, boolean expanded) {
+    for (Control c : lookComp.getChildren()) {
+      if (c instanceof ExpandBar) {
+        for (ExpandItem item : ((ExpandBar) c).getItems()) {
+          item.setExpanded(expanded);
+        }
+      }
+    }
+    lookComp.layout();
+    scrolled.setMinHeight(lookComp.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_EXPAND_ALL,
+      toolTip = "i18n:org.apache.hop.ui.core.dialog:EnterOptionsDialog.ExpandAll.Tooltip",
+      image = "ui/images/expand-all.svg")
+  public void expandAllSections() {
+    if (lookComp == null
+        || lookComp.isDisposed()
+        || lookScrolledComposite == null
+        || lookScrolledComposite.isDisposed()) {
+      return;
+    }
+    setAllSectionsExpanded(lookComp, lookScrolledComposite, true);
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_COLLAPSE_ALL,
+      toolTip = "i18n:org.apache.hop.ui.core.dialog:EnterOptionsDialog.CollapseAll.Tooltip",
+      image = "ui/images/collapse-all.svg")
+  public void collapseAllSections() {
+    if (lookComp == null
+        || lookComp.isDisposed()
+        || lookScrolledComposite == null
+        || lookScrolledComposite.isDisposed()) {
+      return;
+    }
+    setAllSectionsExpanded(lookComp, lookScrolledComposite, false);
+  }
+
+  /** Reject any change that would make the text field contain something other than digits. */
+  private void verifyNumber(Event e) {
+    String currentText = ((Text) e.widget).getText();
+    String newText = currentText.substring(0, e.start) + e.text + currentText.substring(e.end);
+    if (!newText.isEmpty() && !newText.matches("\\d+")) {
+      e.doit = false;
+    }
+  }
+
+  private Control[] createTextField(
+      Composite parent,
+      String labelKey,
+      String tooltipKey,
+      String initialValue,
+      Control lastControl,
+      int margin) {
+    // Label above
+    Label label = new Label(parent, SWT.LEFT);
+    PropsUi.setLook(label);
+    label.setText(BaseMessages.getString(PKG, labelKey));
+
+    FormData fdLabel = new FormData();
+    fdLabel.left = new FormAttachment(0, 0);
+    fdLabel.right = new FormAttachment(100, 0);
+    if (lastControl != null) {
+      fdLabel.top = new FormAttachment(lastControl, margin);
+    } else {
+      fdLabel.top = new FormAttachment(0, margin);
+    }
+    label.setLayoutData(fdLabel);
+
+    // Text field below label
+    Text text = new Text(parent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(text);
+    text.setText(initialValue);
+    if (tooltipKey != null) {
+      text.setToolTipText(BaseMessages.getString(PKG, tooltipKey));
+    }
+    text.addListener(SWT.Modify, e -> saveValues());
+
+    FormData fdText = new FormData();
+    fdText.left = new FormAttachment(0, 0);
+    fdText.right = new FormAttachment(100, 0);
+    fdText.top = new FormAttachment(label, margin / 2);
+    text.setLayoutData(fdText);
+
+    return new Control[] {label, text};
+  }
+
+  /**
+   * Creates a combo field with label above it.
+   *
+   * @param parent The parent composite
+   * @param labelKey The message key for the label text
+   * @param tooltipKey Optional tooltip message key (can be null)
+   * @param items The items for the combo
+   * @param lastControl The last control to attach to
+   * @param margin The margin to use
+   * @return An array containing [Label, Combo] controls
+   */
+  private Control[] createComboField(
+      Composite parent,
+      String labelKey,
+      String tooltipKey,
+      String[] items,
+      Control lastControl,
+      int margin) {
+    // Label above
+    Label label = new Label(parent, SWT.LEFT);
+    PropsUi.setLook(label);
+    label.setText(BaseMessages.getString(PKG, labelKey));
+
+    FormData fdLabel = new FormData();
+    fdLabel.left = new FormAttachment(0, 0);
+    fdLabel.right = new FormAttachment(100, 0);
+    if (lastControl != null) {
+      fdLabel.top = new FormAttachment(lastControl, margin);
+    } else {
+      fdLabel.top = new FormAttachment(0, margin);
+    }
+    label.setLayoutData(fdLabel);
+
+    // Combo field below label
+    Combo combo = new Combo(parent, SWT.SINGLE | SWT.READ_ONLY | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(combo);
+    combo.setItems(items);
+    if (tooltipKey != null) {
+      combo.setToolTipText(BaseMessages.getString(PKG, tooltipKey));
+    }
+    combo.addListener(SWT.Modify, e -> saveValues());
+
+    FormData fdCombo = new FormData();
+    fdCombo.left = new FormAttachment(0, 0);
+    fdCombo.right = new FormAttachment(100, 0);
+    fdCombo.top = new FormAttachment(label, margin / 2);
+    combo.setLayoutData(fdCombo);
+
+    return new Control[] {label, combo};
+  }
+
+  /**
+   * Creates a checkbox with the checkbox in front of the label text.
+   *
+   * @param parent The parent composite
+   * @param labelKey The message key for the label text
+   * @param tooltipKey Optional tooltip message key (can be null)
+   * @param selected Whether the checkbox is initially selected
+   * @param lastControl The last control to attach to
+   * @param margin The margin to use
+   * @return The created Button (checkbox)
+   */
+  /**
+   * Adds an expandable section to the Look &amp; Feel tab below {@code above}: an ExpandBar with
+   * one expanded item whose content {@code build} fills, and the expand/collapse listeners that
+   * hand the reclaimed space back to the scrolled tab.
+   */
+  private ExpandBar addSection(
+      Composite wLookComp,
+      ScrolledComposite sLookComp,
+      Control above,
+      int margin,
+      String titleKey,
+      Consumer<Composite> build) {
+    ExpandBar expandBar = new ExpandBar(wLookComp, SWT.NONE);
+    PropsUi.setLook(expandBar);
+    FormData fdExpandBar = new FormData();
+    fdExpandBar.left = new FormAttachment(0, 0);
+    fdExpandBar.right = new FormAttachment(100, 0);
+    fdExpandBar.top = new FormAttachment(above, 2 * margin);
+    expandBar.setLayoutData(fdExpandBar);
+
+    Composite content = new Composite(expandBar, SWT.NONE);
+    PropsUi.setLook(content);
+    FormLayout layout = new FormLayout();
+    layout.marginWidth = PropsUi.getFormMargin();
+    layout.marginHeight = PropsUi.getFormMargin();
+    content.setLayout(layout);
+    build.accept(content);
+
+    ExpandItem item = new ExpandItem(expandBar, SWT.NONE);
+    item.setText(BaseMessages.getString(PKG, titleKey));
+    item.setControl(content);
+    item.setHeight(content.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+    item.setExpanded(true);
+
+    Listener relayout =
+        e ->
+            Display.getCurrent()
+                .asyncExec(
+                    () -> {
+                      if (!wLookComp.isDisposed() && !sLookComp.isDisposed()) {
+                        wLookComp.layout();
+                        sLookComp.setMinHeight(wLookComp.computeSize(SWT.DEFAULT, SWT.DEFAULT).y);
+                      }
+                    });
+    expandBar.addListener(SWT.Expand, relayout);
+    expandBar.addListener(SWT.Collapse, relayout);
+    return expandBar;
+  }
+
+  private Button createCheckbox(
+      Composite parent,
+      String labelKey,
+      String tooltipKey,
+      boolean selected,
+      Control lastControl,
+      int margin) {
+    Button checkbox = new Button(parent, SWT.CHECK);
+    PropsUi.setLook(checkbox);
+    checkbox.setText(BaseMessages.getString(PKG, labelKey));
+    if (tooltipKey != null) {
+      checkbox.setToolTipText(BaseMessages.getString(PKG, tooltipKey));
+    }
+    checkbox.setSelection(selected);
+    checkbox.addListener(SWT.Selection, e -> saveValues());
+
+    FormData fdCheckbox = new FormData();
+    fdCheckbox.left = new FormAttachment(0, 0);
+    fdCheckbox.right = new FormAttachment(100, 0);
+    if (lastControl != null) {
+      fdCheckbox.top = new FormAttachment(lastControl, margin);
+    } else {
+      fdCheckbox.top = new FormAttachment(0, margin);
+    }
+    checkbox.setLayoutData(fdCheckbox);
+
+    return checkbox;
+  }
+
+  /**
+   * Creates a font picker with label above, canvas preview, and edit/reset buttons.
+   *
+   * @param parent The parent composite
+   * @param labelKey The message key for the label text
+   * @param shell The shell for opening dialogs
+   * @param lastControl The last control to attach to
+   * @param margin The margin to use
+   * @return An array containing [Canvas, EditButton, ResetButton] controls
+   */
+  private Control[] createFontPicker(
+      Composite parent, String labelKey, Shell shell, Control lastControl, int margin) {
+    int h = (int) (40 * PropsUi.getInstance().getZoomFactor());
+
+    // Label above
+    Label label = new Label(parent, SWT.LEFT);
+    PropsUi.setLook(label);
+    label.setText(BaseMessages.getString(PKG, labelKey));
+
+    FormData fdLabel = new FormData();
+    fdLabel.left = new FormAttachment(0, 0);
+    fdLabel.right = new FormAttachment(100, 0);
+    if (lastControl != null) {
+      fdLabel.top = new FormAttachment(lastControl, margin);
+    } else {
+      fdLabel.top = new FormAttachment(0, margin);
+    }
+    label.setLayoutData(fdLabel);
+
+    // Reset button (right)
+    Button resetButton = new Button(parent, SWT.PUSH | SWT.CENTER);
+    PropsUi.setLook(resetButton);
+    FormData fdResetButton = layoutResetOptionButton(resetButton);
+    fdResetButton.right = new FormAttachment(100, 0);
+    fdResetButton.top = new FormAttachment(label, margin / 2);
+    fdResetButton.height = h; // Match canvas height
+    resetButton.setLayoutData(fdResetButton);
+
+    // Edit button (next to reset button)
+    Button editButton = new Button(parent, SWT.PUSH);
+    PropsUi.setLook(editButton);
+    FormData fdEditButton = layoutEditOptionButton(editButton);
+    fdEditButton.right = new FormAttachment(resetButton, -margin);
+    fdEditButton.top = new FormAttachment(label, margin / 2);
+    fdEditButton.height = h; // Match canvas height
+    editButton.setLayoutData(fdEditButton);
+
+    // Canvas preview (left side)
+    Canvas canvas = new Canvas(parent, SWT.BORDER);
+    PropsUi.setLook(canvas);
+    FormData fdCanvas = new FormData();
+    fdCanvas.left = new FormAttachment(0, 0);
+    fdCanvas.right = new FormAttachment(editButton, -margin);
+    fdCanvas.top = new FormAttachment(label, margin / 2);
+    fdCanvas.height = h;
+    canvas.setLayoutData(fdCanvas);
+
+    return new Control[] {canvas, editButton, resetButton};
+  }
+}

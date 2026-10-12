@@ -1,0 +1,160 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.hop.www;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
+import java.io.Serial;
+import java.nio.charset.StandardCharsets;
+import org.apache.commons.io.IOUtils;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.variables.IVariables;
+import org.apache.hop.core.xml.XmlHandler;
+import org.apache.hop.i18n.PackageMessages;
+import org.owasp.encoder.Encode;
+
+public abstract class BodyHttpServlet extends BaseHttpServlet implements IHopServerPlugin {
+  @Serial private static final long serialVersionUID = 6576714217004890327L;
+  private final PackageMessages messages;
+
+  public BodyHttpServlet() {
+    messages = new PackageMessages(this.getClass());
+  }
+
+  protected boolean useXML(HttpServletRequest request) {
+    return "Y".equalsIgnoreCase(request.getParameter("xml"));
+  }
+
+  @Override
+  public void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
+    if (isJettyMode() && !request.getContextPath().startsWith(getContextPath())) {
+      return;
+    }
+
+    // Register/add servlets accept new work, so refuse them while the server is shutting down.
+    if (refuseIfShuttingDown(response)) {
+      return;
+    }
+
+    if (log.isDebug()) {
+      logDebug(messages.getString("Log.Execute"));
+    }
+
+    boolean useXML = useXML(request);
+    boolean useJson = isJsonRequest(request);
+
+    final PrintWriter out;
+    try {
+      out =
+          new PrintWriter(
+              new OutputStreamWriter(response.getOutputStream(), StandardCharsets.UTF_8), true);
+    } catch (IOException e) {
+      logError("Failed to open servlet response stream", e);
+      sendSafeError(
+          response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "Unable to process request.");
+      return;
+    }
+
+    try {
+
+      if (useXML) {
+        startXml(response, out);
+      } else if (useJson) {
+        response.setContentType("application/json");
+        response.setCharacterEncoding(Const.UTF_8);
+      } else {
+        beginHtml(request, response, out);
+      }
+
+      WebResult result = generateBody(request, response, useXML, variables);
+      if (result != null) {
+        if (useJson) {
+          out.println(result.getJson());
+        } else {
+          out.println(result.getXml());
+        }
+      }
+
+    } catch (Exception e) {
+      logError("Servlet body generation failed", e);
+      final String clientMessage = "Request failed. See server log for details.";
+      if (useXML) {
+        out.println(new WebResult(WebResult.STRING_ERROR, clientMessage).getXml());
+      } else if (useJson) {
+        out.println(new WebResult(WebResult.STRING_ERROR, clientMessage).getJson());
+      } else {
+        out.println("<p><pre>");
+        out.println(Encode.forHtml(clientMessage));
+        out.println("</pre>");
+      }
+    } finally {
+      if (!useXML && !useJson) {
+        endHtml(out);
+      }
+      out.flush();
+      IOUtils.closeQuietly(out);
+    }
+  }
+
+  protected void beginHtml(
+      HttpServletRequest request, HttpServletResponse response, PrintWriter out) {
+    response.setContentType("text/html;charset=UTF-8");
+    out.println("<HTML>");
+    out.println("<HEAD>");
+    out.println("<TITLE>");
+    out.println(Encode.forHtml(getTitle()));
+    out.println("</TITLE>");
+    out.println("<META http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\">");
+    out.println(
+        "<link rel=\"icon\" type=\"image/svg+xml\" href=\""
+            + getStaticPath(request, getContextPath())
+            + "/images/favicon.svg\">");
+    out.println("</HEAD>");
+    out.println("<BODY>");
+  }
+
+  protected void endHtml(PrintWriter out) {
+    out.println("<p>");
+    out.println("</BODY>");
+    out.println("</HTML>");
+  }
+
+  protected void startXml(HttpServletResponse response, PrintWriter out) {
+    response.setContentType("text/xml");
+    response.setCharacterEncoding(Const.UTF_8);
+    out.print(XmlHandler.getXmlHeader(Const.UTF_8));
+  }
+
+  abstract WebResult generateBody(
+      HttpServletRequest request,
+      HttpServletResponse response,
+      boolean useXML,
+      IVariables variables)
+      throws Exception;
+
+  @Override
+  public String getService() {
+    return getContextPath() + " (" + getTitle() + ")";
+  }
+
+  private String getTitle() {
+    return messages.getString("Title");
+  }
+}

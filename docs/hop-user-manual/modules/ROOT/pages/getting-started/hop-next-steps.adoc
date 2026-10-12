@@ -1,0 +1,73 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+[[NextSteps]]
+:imagesdir: ../../assets/images
+:page-pagination:
+:page-pagination-no-next:
+:description: Getting Started (9/9): You've built and run a pipeline, a workflow and a project. Here's where to go next, depending on what you want to do.
+
+= Next steps
+
+You've built a pipeline, orchestrated it from a workflow, handled a failure path, and put both in a project.
+That is the core loop of working with Hop. Everything else is more of it.
+
+Where you go next depends on what you're trying to do.
+
+== Build more pipelines
+
+* xref:pipeline/pipelines.adoc[Pipelines] - the full picture, including the complete xref:pipeline/transforms.adoc[list of transforms]
+* xref:pipeline/run-preview-debug-pipeline.adoc[Run, Preview and Debug a Pipeline] - preview a subset, pause on a condition, step through rows
+* xref:pipeline/errorhandling.adoc[Error Handling] - send failing rows down a separate hop instead of stopping
+* xref:fields-parameters-variables.adoc[Fields, parameters and variables] - three things that look alike in the UI and behave differently
+* xref:pipeline/pipeline-unit-testing.adoc[Pipeline Unit Tests] - golden data sets and assertions for your pipelines
+
+== Orchestrate more
+
+* xref:workflow/workflows.adoc[Workflows] - the full picture, including the complete xref:workflow/actions.adoc[list of actions]
+* xref:how-to-guides/scheduling-workflows-and-pipelines.adoc[Scheduling workflows and pipelines] - cron, systemd, Jenkins, Kubernetes CronJob and Apache Airflow
+
+== Connect to your data
+
+* xref:database/databases.adoc[Databases] - relational connections and the drivers Hop ships
+* xref:vfs.adoc[VFS] - read and write on AWS, Azure and GCP as if they were local files
+* xref:how-to-guides/change-data-capture.adoc[Change Data Capture] - log sniffing, filtered selection and snapshot comparison
+* xref:metadata-types/index.adoc[Metadata types] - everything you can define once and reuse
+
+== Run it somewhere else
+
+* xref:projects/index.adoc[Projects] - the full reference for projects and environments
+* xref:hop-server/deploying.adoc[Deploying Hop Server] - three ways to get a project onto a running server
+* xref:docker-container.adoc[Hop in Docker] - the `apache/hop` image
+* xref:pipeline/pipeline-run-configurations/pipeline-run-configurations.adoc[Pipeline run configurations] - run the same pipeline on Apache Spark, Apache Flink or Google Dataflow without changing it
+* xref:logging/logging-basics.adoc[Logging] - log levels and where to send the output
+
+== Work like a team
+
+* xref:hop-gui/hop-gui-git.adoc[Working with git] - commit, diff and browse history from inside Hop Gui
+* xref:best-practices/index.adoc[Best Practices] - what experienced Hop developers wish they had known
+* xref:linting/index.adoc[Linting] - static checks on pipelines, workflows and metadata, locally or in CI
+
+== Coming from Kettle or PDI?
+
+* xref:hop-vs-kettle/hop-vs-kettle.adoc[Hop vs Kettle] - what changed and why
+* xref:hop-vs-kettle/if-you-know-kettle.adoc[If you know Kettle] - the vocabulary mapping
+* xref:hop-vs-kettle/import-kettle-projects.adoc[Upgrade Kettle to Hop] - convert an existing repository
+
+== Get help
+
+Hop is an Apache project, and the community is where questions get answered.
+See https://hop.apache.org/community/[the community pages] for the mailing lists, chat and issue tracker.

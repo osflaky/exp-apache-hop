@@ -1,0 +1,35 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+[[HowToGuides]]
+:imagesdir: ../../assets/images
+:description: This page contains a collection of how-to guides to perform a variety of tasks, configurations etc with Apache Hop.
+
+= How-to guides
+
+This page contains a collection of how-to guides to perform a variety of tasks, configurations etc with Apache Hop.
+
+* xref:how-to-guides/change-data-capture.adoc[Change Data Capture]
+** xref:how-to-guides/cdc-log-sniffing.adoc[CDC: log sniffing]
+** xref:how-to-guides/cdc-filtered-selection.adoc[CDC: filtered selection]
+** xref:how-to-guides/cdc-snapshot-comparison.adoc[CDC: comparing snapshots]
+* xref:how-to-guides/joins-lookups.adoc[Joins and lookups in Apache Hop]
+* xref:how-to-guides/loops-in-apache-hop.adoc[Loops in Apache Hop]
+* xref:how-to-guides/hdfs-parquet-openshift.adoc[Write Parquet to Cloudera HDFS from OpenShift]
+* xref:how-to-guides/scheduling-workflows-and-pipelines.adoc[Scheduling workflows and pipelines]
+* xref:how-to-guides/run-hop-in-apache-airflow.adoc[Run Pipelines and Workflows from Apache Airflow]
+* xref:how-to-guides/apache-hop-web-services-docker.adoc[Using Apache Hop web services in Docker]
+* xref:hop-server/deploying.adoc[Deploying Hop Server]

@@ -1,0 +1,262 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.core.config;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import lombok.Getter;
+import lombok.Setter;
+import org.apache.commons.vfs2.FileObject;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.config.plugin.ConfigFile;
+import org.apache.hop.core.exception.HopRuntimeException;
+import org.apache.hop.core.util.Utils;
+import org.apache.hop.core.variables.DescribedVariable;
+import org.apache.hop.core.vfs.HopVfs;
+
+/**
+ * This class keeps track of storing and retrieving all the configuration options in Hop. This
+ * includes all options of the various plugins in the Hop ecosystem.
+ */
+public class HopConfig extends ConfigFile {
+  private static final String HOP_GUI_PROPERTIES_KEY = "guiProperties";
+
+  @Setter @Getter private String configFilename;
+
+  @JsonIgnore private static HopConfig instance;
+
+  private HopConfig() {
+    try {
+      this.configFilename = Const.HOP_CONFIG_FOLDER + Const.FILE_SEPARATOR + Const.HOP_CONFIG;
+      readFromFile();
+    } catch (Exception e) {
+      throw new HopRuntimeException(
+          "Error reading the hop config file '" + configFilename + "'", e);
+    }
+  }
+
+  public static HopConfig getInstance() {
+    if (instance == null) {
+      instance = new HopConfig();
+    }
+    return instance;
+  }
+
+  public static boolean isInMemoryMode() {
+    return getInstance().isInMemory();
+  }
+
+  public static void setInMemoryMode(boolean inMemory) {
+    HopConfig hopConfig = getInstance();
+    hopConfig.setInMemory(inMemory);
+  }
+
+  @Override
+  public void setInMemory(boolean inMemory) {
+    super.setInMemory(inMemory);
+    if (inMemory) {
+      setSerializer(new ConfigNoFileSerializer());
+      return;
+    }
+    try {
+      boolean exists;
+      try (FileObject configFile = HopVfs.getFileObject(getConfigFilename())) {
+        exists = configFile.exists();
+      }
+      setSerializer(exists ? new ConfigFileSerializer() : new ConfigNoFileSerializer());
+    } catch (Exception e) {
+      setSerializer(new ConfigNoFileSerializer());
+    }
+  }
+
+  public void saveOption(String optionKey, Object optionValue) {
+    synchronized (CONFIG_LOCK) {
+      try {
+        HopConfig hopConfig = getInstance();
+        hopConfig.configMap.put(optionKey, optionValue);
+        saveToFile();
+      } catch (Exception e) {
+        throw new HopRuntimeException("Error saving configuration option '" + optionKey + "'", e);
+      }
+    }
+  }
+
+  public static void saveOptions(Map<String, Object> extraOptions) {
+    synchronized (CONFIG_LOCK) {
+      try {
+        HopConfig hopConfig = getInstance();
+        hopConfig.configMap.putAll(extraOptions);
+        hopConfig.saveToFile();
+      } catch (Exception e) {
+        throw new HopRuntimeException("Error saving configuration options", e);
+      }
+    }
+  }
+
+  public static Object readOption(String optionKey) {
+    try {
+      HopConfig hopConfig = getInstance();
+      return hopConfig.configMap.get(optionKey);
+    } catch (Exception e) {
+      throw new HopRuntimeException("Error reading option '" + optionKey + "'", e);
+    }
+  }
+
+  public static String readOptionString(String optionKey, String defaultValue) {
+    try {
+      Object value = readOption(optionKey);
+      if (value == null) {
+        return defaultValue;
+      }
+      if (Utils.isEmpty(value.toString())) {
+        return defaultValue;
+      }
+      return value.toString();
+    } catch (Exception e) {
+      throw new HopRuntimeException("Error reading option '" + optionKey + "'", e);
+    }
+  }
+
+  public static int readOptionInteger(String optionKey, int defaultValue) {
+    Object value = readOption(optionKey);
+    if (value == null) {
+      return defaultValue;
+    }
+    if (Utils.isEmpty(value.toString())) {
+      return defaultValue;
+    }
+    return Integer.parseInt(value.toString());
+  }
+
+  public static boolean readOptionBoolean(String optionKey, boolean defaultValue) {
+    Object value = readOption(optionKey);
+    if (value == null) {
+      return defaultValue;
+    }
+    if (Utils.isEmpty(value.toString())) {
+      return defaultValue;
+    }
+    if (value instanceof Boolean bool) {
+      return bool;
+    }
+    if (value instanceof Integer integer) {
+      return integer != 0;
+    }
+    String str = value.toString();
+    return Const.toBoolean(str);
+  }
+
+  public static List<String> getSortedKeys() {
+    try {
+      List<String> keys = new ArrayList<>(getInstance().configMap.keySet());
+      Collections.sort(keys);
+      return keys;
+    } catch (Exception e) {
+      throw new HopRuntimeException("Error getting a list of sorted configuration keys", e);
+    }
+  }
+
+  /**
+   * The GUI properties, which are a map inside the map that gets written to file.
+   *
+   * <p>Callers change the map they get back, so handing it out and writing the configuration have
+   * to take turns: a change landing halfway through serialising it left Jackson iterating a map
+   * that had moved under it.
+   */
+  public static Map<String, String> readGuiProperties() {
+    synchronized (CONFIG_LOCK) {
+      try {
+        Object propertiesObject = getInstance().configMap.get(HOP_GUI_PROPERTIES_KEY);
+        if (propertiesObject == null) {
+          Map<String, String> map = new HashMap<>();
+          getInstance().configMap.put(HOP_GUI_PROPERTIES_KEY, map);
+          return map;
+        } else if (propertiesObject instanceof Map) {
+          @SuppressWarnings("unchecked")
+          Map<String, String> propertiesMap = (Map<String, String>) propertiesObject;
+          return propertiesMap;
+        } else {
+          // If the object is not a Map, create a new one and log a warning
+          System.err.println("Warning: GUI properties object is not a Map, creating new one");
+          Map<String, String> map = new HashMap<>();
+          getInstance().configMap.put(HOP_GUI_PROPERTIES_KEY, map);
+          return map;
+        }
+      } catch (Exception e) {
+        throw new HopRuntimeException("Error getting GUI properties from the Hop configuration", e);
+      }
+    }
+  }
+
+  /**
+   * This method returns the value of a Hop named string variable.
+   *
+   * @param key - variable name
+   * @param defaultValue - default value
+   * @return the value associated to the variable
+   */
+  public static String readStringVariable(String key, String defaultValue) {
+    try {
+      List<DescribedVariable> variables = getInstance().getDescribedVariables();
+      if (variables != null) {
+        for (DescribedVariable v : variables) {
+          if (v.getName().equals(key)) {
+            return v.getValue();
+          }
+        }
+      }
+    } catch (Exception e) {
+      // Log the error but don't fail the entire operation
+      // Return the default value instead
+      System.err.println("Error reading string variable '" + key + "': " + e.getMessage());
+    }
+
+    return defaultValue;
+  }
+
+  public static void setGuiProperty(String key, String value) {
+    synchronized (CONFIG_LOCK) {
+      readGuiProperties().put(key, value);
+    }
+  }
+
+  public static String getGuiProperty(String key) {
+    synchronized (CONFIG_LOCK) {
+      return readGuiProperties().get(key);
+    }
+  }
+
+  public static void setGuiProperties(Map<String, String> map) {
+    synchronized (CONFIG_LOCK) {
+      readGuiProperties().putAll(map);
+    }
+  }
+
+  public void reload() {
+    try {
+      readFromFile();
+    } catch (Exception e) {
+      throw new HopRuntimeException(
+          "Error reading the hop config file '" + configFilename + "'", e);
+    }
+  }
+}

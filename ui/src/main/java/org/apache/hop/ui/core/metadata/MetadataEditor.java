@@ -1,0 +1,429 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.ui.core.metadata;
+
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
+import java.util.Objects;
+import lombok.Getter;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.extension.ExtensionPointHandler;
+import org.apache.hop.core.extension.HopExtensionPoint;
+import org.apache.hop.core.plugins.IPlugin;
+import org.apache.hop.core.plugins.PluginRegistry;
+import org.apache.hop.core.security.HopSecurity;
+import org.apache.hop.core.security.Permission;
+import org.apache.hop.core.util.TranslateUtil;
+import org.apache.hop.core.util.Utils;
+import org.apache.hop.i18n.BaseMessages;
+import org.apache.hop.metadata.api.HopMetadata;
+import org.apache.hop.metadata.api.IHopMetadata;
+import org.apache.hop.metadata.api.IHopMetadataSerializer;
+import org.apache.hop.metadata.plugin.MetadataPluginType;
+import org.apache.hop.ui.core.ConstUi;
+import org.apache.hop.ui.core.PropsUi;
+import org.apache.hop.ui.core.bus.HopGuiEvents;
+import org.apache.hop.ui.core.dialog.ErrorDialog;
+import org.apache.hop.ui.core.dialog.MessageBox;
+import org.apache.hop.ui.core.gui.GuiResource;
+import org.apache.hop.ui.core.security.HopSecurityUi;
+import org.apache.hop.ui.core.widget.NamingSchemeTypes;
+import org.apache.hop.ui.core.widget.TextVar;
+import org.apache.hop.ui.hopgui.HopGui;
+import org.apache.hop.ui.hopgui.perspective.metadata.MetadataPerspective;
+import org.apache.hop.ui.util.HelpUtils;
+import org.apache.hop.ui.util.SwtSvgImageUtil;
+import org.eclipse.swt.SWT;
+import org.eclipse.swt.graphics.Image;
+import org.eclipse.swt.layout.FormAttachment;
+import org.eclipse.swt.layout.FormData;
+import org.eclipse.swt.widgets.Button;
+import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Label;
+import org.eclipse.swt.widgets.Shell;
+
+/** Abstract implementation of all metadata editors. */
+public abstract class MetadataEditor<T extends IHopMetadata> extends MetadataFileTypeHandler
+    implements IMetadataEditor<T> {
+
+  private static final Class<?> PKG = MetadataEditorDialog.class;
+
+  @Getter protected HopGui hopGui;
+  @Getter protected MetadataManager<T> manager;
+  protected T metadata;
+
+  protected String title;
+  protected String toolTip;
+  protected Image titleImage;
+  @Getter protected Image image;
+  protected boolean isChanged = false;
+  protected String originalName;
+
+  public MetadataEditor(HopGui hopGui, MetadataManager<T> manager, T metadata) {
+    super(metadata);
+    this.hopGui = hopGui;
+    this.manager = manager;
+    this.metadata = metadata;
+    this.originalName = metadata.getName();
+
+    // Search metadata annotation
+    Type superclass = getClass().getGenericSuperclass();
+    ParameterizedType parameterized = (ParameterizedType) superclass;
+    Class<?> managedClass = (Class<?>) parameterized.getActualTypeArguments()[0];
+    HopMetadata annotation = managedClass.getAnnotation(HopMetadata.class);
+
+    // Initialize editor
+    this.toolTip = TranslateUtil.translate(annotation.name(), managedClass);
+    this.title = Utils.isEmpty(originalName) ? toolTip : originalName;
+    if (StringUtils.isNotEmpty(metadata.getMetadataProviderName())) {
+      toolTip += Const.CR + "Source: " + metadata.getMetadataProviderName();
+    }
+
+    this.setTitleImage(
+        GuiResource.getInstance()
+            .getImage(
+                annotation.image(),
+                managedClass.getClassLoader(),
+                ConstUi.SMALL_ICON_SIZE,
+                ConstUi.SMALL_ICON_SIZE));
+
+    // Use SwtSvgImageUtil because GuiResource cache have small icon.
+    this.setImage(
+        SwtSvgImageUtil.getImage(
+            hopGui.getDisplay(),
+            managedClass.getClassLoader(),
+            annotation.image(),
+            ConstUi.LARGE_ICON_SIZE,
+            ConstUi.LARGE_ICON_SIZE));
+  }
+
+  /**
+   * Mark this editor as creating a brand-new metadata object that has not been persisted yet.
+   *
+   * <p>Create-before-dialog hooks may suggest a default name on the object. That suggested name
+   * must not be treated as an existing persisted identity: changing it must create a new object,
+   * not rename (and delete) another metadata entry that already uses the suggested name.
+   */
+  public void markAsNew() {
+    this.originalName = null;
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    MetadataEditor<?> that = (MetadataEditor<?>) o;
+    return Objects.equals(metadata, that.metadata);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(
+        hopGui, manager, metadata, title, toolTip, titleImage, image, isChanged, originalName);
+  }
+
+  public Button[] createButtonsForButtonBar(final Composite parent) {
+    return null;
+  }
+
+  /**
+   * Name line with the naming-scheme shortcut and variable insertion disabled. Place at the top of
+   * the editor (attached to the parent).
+   *
+   * @param parent editor composite
+   * @param label localized name-field label
+   * @param middle form middle percentage
+   * @param margin form margin
+   * @return the name widget
+   */
+  protected TextVar createNameField(Composite parent, String label, int middle, int margin) {
+    Label wlName = new Label(parent, SWT.RIGHT);
+    PropsUi.setLook(wlName);
+    wlName.setText(label);
+    FormData fdlName = new FormData();
+    fdlName.top = new FormAttachment(0, margin);
+    fdlName.left = new FormAttachment(0, 0);
+    fdlName.right = new FormAttachment(middle, -margin);
+    wlName.setLayoutData(fdlName);
+
+    TextVar name =
+        new TextVar(hopGui.getVariables(), parent, SWT.SINGLE | SWT.LEFT | SWT.BORDER)
+            .asNameField(NamingSchemeTypes.HOP_METADATA);
+    PropsUi.setLook(name);
+    FormData fdName = new FormData();
+    fdName.top = new FormAttachment(wlName, 0, SWT.CENTER);
+    fdName.left = new FormAttachment(middle, 0);
+    fdName.right = new FormAttachment(100, 0);
+    name.setLayoutData(fdName);
+    return name;
+  }
+
+  protected Button createHelpButton(final Shell shell) {
+    HopMetadata annotation = manager.getManagedClass().getAnnotation(HopMetadata.class);
+    IPlugin plugin =
+        PluginRegistry.getInstance().getPlugin(MetadataPluginType.class, annotation.key());
+    return HelpUtils.createHelpButton(shell, plugin);
+  }
+
+  public MetadataManager<T> getMetadataManager() {
+    return manager;
+  }
+
+  @Override
+  public T getMetadata() {
+    return metadata;
+  }
+
+  @Override
+  public void setMetadata(T metadata) {
+    this.metadata = metadata;
+  }
+
+  public Shell getShell() {
+    return hopGui.getShell();
+  }
+
+  protected void setImage(Image image) {
+    this.image = image;
+  }
+
+  @Override
+  public String getTitle() {
+    return title;
+  }
+
+  protected void setTitle(String title) {
+    this.title = title;
+  }
+
+  @Override
+  public Image getTitleImage() {
+    return titleImage;
+  }
+
+  protected void setTitleImage(Image image) {
+    this.titleImage = image;
+  }
+
+  @Override
+  public String getTitleToolTip() {
+    return toolTip;
+  }
+
+  protected void setTitleToolTip(String toolTip) {
+    this.toolTip = toolTip;
+  }
+
+  @Override
+  public boolean hasChanged() {
+    return isChanged;
+  }
+
+  @Override
+  public void resetChanged() {
+    this.isChanged = false;
+  }
+
+  @Override
+  public void setChanged() {
+    // Do not mark dirty when the user cannot write metadata (read-only editor)
+    if (!HopSecurity.allows(Permission.METADATA_WRITE)) {
+      return;
+    }
+    if (!this.isChanged) {
+      this.isChanged = true;
+      // Update tab decoration and toolbar only. Do not fire MetadataChanged and do not reload
+      // the metadata tree: dirty is not a persisted store change (see issue #7791).
+      MetadataPerspective.getInstance().updateEditor(this);
+    }
+  }
+
+  /**
+   * Called when the metadata modal dialog or metadata perspective tab becomes active again, so
+   * editors can reload metadata-backed combo items (e.g. execution information locations) that may
+   * have changed while the window was in the background.
+   */
+  public void refreshOnDialogActivate() {
+    // default: no-op
+  }
+
+  /** Inline usage: copy information from the metadata onto the various widgets */
+  public abstract void setWidgetsContent();
+
+  /**
+   * Inline usage: Reads the information or state of the various widgets and modifies the provided
+   * metadata object.
+   *
+   * @param meta The metadata object to populate from the widgets
+   */
+  public abstract void getWidgetsContent(T meta);
+
+  @Override
+  public boolean isCloseable() {
+
+    // Check if the metadata is saved. If not, ask for it to be saved.
+    //
+    if (this.hasChanged()) {
+
+      MessageBox messageDialog =
+          new MessageBox(getShell(), SWT.ICON_QUESTION | SWT.YES | SWT.NO | SWT.CANCEL);
+      messageDialog.setText(
+          TranslateUtil.translate(manager.getManagedName(), manager.getManagedClass()));
+      messageDialog.setMessage(
+          BaseMessages.getString(
+              PKG, "MetadataEditor.WantToSaveBeforeClosing.Message", getTitle()));
+
+      int answer = messageDialog.open();
+
+      if ((answer & SWT.YES) != 0) {
+        try {
+          save();
+        } catch (Exception e) {
+          new ErrorDialog(getShell(), "Error", "Error preparing editor close", e);
+          return false;
+        }
+      }
+
+      if ((answer & SWT.CANCEL) != 0) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  @Override
+  public void save() throws HopException {
+    if (!HopSecurityUi.check(Permission.METADATA_WRITE)) {
+      return;
+    }
+
+    getWidgetsContent(metadata);
+    String name = metadata.getName();
+
+    boolean isCreated = false;
+    boolean isRename = false;
+
+    if (StringUtils.isEmpty(name)) {
+      throw new HopException(BaseMessages.getString(PKG, "MetadataEditor.Error.NoName"));
+    }
+
+    if (StringUtils.startsWith(name, "$")) {
+      throw new HopException(BaseMessages.getString(PKG, "MetadataEditor.Error.IncorrectName"));
+    }
+
+    // The serializer of the metadata
+    //
+    IHopMetadataSerializer<T> serializer = manager.getSerializer();
+
+    if (StringUtils.isEmpty(originalName)) {
+      // New object (including create dialog with a suggested default name via markAsNew())
+      isCreated = true;
+      if (serializer.exists(name)) {
+        throw new HopException(
+            BaseMessages.getString(PKG, "MetadataEditor.Error.NameAlreadyExists", name));
+      }
+    }
+
+    // If rename of an already-persisted object
+    //
+    else if (!originalName.equals(name)) {
+
+      // See if the name collides with an existing one...
+      //
+      if (serializer.exists(name)) {
+        throw new HopException(
+            BaseMessages.getString(PKG, "MetadataEditor.Error.NameAlreadyExists", name));
+      } else {
+        isRename = true;
+      }
+    }
+
+    // Save it in the metadata
+    serializer.save(metadata);
+
+    if (isCreated)
+      ExtensionPointHandler.callExtensionPoint(
+          hopGui.getLog(),
+          manager.getVariables(),
+          HopExtensionPoint.HopGuiMetadataObjectCreated.id,
+          metadata);
+    else
+      ExtensionPointHandler.callExtensionPoint(
+          hopGui.getLog(),
+          manager.getVariables(),
+          HopExtensionPoint.HopGuiMetadataObjectUpdated.id,
+          metadata);
+
+    // Reset changed flag
+    this.isChanged = false;
+    this.title = metadata.getName();
+
+    if (isRename) {
+      // Code hardening for scenario where a new metadata object isn't yet persisted on disk yet.
+      // The delete command can throw an error otherwise.
+      //
+      if (serializer.exists(originalName)) {
+        serializer.delete(originalName);
+      }
+      // Run global replace in pipelines/workflows if supported (same logic as rename from tree)
+      String objectKey = manager.getManagedClass().getAnnotation(HopMetadata.class).key();
+      MetadataPerspective.getInstance()
+          .performGlobalReplaceIfSupported(objectKey, originalName, name);
+    }
+
+    // After a successful create or rename, the persisted identity is the current name
+    if (isCreated || isRename) {
+      this.originalName = metadata.getName();
+    }
+
+    MetadataPerspective.getInstance().updateEditor(this);
+
+    // Notify the GUI that the metadata store changed (tree refresh, plugins). Fire only after a
+    // successful persist — not when the editor is merely marked dirty (issue #7791).
+    hopGui.getEventsHandler().fire(HopGuiEvents.MetadataChanged.name());
+  }
+
+  @Override
+  public void saveAs(String filename) throws HopException {
+    throw new HopException("Metadata editor doesn't support saveAs");
+  }
+
+  @Override
+  public boolean setFocus() {
+    return true;
+  }
+
+  @Override
+  public void dispose() {}
+
+  @Override
+  public void updateGui() {
+    hopGui
+        .getDisplay()
+        .asyncExec(
+            () ->
+                hopGui.handleFileCapabilities(this.getFileType(), this.hasChanged(), false, false));
+  }
+}

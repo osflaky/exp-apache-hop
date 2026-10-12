@@ -1,0 +1,142 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+:documentationPath: /pipeline/transforms/
+:language: en_US
+:description: The Parquet file input transform reads (primitive) values from an Apache Parquet file.
+:page-engines: Hop Engine=yes, Single Threaded=yes, Native Spark=yes, Beam Spark=yes, Beam Flink=yes, Beam Dataflow=yes
+:page-marketplace: hop-tech-parquet
+
+= image:transforms/icons/parquet_input.svg[Parquet file input transform Icon, role="image-doc-icon"] Parquet file input
+
+== Description
+
+The Parquet file input transform reads (primitive) values from an Apache Parquet file.
+
+For more information on this see: http://parquet.apache.org/[Apache Parquet].
+
+== Options
+
+Notes:
+
+* Files are read in place through Apache VFS: local files directly, other locations (S3, Azure, ...) by seeking in the file.
+* All input values are passed to the output.
+* A column must have the same type in every file read by the transform, or be read into a Hop type both of its types convert to (see the table below).
+A value which can't be converted stops the transform with an error naming the Parquet column, its type and the field.
+* Timestamps annotated as adjusted to UTC are instants.
+The ones which aren't hold the date and time fields of a local time, taken in the time zone of the Hop JVM.
+
+[options="header"]
+|===
+|Option|Description
+
+|Transform name
+|Name of the transform this name has to be unique in a single pipeline.
+
+|Filename field
+|Specify the input field.
+Use a transform like Get File Names to obtain file names.
+Any supported file location is fine.
+
+|Metadata filename
+|If you specify a filename here, you can leave the fields section empty and Hop will automatically determine
+the output fields.  It prevents you from having to define all the fields when this metadata is already in
+a parquet file schema.
+
+|Output null row when empty
+|In case you want to extract file metadata and there were no rows found in the parquet file(s) you will receive one empty row.
+This row can then be used to extract metadata with the xref:pipeline/transforms/metastructure.adoc[Metadata structure of stream] transform.
+
+|Fields
+|In this table you can specify all the fields you want to obtain from the parquet files as well as their desired Hop output type.
+
+|Get fields button
+|With this button you can select a parquet file from which we'll read the schema to populate the Fields grid.
+
+|===
+
+== Parquet to Hop types
+
+The *Get fields* button proposes a Hop type for every column, based on its https://parquet.apache.org/docs/file-format/types/logicaltypes/[logical type] or, without one, its physical type.
+You can pick another Hop type from the last column instead.
+
+[options="header"]
+|===
+|Parquet column|Get fields proposes|Can also be read as
+
+|BOOLEAN
+|Boolean
+|String, Integer (1 or 0)
+
+|INT32, INT64, INT(8/16/32/64, signed), INT(8/16/32, unsigned)
+|Integer
+|String, Number, BigNumber
+
+|INT(64, unsigned)
+|BigNumber
+|String, Number, Integer (up to 9223372036854775807)
+
+|DECIMAL (on INT32, INT64, FIXED_LEN_BYTE_ARRAY or BINARY)
+|BigNumber, with the precision as length and the scale as precision
+|String, Number, Integer (the fraction is dropped), Binary (the stored bytes)
+
+|FLOAT, DOUBLE
+|Number
+|String, BigNumber, Integer (rounded)
+
+|FLOAT16
+|Number
+|String, BigNumber, Integer (rounded), Binary (the stored bytes)
+
+|DATE
+|Date, midnight in the local time zone
+|Timestamp. String, Integer, Number and BigNumber get the stored number of days.
+
+|TIME (MILLIS, MICROS, NANOS)
+|Timestamp, the time on 1970-01-01
+|Date. String, Integer, Number and BigNumber get the stored number.
+
+|TIMESTAMP (MILLIS, MICROS, NANOS)
+|Timestamp, with its full precision
+|Date. String, Integer, Number and BigNumber get the stored number.
+
+|INT96
+|Timestamp
+|Date
+
+|STRING, ENUM
+|String
+|BigNumber (text holding a number), JSON (text holding JSON), Binary
+
+|JSON
+|JSON
+|String, BigNumber (text holding a number), Binary
+
+|UUID
+|UUID, or String when the UUID value type isn't installed
+|String, Binary
+
+|BINARY, FIXED_LEN_BYTE_ARRAY without a logical type
+|Binary
+|String (UTF-8 text), JSON, BigNumber (text holding a number, or else the unscaled bytes of a decimal with the length and precision of the field)
+
+|BSON, INTERVAL, GEOMETRY, GEOGRAPHY
+|Binary
+|
+
+|LIST, MAP, VARIANT and other nested columns
+2+|Not supported
+|===

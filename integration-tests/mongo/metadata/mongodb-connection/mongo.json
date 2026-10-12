@@ -1,0 +1,21 @@
+{
+  "authenticationDatabaseName": "admin",
+  "connectionString": "mongodb+srv://hans:YA3WDb8XxYDkZ8fJHrBF@hans-test.ovlgcdt.mongodb.net/?appName\u003dhans-test",
+  "usingKerberos": false,
+  "journaled": true,
+  "dbName": "hop_test",
+  "authenticationUser": "${MONGO_USERNAME}",
+  "connectTimeoutMs": "",
+  "writeConcern": "",
+  "authenticationPassword": "${MONGO_PASSWORD}",
+  "usingAllReplicaSetMembers": false,
+  "usingSslSocketFactory": false,
+  "replicationTimeoutMs": "",
+  "hostname": "${MONGO_HOSTNAME}",
+  "port": "${MONGO_PORT}",
+  "name": "mongo",
+  "readPreference": "PRIMARY",
+  "socketTimeoutMs": "",
+  "readPrefTagSets": "",
+  "authenticationMechanism": "SCRAM_SHA_1"
+}

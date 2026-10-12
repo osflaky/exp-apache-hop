@@ -1,0 +1,75 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+:documentationPath: /pipeline/transforms/
+:language: en_US
+:description: The Data Grid transform allows you to enter a static list of rows in a grid.
+:page-engines: Hop Engine=yes, Single Threaded=yes, Native Spark=yes, Beam Spark=maybe, Beam Flink=maybe, Beam Dataflow=maybe
+
+= image:transforms/icons/datagrid.svg[Data Grid transform Icon, role="image-doc-icon"] Data Grid
+
+== Description
+
+include::../../snippets/pipeline/source-always.adoc[]
+
+The Data Grid transform allows you to enter a static list of rows in a grid, similar to an in-pipeline spreadsheet.
+This is usually done for testing, reference or demo purposes.
+
+Place a Data grid onto the data orchestration grid. On the Meta tab, add the field names and type and format. Then on the Data tab, add the field values for each data row.
+
+== Options
+
+[width="90%, options="header"]
+|===
+|Meta tab|Field metadata (name, type and format masks) used to parse the strings on the Data tab.
+See <<meta-tab>>.
+|Data Tab|The grid of values.
+Every cell is a string.
+Hop converts each cell using the Type and Format of that column on the Meta tab.
+|===
+
+[[meta-tab]]
+== Meta tab
+
+include::../../snippets/field-metadata/field-columns.adoc[]
+
+[options="header"]
+|===
+|Column|Description
+|Name|Name of the output field (the column).
+|Type|Hop data type.
+Each Data-tab cell in this column is parsed into this type.
+See xref:concepts.adoc#data-types[Data types].
+|===
+
+TIP: The Data tab has one column per Meta-tab field and one row per output row.
+That is how you specify *several different values*.
+Do not try to put comma-separated values in a single cell; that is one string.
+
+== Metadata Injection Support
+
+This transform supports metadata injection.
+It is made up out of 2 parts the meta (field definitions) and the data.
+The meta requires multiple rows to define the fields.
+The data part contains 2 injection fields, the first is a concatenated string that contains all values the second is the delimiter used to split that specific row.
+Mixing delimiters is possible, when empty "," is used as string to split with.
+
+== Limitations
+
+It is not yet possible to insert columns in between 2 existing one or in general re-order the fields in the metadata tab.
+
+If you plan to do this, make sure to copy the data section first to a spreadsheet (Select all rows and copy/paste the whole grid), change the data and copy it back into the data section.
+

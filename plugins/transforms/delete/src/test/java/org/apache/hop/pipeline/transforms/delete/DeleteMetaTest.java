@@ -1,0 +1,265 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.pipeline.transforms.delete;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.apache.commons.lang3.builder.EqualsBuilder;
+import org.apache.hop.core.HopEnvironment;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.plugins.PluginRegistry;
+import org.apache.hop.core.plugins.TransformPluginType;
+import org.apache.hop.junit.rules.RestoreHopEngineEnvironmentExtension;
+import org.apache.hop.pipeline.Pipeline;
+import org.apache.hop.pipeline.PipelineMeta;
+import org.apache.hop.pipeline.engines.local.LocalPipelineEngine;
+import org.apache.hop.pipeline.transform.ITransformMeta;
+import org.apache.hop.pipeline.transform.TransformMeta;
+import org.apache.hop.pipeline.transforms.loadsave.LoadSaveTester;
+import org.apache.hop.pipeline.transforms.loadsave.initializer.IInitializer;
+import org.apache.hop.pipeline.transforms.loadsave.validator.IFieldLoadSaveValidator;
+import org.apache.hop.pipeline.transforms.loadsave.validator.IFieldLoadSaveValidatorFactory;
+import org.apache.hop.pipeline.transforms.loadsave.validator.ListLoadSaveValidator;
+import org.apache.hop.pipeline.transforms.loadsave.validator.ObjectValidator;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+
+/** Unit test for {@link DeleteMeta} */
+class DeleteMetaTest implements IInitializer<ITransformMeta> {
+  private LoadSaveTester loadSaveTester;
+  private final Class<DeleteMeta> testMetaClass = DeleteMeta.class;
+
+  @RegisterExtension
+  static RestoreHopEngineEnvironmentExtension env = new RestoreHopEngineEnvironmentExtension();
+
+  @BeforeEach
+  void setUpLoadSave() throws Exception {
+    PluginRegistry.init();
+    List<String> attributes = Arrays.asList("commit", "connection", "lookup", "use_batch");
+
+    Map<String, String> getterMap =
+        new HashMap<>() {
+          {
+            put("commit", "getCommitSize");
+            put("connection", "getConnection");
+            put("lookup", "getLookup");
+            put("use_batch", "isUseBatchUpdate");
+          }
+        };
+    Map<String, String> setterMap =
+        new HashMap<>() {
+          {
+            put("commit", "setCommitSize");
+            put("connection", "setConnection");
+            put("lookup", "setLookup");
+            put("use_batch", "setUseBatchUpdate");
+          }
+        };
+
+    Map<String, IFieldLoadSaveValidator<?>> attrValidatorMap = new HashMap<>();
+    Map<String, IFieldLoadSaveValidator<?>> typeValidatorMap = new HashMap<>();
+
+    loadSaveTester =
+        new LoadSaveTester(
+            testMetaClass,
+            attributes,
+            getterMap,
+            setterMap,
+            attrValidatorMap,
+            typeValidatorMap,
+            this);
+
+    IFieldLoadSaveValidatorFactory validatorFactory =
+        loadSaveTester.getFieldLoadSaveValidatorFactory();
+
+    validatorFactory.registerValidator(
+        validatorFactory.getName(DeleteLookupField.class),
+        new ObjectValidator<>(
+            validatorFactory,
+            DeleteLookupField.class,
+            Arrays.asList("schema", "table", "key"),
+            new HashMap<>() {
+              {
+                put("table", "getTableName");
+                put("schema", "getSchemaName");
+                put("key", "getFields");
+              }
+            },
+            new HashMap<>() {
+              {
+                put("table", "setTableName");
+                put("schema", "setSchemaName");
+                put("key", "setFields");
+              }
+            }));
+
+    validatorFactory.registerValidator(
+        validatorFactory.getName(List.class, DeleteKeyField.class),
+        new ListLoadSaveValidator<>(new DeleteKeyFieldInputFieldLoadSaveValidator()));
+  }
+
+  // Call the allocate method on the LoadSaveTester meta class
+  @Override
+  public void modify(ITransformMeta someMeta) {
+    if (someMeta instanceof DeleteMeta) {
+      DeleteLookupField dlf = ((DeleteMeta) someMeta).getLookup();
+      dlf.getFields().clear();
+      dlf.getFields()
+          .addAll(
+              Arrays.asList(
+                  new DeleteKeyField("StreamField1", "=", "1", null),
+                  new DeleteKeyField("StreamField2", "<>", "20", null),
+                  new DeleteKeyField("StreamField3", "BETWEEN", "1", "10"),
+                  new DeleteKeyField("StreamField4", "<=", "3", null),
+                  new DeleteKeyField("StreamField5", ">=", "40", null)));
+    }
+  }
+
+  @Test
+  void testSerialization() throws HopException {
+    loadSaveTester.testSerialization();
+  }
+
+  private Delete del;
+  private DeleteMeta meta;
+
+  @BeforeAll
+  static void initEnvironment() throws Exception {
+    HopEnvironment.init();
+  }
+
+  @BeforeEach
+  void setUp() {
+    PipelineMeta pipelineMeta = new PipelineMeta();
+    pipelineMeta.setName("delete1");
+
+    meta = new DeleteMeta();
+    DeleteData data = new DeleteData();
+
+    PluginRegistry plugReg = PluginRegistry.getInstance();
+    String deletePid = plugReg.getPluginId(TransformPluginType.class, meta);
+
+    TransformMeta transformMeta = new TransformMeta(deletePid, "delete", meta);
+    Pipeline pipeline = new LocalPipelineEngine(pipelineMeta);
+
+    Map<String, String> vars = new HashMap<>();
+    vars.put("max.sz", "10");
+    pipeline.setVariables(vars);
+
+    pipelineMeta.addTransform(transformMeta);
+    del = new Delete(transformMeta, meta, data, 1, pipelineMeta, pipeline);
+  }
+
+  @Test
+  void testCommitCountFixed() {
+    meta.setCommitSize("100");
+    assertEquals(100, meta.getCommitSize(del));
+  }
+
+  @Test
+  void testCommitCountVar() {
+    meta.setCommitSize("${max.sz}");
+    assertEquals(10, meta.getCommitSize(del));
+  }
+
+  @Test
+  void testCommitCountMissedVar() {
+    meta.setCommitSize("missed-var");
+    try {
+      meta.getCommitSize(del);
+      fail();
+    } catch (Exception ex) {
+      // ignore ex
+    }
+  }
+
+  @Test
+  void testUseBatchUpdateDefaultIsFalse() {
+    assertFalse(meta.isUseBatchUpdate());
+  }
+
+  @Test
+  void testUseBatchUpdateSetterAndGetter() {
+    meta.setUseBatchUpdate(true);
+    assertTrue(meta.isUseBatchUpdate());
+  }
+
+  @Test
+  void testCloneIncludesUseBatchUpdate() {
+    meta.setUseBatchUpdate(true);
+    DeleteMeta cloned = (DeleteMeta) meta.clone();
+    assertTrue(cloned.isUseBatchUpdate());
+  }
+
+  @Test
+  void testCopyConstructorIncludesUseBatchUpdate() {
+    meta.setUseBatchUpdate(true);
+    DeleteMeta copied = new DeleteMeta(meta);
+    assertTrue(copied.isUseBatchUpdate());
+  }
+
+  @Test
+  void testSetDefaultValues() {
+    DeleteMeta defaults = new DeleteMeta();
+    defaults.setDefault();
+    assertEquals("100", defaults.getCommitSize());
+    assertFalse(defaults.isUseBatchUpdate());
+  }
+
+  @Test
+  void testSupportsErrorHandling() {
+    assertTrue(meta.supportsErrorHandling());
+  }
+
+  public static class DeleteKeyFieldInputFieldLoadSaveValidator
+      implements IFieldLoadSaveValidator<DeleteKeyField> {
+
+    @Override
+    public DeleteKeyField getTestObject() {
+      return new DeleteKeyField(
+          UUID.randomUUID().toString(),
+          "=",
+          UUID.randomUUID().toString(),
+          UUID.randomUUID().toString());
+    }
+
+    @Override
+    public boolean validateTestObject(DeleteKeyField testObject, Object actual) {
+      if (!(actual instanceof DeleteKeyField another)) {
+        return false;
+      }
+
+      return new EqualsBuilder()
+          .append(testObject.getKeyLookup(), another.getKeyLookup())
+          .append(testObject.getKeyCondition(), another.getKeyCondition())
+          .append(testObject.getKeyStream(), another.getKeyStream())
+          .append(testObject.getKeyStream2(), another.getKeyStream2())
+          .isEquals();
+    }
+  }
+}

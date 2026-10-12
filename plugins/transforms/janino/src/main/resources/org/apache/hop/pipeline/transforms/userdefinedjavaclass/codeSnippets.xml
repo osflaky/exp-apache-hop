@@ -1,0 +1,534 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ~ Licensed to the Apache Software Foundation (ASF) under one or more
+  ~ contributor license agreements.  See the NOTICE file distributed with
+  ~ this work for additional information regarding copyright ownership.
+  ~ The ASF licenses this file to You under the Apache License, Version 2.0
+  ~ (the "License"); you may not use this file except in compliance with
+  ~ the License.  You may obtain a copy of the License at
+  ~
+  ~       http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  ~
+  -->
+
+<!--
+  Code snippets offered by the User Defined Java Class dialog.
+
+  Every snippet in this file is compiled by
+  UserDefinedJavaClassCodeSnippetsCompileTest against the real UDJC compiler
+  setup, so anything added here has to be valid Java against the current API.
+
+  Snippets are either a complete class member (a method declaration) or a
+  statement fragment. Fragments may use these names, they are declared by the
+  test harness and are the names the surrounding examples use as well:
+
+      Object[] r              the current row
+      IRowSet rowSet          a row set
+      String msg              a log message
+      IRowListener rowListener a row listener
+-->
+<codeSnippets language="us">
+
+    <!-- ==================== Common use ==================== -->
+
+    <codeSnippet>
+        <name>Implement processRow</name>
+        <category>COMMON</category>
+        <code><![CDATA[//
+// Process one row: read a row from the input hop and write a row to the output hop.
+// Called until it returns false, at which point the transform is done.
+//
+public boolean processRow() throws HopException {
+
+  // Get a row from the default input hop.
+  //
+  Object[] r = getRow();
+
+  // When the row is null there is no more input, so we're done.
+  //
+  if (r == null) {
+    setOutputDone();
+    return false;
+  }
+
+  if (first) {
+    first = false;
+    // TODO: one time initialisation, now that the input row layout is known.
+  }
+
+  // Always call createOutputRow() so the output row is large enough to hold
+  // the fields this transform adds.
+  //
+  r = createOutputRow(r, data.outputRowMeta.size());
+
+  // TODO: read input fields and calculate output fields, for example:
+  //
+  //   String value = get(Fields.In, "input_field").getString(r);
+  //   get(Fields.Out, "output_field").setValue(r, value + "!");
+
+  // Send the row to the default output hop.
+  //
+  putRow(data.outputRowMeta, r);
+
+  return true;
+}
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>Implement init</name>
+        <category>COMMON</category>
+        <code><![CDATA[//
+// Called once before the pipeline starts. Return false to make the transform fail.
+//
+public boolean init() {
+  // TODO: acquire resources, open connections, read lookup data, ...
+  return parent.initImpl();
+}
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>Implement dispose</name>
+        <category>COMMON</category>
+        <code><![CDATA[//
+// Called once after the pipeline finished. Close files, release resources, ...
+//
+public void dispose() {
+  // TODO: release the resources acquired in init()
+  parent.disposeImpl();
+}
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getRow</name>
+        <category>COMMON</category>
+        <code><![CDATA[Object[] r = getRow();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getRowFrom</name>
+        <category>COMMON</category>
+        <code><![CDATA[Object[] row = getRowFrom(rowSet);
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>putRow</name>
+        <category>COMMON</category>
+        <code><![CDATA[putRow(data.outputRowMeta, r);
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>putRowTo</name>
+        <category>COMMON</category>
+        <code><![CDATA[putRowTo(data.outputRowMeta, r, rowSet);
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>putError</name>
+        <category>COMMON</category>
+        <code><![CDATA[putError(getInputRowMeta(), r, 1L, "error description", "field name", "ERROR-CODE");
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>setOutputDone</name>
+        <category>COMMON</category>
+        <code><![CDATA[setOutputDone();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>stopAll</name>
+        <category>COMMON</category>
+        <code><![CDATA[stopAll();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>isStopped</name>
+        <category>COMMON</category>
+        <code><![CDATA[if (isStopped()) {
+  return false;
+}
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>setErrors</name>
+        <category>COMMON</category>
+        <code><![CDATA[setErrors(1);
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getParameter</name>
+        <category>COMMON</category>
+        <code><![CDATA[String parameterValue = getParameter("PARAMETER_NAME");
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getVariable</name>
+        <category>COMMON</category>
+        <code><![CDATA[String variableValue = getVariable("VARIABLE_NAME", "default value");
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>setVariable</name>
+        <category>COMMON</category>
+        <code><![CDATA[setVariable("VARIABLE_NAME", "value");
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>checkFeedback</name>
+        <category>COMMON</category>
+        <code><![CDATA[if (checkFeedback(getLinesRead())) {
+  logBasic("Read " + getLinesRead() + " rows");
+}
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>addResultFile</name>
+        <category>COMMON</category>
+        <code><![CDATA[ResultFile resultFile =
+    new ResultFile(
+        ResultFile.FILE_TYPE_GENERAL,
+        org.apache.hop.core.vfs.HopVfs.getFileObject("${java.io.tmpdir}/example.txt", parent),
+        getPipelineMeta().getName(),
+        getTransformName());
+addResultFile(resultFile);
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getResultFiles</name>
+        <category>COMMON</category>
+        <code><![CDATA[Map<String, ResultFile> resultFiles = getResultFiles();
+]]></code>
+    </codeSnippet>
+
+    <!-- ==================== Row manipulation ==================== -->
+
+    <codeSnippet>
+        <name>createOutputRow</name>
+        <category>ROW</category>
+        <code><![CDATA[r = createOutputRow(r, data.outputRowMeta.size());
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>Read an input field</name>
+        <category>ROW</category>
+        <code><![CDATA[// A FieldHelper has a getter per data type: getString(), getLong(), getDate(),
+// getBoolean(), getDouble(), getBigDecimal(), getBinary(), getTimestamp(), ...
+//
+String stringValue = get(Fields.In, "field_name").getString(r);
+Long integerValue = get(Fields.In, "field_name").getLong(r);
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>Write an output field</name>
+        <category>ROW</category>
+        <code><![CDATA[get(Fields.Out, "field_name").setValue(r, "value");
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>Read an info field</name>
+        <category>ROW</category>
+        <code><![CDATA[String infoValue = get(Fields.Info, "field_name").getString(r);
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>findInfoRowSet</name>
+        <category>ROW</category>
+        <code><![CDATA[// Read all rows of an info stream before calling getRow() on the main stream:
+// the row layouts differ, so mixing both leads to errors.
+//
+IRowSet infoRowSet = findInfoRowSet("info stream tag");
+Object[] infoRow = null;
+while ((infoRow = getRowFrom(infoRowSet)) != null) {
+  // TODO: do something with the info row
+}
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>findTargetRowSet</name>
+        <category>ROW</category>
+        <code><![CDATA[IRowSet targetRowSet = findTargetRowSet("target stream tag");
+putRowTo(data.outputRowMeta, r, targetRowSet);
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getInputRowMeta</name>
+        <category>ROW</category>
+        <code><![CDATA[IRowMeta inputRowMeta = getInputRowMeta();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getErrorRowMeta</name>
+        <category>ROW</category>
+        <code><![CDATA[IRowMeta errorRowMeta = getErrorRowMeta();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getInputRowSets</name>
+        <category>ROW</category>
+        <code><![CDATA[List<IRowSet> inputRowSets = getInputRowSets();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getOutputRowSets</name>
+        <category>ROW</category>
+        <code><![CDATA[List<IRowSet> outputRowSets = getOutputRowSets();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>findInputRowSet</name>
+        <category>ROW</category>
+        <code><![CDATA[IRowSet inputRowSet = findInputRowSet("source transform name");
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>findOutputRowSet</name>
+        <category>ROW</category>
+        <code><![CDATA[IRowSet outputRowSet = findOutputRowSet("target transform name");
+]]></code>
+    </codeSnippet>
+
+    <!-- ==================== Logging ==================== -->
+
+    <codeSnippet>
+        <name>logMinimal</name>
+        <category>LOGGING</category>
+        <code><![CDATA[logMinimal(msg);
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>logBasic</name>
+        <category>LOGGING</category>
+        <code><![CDATA[logBasic(msg);
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>logDetailed</name>
+        <category>LOGGING</category>
+        <code><![CDATA[logDetailed(msg);
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>logDebug</name>
+        <category>LOGGING</category>
+        <code><![CDATA[logDebug(msg);
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>logRowlevel</name>
+        <category>LOGGING</category>
+        <code><![CDATA[logRowlevel(msg);
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>logError(msg)</name>
+        <category>LOGGING</category>
+        <code><![CDATA[logError(msg);
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>logError(msg, e)</name>
+        <category>LOGGING</category>
+        <code><![CDATA[try {
+  // TODO: your code here
+} catch (Exception e) {
+  logError("Unexpected error", e);
+  setErrors(1);
+  stopAll();
+}
+]]></code>
+    </codeSnippet>
+
+    <!-- ==================== Transform status ==================== -->
+
+    <codeSnippet>
+        <name>getLinesInput</name>
+        <category>STATUS</category>
+        <code><![CDATA[long linesInput = getLinesInput();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getLinesOutput</name>
+        <category>STATUS</category>
+        <code><![CDATA[long linesOutput = getLinesOutput();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getLinesRead</name>
+        <category>STATUS</category>
+        <code><![CDATA[long linesRead = getLinesRead();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getLinesWritten</name>
+        <category>STATUS</category>
+        <code><![CDATA[long linesWritten = getLinesWritten();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getLinesRejected</name>
+        <category>STATUS</category>
+        <code><![CDATA[long linesRejected = getLinesRejected();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getLinesSkipped</name>
+        <category>STATUS</category>
+        <code><![CDATA[long linesSkipped = getLinesSkipped();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getLinesUpdated</name>
+        <category>STATUS</category>
+        <code><![CDATA[long linesUpdated = getLinesUpdated();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>incrementLinesInput</name>
+        <category>STATUS</category>
+        <code><![CDATA[incrementLinesInput();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>incrementLinesOutput</name>
+        <category>STATUS</category>
+        <code><![CDATA[incrementLinesOutput();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>incrementLinesRead</name>
+        <category>STATUS</category>
+        <code><![CDATA[incrementLinesRead();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>incrementLinesWritten</name>
+        <category>STATUS</category>
+        <code><![CDATA[incrementLinesWritten();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>incrementLinesRejected</name>
+        <category>STATUS</category>
+        <code><![CDATA[incrementLinesRejected();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>incrementLinesSkipped</name>
+        <category>STATUS</category>
+        <code><![CDATA[incrementLinesSkipped();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>incrementLinesUpdated</name>
+        <category>STATUS</category>
+        <code><![CDATA[incrementLinesUpdated();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getProcessed</name>
+        <category>STATUS</category>
+        <code><![CDATA[long processed = getProcessed();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getErrors</name>
+        <category>STATUS</category>
+        <code><![CDATA[long errors = getErrors();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getStatus</name>
+        <category>STATUS</category>
+        <code><![CDATA[EngineComponent.ComponentExecutionStatus status = getStatus();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getStatusDescription</name>
+        <category>STATUS</category>
+        <code><![CDATA[String statusDescription = getStatusDescription();
+]]></code>
+    </codeSnippet>
+
+    <!-- ==================== Row listeners ==================== -->
+
+    <codeSnippet>
+        <name>addRowListener</name>
+        <category>LISTENERS</category>
+        <code><![CDATA[addRowListener(rowListener);
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>removeRowListener</name>
+        <category>LISTENERS</category>
+        <code><![CDATA[removeRowListener(rowListener);
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getRowListeners</name>
+        <category>LISTENERS</category>
+        <code><![CDATA[List<IRowListener> rowListeners = getRowListeners();
+]]></code>
+    </codeSnippet>
+
+    <!-- ==================== Uncommon use ==================== -->
+
+    <codeSnippet>
+        <name>getTransformName</name>
+        <category>OTHER</category>
+        <code><![CDATA[String transformName = getTransformName();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getTransformPluginId</name>
+        <category>OTHER</category>
+        <code><![CDATA[String transformPluginId = getTransformPluginId();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getTransformMeta</name>
+        <category>OTHER</category>
+        <code><![CDATA[TransformMeta transformMeta = getTransformMeta();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getPipeline</name>
+        <category>OTHER</category>
+        <code><![CDATA[IPipelineEngine pipeline = getPipeline();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getPipelineMeta</name>
+        <category>OTHER</category>
+        <code><![CDATA[PipelineMeta pipelineMeta = getPipelineMeta();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getCopy</name>
+        <category>OTHER</category>
+        <code><![CDATA[int copyNr = getCopy();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>isDistributed</name>
+        <category>OTHER</category>
+        <code><![CDATA[boolean distributed = isDistributed();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>isPartitioned</name>
+        <category>OTHER</category>
+        <code><![CDATA[boolean partitioned = isPartitioned();
+]]></code>
+    </codeSnippet>
+    <codeSnippet>
+        <name>getPartitionId</name>
+        <category>OTHER</category>
+        <code><![CDATA[String partitionId = getPartitionId();
+]]></code>
+    </codeSnippet>
+</codeSnippets>

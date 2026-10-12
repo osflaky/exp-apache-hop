@@ -1,0 +1,181 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.core.gui.plugin;
+
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+import org.apache.hop.core.gui.plugin.toolbar.EmptyTypeFilename;
+import org.apache.hop.metadata.api.IHopMetadata;
+
+/**
+ * This annotation allows a method in a GuiPlugin to be identified as a contributor to the Hop UI
+ */
+@Documented
+@Retention(RetentionPolicy.RUNTIME)
+@Target({ElementType.FIELD, ElementType.METHOD})
+public @interface GuiWidgetElement {
+
+  /**
+   * Every GUI Element has a unique ID so it can be replaced by other plugins at any given time.
+   *
+   * @return The unique ID of the GUI Element
+   */
+  String id() default "";
+
+  /**
+   * The type of GUI Element this method covers for
+   *
+   * @return
+   */
+  GuiElementType type();
+
+  /**
+   * The label of the GUI element: the menu item text and so on.
+   *
+   * @return The GUI Element Label
+   */
+  String label() default "";
+
+  /**
+   * The tooltip of the GUI element (when applicable)
+   *
+   * @return The GUI Element tooltip for the widget and the label
+   */
+  public String toolTip() default "";
+
+  /**
+   * The image filename of the GUI Element, usually an SVG icon.
+   *
+   * @return The
+   */
+  String image() default "";
+
+  /**
+   * The ID of the parent GUI element. This is usually the parent menu or toolbar, ...
+   *
+   * @return The ID of the parent GUI element
+   */
+  String parentId() default "";
+
+  /**
+   * @return True if the text element you define is a password with an asterisk mask
+   */
+  boolean password() default false;
+
+  /**
+   * Preferred height of a {@link GuiElementType#MULTI_LINE_TEXT} widget, in text lines (not
+   * pixels). Default is 1. Values less than 1 are treated as 1. Ignored for other element types.
+   *
+   * @return height in lines
+   */
+  int multiLineTextHeight() default 1;
+
+  /**
+   * @return true if the widget supports variables
+   */
+  boolean variables() default true;
+
+  /**
+   * @return The setter method of the property if it's non-standard
+   */
+  String setterMethod() default "";
+
+  /**
+   * @return The getter method of the property if it's non-standard
+   */
+  String getterMethod() default "";
+
+  /**
+   * @return The method which returns a String[] to populate a combo box widget GUI element
+   */
+  String comboValuesMethod() default "";
+
+  /**
+   * You can use this to order the GUI Elements for a given scenario
+   *
+   * @return The value on which the system will sort alphabetically
+   */
+  String order() default "";
+
+  /**
+   * Set to true if you want the menu-item of toolbar icon to be preceded by a separator or
+   * variables.
+   *
+   * @return True if you want a separator before this element
+   */
+  boolean separator() default false;
+
+  /**
+   * Set this flag to true if you want to ignore the field as a GUI Element. You can use this to
+   * override a GUI element from a base class.
+   *
+   * @return True if you want this element to be ignored
+   */
+  boolean ignored() default false;
+
+  /**
+   * You can provide more information about the Filename type like file extensions information
+   *
+   * @return
+   */
+  Class<? extends ITypeFilename> typeFilename() default EmptyTypeFilename.class;
+
+  /**
+   * You can provide information about the metadata class
+   *
+   * @return
+   */
+  Class<? extends IHopMetadata> metadata() default IHopMetadata.class;
+
+  /**
+   * Metadata plugin key (for example {@code ai-provider}) so a widget can target a metadata type
+   * without a compile dependency on that plugin. Empty uses {@link #metadata()}. When the plugin is
+   * not installed the widget is omitted.
+   */
+  String metadataKey() default "";
+
+  /**
+   * Optional naming-scheme type code for this widget ({@code file}, {@code folder}, {@code
+   * hop-variable}, …). Empty means: infer {@code file}/{@code folder} from {@link
+   * GuiElementType#FILENAME}/{@link GuiElementType#FOLDER}, otherwise the widget is not a name
+   * field. Does not replace {@link #type()}.
+   */
+  String namingSchemeType() default "";
+
+  /**
+   * Layout bucket inside the {@link #parentId()} tree. Empty (the default) keeps the widget on the
+   * flat form. When any sibling has a group, widgets are shown in that container ({@link
+   * #groupType()}).
+   */
+  String group() default "";
+
+  /** Sort key for the group among other groups. Compared as a string, same as {@link #order()}. */
+  String groupOrder() default "";
+
+  /** Optional image filename for the group (tab icon, list item, …). */
+  String groupImage() default "";
+
+  /**
+   * How groups on this {@link #parentId()} are shown. Repeat on every field; the first non-{@link
+   * GuiWidgetGroupType#NONE} value wins. Mixed types log a warning and fall back to tabs.
+   */
+  GuiWidgetGroupType groupType() default GuiWidgetGroupType.NONE;
+}

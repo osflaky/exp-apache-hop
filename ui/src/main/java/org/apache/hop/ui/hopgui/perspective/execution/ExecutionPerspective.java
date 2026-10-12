@@ -1,0 +1,1863 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.ui.hopgui.perspective.execution;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import lombok.Getter;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.Props;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.gui.plugin.GuiPlugin;
+import org.apache.hop.core.gui.plugin.key.GuiKeyboardShortcut;
+import org.apache.hop.core.gui.plugin.key.GuiOsxKeyboardShortcut;
+import org.apache.hop.core.gui.plugin.toolbar.GuiToolbarElement;
+import org.apache.hop.core.gui.plugin.toolbar.GuiToolbarElementType;
+import org.apache.hop.core.logging.ILogChannel;
+import org.apache.hop.core.logging.Metrics;
+import org.apache.hop.core.metadata.SerializableMetadataProvider;
+import org.apache.hop.core.metrics.MetricsSnapshotType;
+import org.apache.hop.core.search.ISearchable;
+import org.apache.hop.core.variables.IVariables;
+import org.apache.hop.core.variables.Variables;
+import org.apache.hop.core.xml.XmlHandler;
+import org.apache.hop.execution.DefaultExecutionSelector;
+import org.apache.hop.execution.Execution;
+import org.apache.hop.execution.ExecutionInfoLocation;
+import org.apache.hop.execution.ExecutionState;
+import org.apache.hop.execution.ExecutionType;
+import org.apache.hop.execution.IExecutionInfoLocation;
+import org.apache.hop.execution.IExecutionSelector;
+import org.apache.hop.execution.LastPeriod;
+import org.apache.hop.execution.caching.CachingFileExecutionInfoLocation;
+import org.apache.hop.execution.local.FileExecutionInfoLocation;
+import org.apache.hop.history.AuditList;
+import org.apache.hop.history.AuditManager;
+import org.apache.hop.history.AuditState;
+import org.apache.hop.history.AuditStateMap;
+import org.apache.hop.i18n.BaseMessages;
+import org.apache.hop.metadata.api.HopMetadataBase;
+import org.apache.hop.metadata.api.IEnumHasCode;
+import org.apache.hop.metadata.api.IHopMetadata;
+import org.apache.hop.metadata.api.IHopMetadataProvider;
+import org.apache.hop.metadata.api.IHopMetadataSerializer;
+import org.apache.hop.pipeline.PipelineMeta;
+import org.apache.hop.ui.core.FormDataBuilder;
+import org.apache.hop.ui.core.PropsUi;
+import org.apache.hop.ui.core.bus.HopGuiEvents;
+import org.apache.hop.ui.core.dialog.ErrorDialog;
+import org.apache.hop.ui.core.dialog.MessageBox;
+import org.apache.hop.ui.core.gui.GuiResource;
+import org.apache.hop.ui.core.gui.GuiToolbarWidgets;
+import org.apache.hop.ui.core.gui.HopNamespace;
+import org.apache.hop.ui.core.gui.IToolbarContainer;
+import org.apache.hop.ui.core.metadata.MetadataEditor;
+import org.apache.hop.ui.core.metadata.MetadataManager;
+import org.apache.hop.ui.core.widget.TabFolderReorder;
+import org.apache.hop.ui.core.widget.TreeMemory;
+import org.apache.hop.ui.core.widget.TreeUtil;
+import org.apache.hop.ui.hopgui.HopGui;
+import org.apache.hop.ui.hopgui.HopGuiKeyHandler;
+import org.apache.hop.ui.hopgui.ToolbarFacade;
+import org.apache.hop.ui.hopgui.context.IGuiContextHandler;
+import org.apache.hop.ui.hopgui.file.IHopFileTypeHandler;
+import org.apache.hop.ui.hopgui.file.empty.EmptyFileType;
+import org.apache.hop.ui.hopgui.perspective.HopPerspectivePlugin;
+import org.apache.hop.ui.hopgui.perspective.IHopPerspective;
+import org.apache.hop.ui.hopgui.perspective.TabClosable;
+import org.apache.hop.ui.hopgui.perspective.TabCloseHandler;
+import org.apache.hop.ui.hopgui.shared.BaseExecutionViewer;
+import org.apache.hop.ui.hopgui.shared.SashFormMemory;
+import org.apache.hop.workflow.WorkflowMeta;
+import org.eclipse.swt.SWT;
+import org.eclipse.swt.custom.CTabFolder;
+import org.eclipse.swt.custom.CTabFolder2Adapter;
+import org.eclipse.swt.custom.CTabFolderEvent;
+import org.eclipse.swt.custom.CTabItem;
+import org.eclipse.swt.custom.SashForm;
+import org.eclipse.swt.graphics.Cursor;
+import org.eclipse.swt.graphics.Point;
+import org.eclipse.swt.graphics.Rectangle;
+import org.eclipse.swt.layout.FormAttachment;
+import org.eclipse.swt.layout.FormData;
+import org.eclipse.swt.layout.FormLayout;
+import org.eclipse.swt.widgets.Combo;
+import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Control;
+import org.eclipse.swt.widgets.Menu;
+import org.eclipse.swt.widgets.MenuItem;
+import org.eclipse.swt.widgets.Shell;
+import org.eclipse.swt.widgets.Text;
+import org.eclipse.swt.widgets.ToolBar;
+import org.eclipse.swt.widgets.ToolItem;
+import org.eclipse.swt.widgets.Tree;
+import org.eclipse.swt.widgets.TreeItem;
+import org.w3c.dom.Node;
+
+@HopPerspectivePlugin(
+    id = "150-HopExecutionPerspective",
+    name = "i18n::ExecutionPerspective.Name",
+    description = "i18n::ExecutionPerspective.Description",
+    image = "ui/images/execution.svg",
+    documentationUrl = "/hop-gui/perspective-execution-information.html")
+@GuiPlugin(
+    name = "i18n::ExecutionPerspective.Name",
+    description = "i18n::ExecutionPerspective.Description")
+public class ExecutionPerspective implements IHopPerspective, TabClosable {
+
+  public static final Class<?> PKG = ExecutionPerspective.class; // i18n
+  private static final String EXECUTION_PERSPECTIVE_TREE = "Execution perspective tree";
+
+  public static final String GUI_PLUGIN_TOOLBAR_PARENT_ID = "ExecutionPerspective-Toolbar";
+
+  public static final String TOOLBAR_ITEM_COPY_FILENAME =
+      "ExecutionPerspective-Toolbar-10000-CopyFilename";
+  public static final String TOOLBAR_ITEM_EDIT = "ExecutionPerspective-Toolbar-10010-Edit";
+  public static final String TOOLBAR_ITEM_DUPLICATE =
+      "ExecutionPerspective-Toolbar-10030-Duplicate";
+  public static final String TOOLBAR_ITEM_DELETE = "ExecutionPerspective-Toolbar-10040-Delete";
+  public static final String TOOLBAR_ITEM_REFRESH = "ExecutionPerspective-Toolbar-10100-Refresh";
+  public static final String TOOLBAR_ITEM_FORCE_REFRESH =
+      "ExecutionPerspective-Toolbar-10110-ForceRefresh";
+  public static final String TOOLBAR_ITEM_SELECT_PARENTS =
+      "ExecutionPerspective-Toolbar-10150-SelectParents";
+  public static final String TOOLBAR_ITEM_SELECT_FAILED =
+      "ExecutionPerspective-Toolbar-10200-SelectFailed";
+  public static final String TOOLBAR_ITEM_SELECT_RUNNING =
+      "ExecutionPerspective-Toolbar-10300-SelectRunning";
+  public static final String TOOLBAR_ITEM_SELECT_FINISHED =
+      "ExecutionPerspective-Toolbar-10400-SelectFinished";
+  public static final String TOOLBAR_ITEM_SELECT_PIPELINES =
+      "ExecutionPerspective-Toolbar-10500-SelectPipelines";
+  public static final String TOOLBAR_ITEM_SELECT_WORKFLOWS =
+      "ExecutionPerspective-Toolbar-10600-SelectWorkflows";
+  public static final String TOOLBAR_ITEM_TIME_FILTER =
+      "ExecutionPerspective-Toolbar-10700-TimeFilter";
+  public static final String TOOLBAR_ITEM_CLEAR_FILTERS =
+      "ExecutionPerspective-Toolbar-80000-ClearFilters";
+  public static final String TOOLBAR_ITEM_FILTER_TEXT =
+      "ExecutionPerspective-Toolbar-90000-FilterText";
+
+  public static final String KEY_HELP = "Help";
+  public static final String CONST_ERROR = "error";
+  public static final String CONST_ERROR1 = "Error";
+  public static final String FILTER_NAME_DATE_ID = "name - date - ID";
+
+  /** Tree item data key for the empty-state "configure locations" placeholder. */
+  public static final String CONFIGURE_LOCATIONS = "configure-locations";
+
+  private static final String EXECUTION_AUDIT_TYPE = "execution-perspective-gui";
+  private static final String EXECUTION_TABS_AUDIT_TYPE = "execution-perspective-tabs";
+  private static final String AUDIT_EXECUTION_TOOLBAR = "toolbar";
+  private static final String AUDIT_ONLY_PARENTS = "only-parents";
+  private static final String AUDIT_ONLY_FAILED = "only-failed";
+  private static final String AUDIT_ONLY_RUNNING = "only-running";
+  private static final String AUDIT_ONLY_FINISHED = "only-finished";
+  private static final String AUDIT_ONLY_WORKFLOWS = "only-workflows";
+  private static final String AUDIT_ONLY_PIPELINES = "only-pipelines";
+  private static final String AUDIT_FILTER_TEXT = "filter-text";
+  private static final String AUDIT_TIME_FILTER = "time-filter";
+  private static final String AUDIT_ACTIVE_TAB = "active-tab";
+  private static final String TAB_KEY_DELIMITER = "\t";
+  public static final String SNAP_ID_EIL_REFRESH = "EILRefresh";
+
+  private static ExecutionPerspective instance;
+
+  private boolean onlyShowingParents = true;
+  private boolean onlyShowingFailed;
+  private boolean onlyShowingRunning;
+  private boolean onlyShowingFinished;
+  private boolean onlyShowingWorkflows;
+  private boolean onlyShowingPipelines;
+  private String filterText;
+  private LastPeriod timeFilter = LastPeriod.ONE_HOUR;
+
+  private HopGui hopGui;
+  private SashForm sash;
+  private Tree tree;
+  private CTabFolder tabFolder;
+  private Control toolBar;
+  private GuiToolbarWidgets toolBarWidgets;
+
+  private final List<IExecutionViewer> viewers = new ArrayList<>();
+
+  /**
+   * When true, {@link #addViewer(IExecutionViewer)} does not activate this perspective. Used while
+   * restoring open tabs on project switch so the data-orchestration perspective keeps focus.
+   */
+  private boolean restoringTabs;
+
+  /**
+   * When true, {@link #closeTab(CTabFolderEvent, CTabItem)} does not rewrite audit state. Used by
+   * {@link #closeAllTabs()} so a project switch that already called {@link #saveState()} is not
+   * overwritten with an empty open-tabs list.
+   */
+  private boolean closingAllTabs;
+
+  /**
+   * Gets locationMap
+   *
+   * @return value of locationMap
+   */
+  @Getter private Map<String, ExecutionInfoLocation> locationMap;
+
+  public static final SimpleDateFormat START_DATE_FORMAT = new SimpleDateFormat("yyyy/MM/dd HH:mm");
+
+  public ExecutionPerspective() {
+    instance = this;
+  }
+
+  public static ExecutionPerspective getInstance() {
+    try {
+      ExecutionPerspective fromGui = HopGui.findSessionPerspective(ExecutionPerspective.class);
+      if (fromGui != null) {
+        return fromGui;
+      }
+    } catch (Throwable e) {
+      // No HopGuiImpl in unit tests
+    }
+    // Fallback for tests and the disabled-perspective case (constructed, never initialized).
+    // Hop Web project activation can reach us before loadPerspectives() has run, or when this
+    // perspective is excluded; callers must not NPE on a null singleton (issue #8477).
+    if (instance == null) {
+      new ExecutionPerspective();
+    }
+    return instance;
+  }
+
+  /**
+   * When this perspective is disabled (an exclusion in disabledGuiElements.xml) HopGui skips it
+   * while loading the perspectives, so {@link #initialize(HopGui, Composite)} never runs. The
+   * singleton still exists because the @GuiPlugin class is instantiated to register the GUI
+   * elements it declares, so callers reaching us through {@link #getInstance()} get an
+   * uninitialized instance which has no widgets and no state to work with.
+   */
+  private boolean isInitialized() {
+    return hopGui != null;
+  }
+
+  @Override
+  public String getId() {
+    return "execution-perspective";
+  }
+
+  @GuiKeyboardShortcut(control = true, shift = true, key = 'i', global = true)
+  @GuiOsxKeyboardShortcut(command = true, shift = true, key = 'i', global = true)
+  @Override
+  public void activate() {
+    if (!isInitialized()) {
+      return;
+    }
+    // Prevents refreshes when not needed.
+    if (!hopGui.isActivePerspective(this)) {
+      hopGui.setActivePerspective(this);
+    }
+  }
+
+  @Override
+  public void perspectiveActivated() {
+    // Automatically refresh.
+    //
+    this.refresh();
+  }
+
+  @Override
+  public boolean isActive() {
+    return isInitialized() && hopGui.isActivePerspective(this);
+  }
+
+  @Override
+  public void initialize(HopGui hopGui, Composite parent) {
+    this.hopGui = hopGui;
+    this.locationMap = new HashMap<>();
+
+    // Split tree and tab folder
+    //
+    sash = new SashForm(parent, SWT.HORIZONTAL);
+    sash.setLayoutData(new FormDataBuilder().fullSize().result());
+
+    createTree(sash);
+    createTabFolder(sash);
+
+    SashFormMemory.persist(sash, "execution-perspective-tree-width");
+
+    restoreState();
+
+    this.refresh();
+
+    // Set the top level items in the tree to be expanded
+    //
+    for (TreeItem item : tree.getItems()) {
+      TreeMemory.getInstance().storeExpanded(EXECUTION_PERSPECTIVE_TREE, item, true);
+    }
+
+    // Add key listeners
+    HopGuiKeyHandler.getInstance().addParentObjectToHandle(this);
+
+    hopGui
+        .getEventsHandler()
+        .addEventListener(
+            getClass().getName() + "ProjectActivated",
+            e -> hopGui.getDisplay().asyncExec(this::clearSearchFilters),
+            HopGuiEvents.ProjectActivated.name());
+  }
+
+  @Override
+  public void clearSearchFilters() {
+    filterText = "";
+    setFilterTextOnToolbar("");
+    if (hopGui != null && hopGui.isActivePerspective(this)) {
+      refresh();
+    }
+  }
+
+  /**
+   * Read the free-text filter from the toolbar into {@link #filterText}. Treats the placeholder
+   * label as empty. Does not modify the widget.
+   */
+  private void syncFilterTextFromToolbar() {
+    if (toolBarWidgets == null) {
+      return;
+    }
+    Text text = getToolbarText(TOOLBAR_ITEM_FILTER_TEXT);
+    if (text == null) {
+      return;
+    }
+    String value = Const.NVL(text.getText(), "").trim();
+    if (FILTER_NAME_DATE_ID.equals(value)) {
+      value = "";
+    }
+    this.filterText = value;
+  }
+
+  private void setFilterTextOnToolbar(String value) {
+    Text text = getToolbarText(TOOLBAR_ITEM_FILTER_TEXT);
+    if (text != null) {
+      text.setText(Const.NVL(value, ""));
+    }
+  }
+
+  private Text getToolbarText(String id) {
+    if (toolBarWidgets == null) {
+      return null;
+    }
+    Control control = toolBarWidgets.getControlForMenu(id);
+    if (control instanceof Text text && !text.isDisposed()) {
+      return text;
+    }
+    // Desktop fallback: SEPARATOR ToolItem holding the Text
+    ToolItem item = toolBarWidgets.findToolItem(id);
+    if (item != null && !item.isDisposed() && item.getControl() instanceof Text text) {
+      return text;
+    }
+    return null;
+  }
+
+  private Combo getToolbarCombo(String id) {
+    if (toolBarWidgets == null) {
+      return null;
+    }
+    Control control = toolBarWidgets.getControlForMenu(id);
+    if (control instanceof Combo combo && !combo.isDisposed()) {
+      return combo;
+    }
+    ToolItem item = toolBarWidgets.findToolItem(id);
+    if (item != null && !item.isDisposed() && item.getControl() instanceof Combo combo) {
+      return combo;
+    }
+    return null;
+  }
+
+  protected MetadataManager<IHopMetadata> getMetadataManager(String objectKey) throws HopException {
+    IHopMetadataProvider metadataProvider = hopGui.getMetadataProvider();
+    Class<IHopMetadata> metadataClass = metadataProvider.getMetadataClassForKey(objectKey);
+    return new MetadataManager<>(
+        HopGui.getInstance().getVariables(), metadataProvider, metadataClass, hopGui.getShell());
+  }
+
+  protected void createTree(Composite parent) {
+    PropsUi props = PropsUi.getInstance();
+
+    // Create composite
+    //
+    Composite composite = new Composite(parent, SWT.BORDER);
+    FormLayout layout = new FormLayout();
+    layout.marginWidth = 0;
+    layout.marginHeight = 0;
+    composite.setLayout(layout);
+
+    // Create toolbar
+    //
+    IToolbarContainer toolBarContainer =
+        ToolbarFacade.createToolbarContainer(composite, SWT.WRAP | SWT.LEFT | SWT.HORIZONTAL);
+    toolBar = toolBarContainer.getControl();
+    toolBarWidgets = new GuiToolbarWidgets();
+    toolBarWidgets.registerGuiPluginObject(this);
+    toolBarWidgets.createToolbarWidgets(toolBarContainer, GUI_PLUGIN_TOOLBAR_PARENT_ID);
+    FormData layoutData = new FormData();
+    layoutData.left = new FormAttachment(0, 0);
+    layoutData.top = new FormAttachment(0, 0);
+    layoutData.right = new FormAttachment(100, 0);
+    toolBar.setLayoutData(layoutData);
+    toolBar.pack();
+    PropsUi.setLook(toolBar, Props.WIDGET_STYLE_TOOLBAR);
+
+    // Ensure Enter in the free-text filter applies the filter (GTK toolbar Text often does not
+    // fire DefaultSelection). GuiToolbarWidgets also wires this; keep a local handler as a
+    // fallback when the toolbar listener instance mapping is incomplete.
+    Text filterTextWidget = getToolbarText(TOOLBAR_ITEM_FILTER_TEXT);
+    if (filterTextWidget != null && !filterTextWidget.isDisposed()) {
+      filterTextWidget.addListener(
+          SWT.KeyDown,
+          event -> {
+            if (event.keyCode == SWT.CR || event.keyCode == SWT.KEYPAD_CR) {
+              selectTextFilter();
+              event.doit = false;
+            }
+          });
+    }
+
+    tree = new Tree(composite, SWT.SINGLE | SWT.H_SCROLL | SWT.V_SCROLL);
+    tree.setHeaderVisible(false);
+    tree.addListener(SWT.Selection, event -> updateSelection());
+    tree.addListener(
+        SWT.DefaultSelection,
+        event -> {
+          TreeItem treeItem = tree.getSelection()[0];
+          if (treeItem != null) {
+            onNewViewer();
+          }
+        });
+
+    // Copy-filename starts disabled until an execution with a filename is selected.
+    updateSelection();
+
+    PropsUi.setLook(tree);
+
+    FormData treeFormData = new FormData();
+    treeFormData.left = new FormAttachment(0, 0);
+    treeFormData.top = new FormAttachment(toolBar, 0);
+    treeFormData.right = new FormAttachment(100, 0);
+    treeFormData.bottom = new FormAttachment(100, 0);
+    tree.setLayoutData(treeFormData);
+
+    // Remember tree node expanded/Collapsed
+    TreeMemory.addTreeListener(tree, EXECUTION_PERSPECTIVE_TREE);
+  }
+
+  protected void createTabFolder(Composite parent) {
+    PropsUi props = PropsUi.getInstance();
+
+    tabFolder = new CTabFolder(parent, SWT.MULTI | SWT.BORDER);
+    tabFolder.addCTabFolder2Listener(
+        new CTabFolder2Adapter() {
+          @Override
+          public void close(CTabFolderEvent event) {
+            onTabClose(event);
+          }
+        });
+    PropsUi.setLook(tabFolder, Props.WIDGET_STYLE_TAB);
+
+    // Show/Hide tree
+    //
+    ToolBar toolBar = new ToolBar(tabFolder, SWT.FLAT);
+    final ToolItem item = new ToolItem(toolBar, SWT.PUSH);
+    item.setImage(GuiResource.getInstance().getImageMaximizePanel());
+    item.addListener(
+        SWT.Selection,
+        e -> {
+          if (sash.getMaximizedControl() == null) {
+            sash.setMaximizedControl(tabFolder);
+            item.setImage(GuiResource.getInstance().getImageMinimizePanel());
+          } else {
+            sash.setMaximizedControl(null);
+            item.setImage(GuiResource.getInstance().getImageMaximizePanel());
+          }
+        });
+    tabFolder.setTopRight(toolBar, SWT.RIGHT);
+    int height = toolBar.computeSize(SWT.DEFAULT, SWT.DEFAULT).y;
+    tabFolder.setTabHeight(Math.max(height, tabFolder.getTabHeight()));
+
+    new TabCloseHandler(this);
+
+    // Support reorder tab item
+    //
+    new TabFolderReorder(tabFolder);
+  }
+
+  public void addViewer(IExecutionViewer viewer) {
+    // Create tab item
+    //
+    CTabItem tabItem = new CTabItem(tabFolder, SWT.CLOSE);
+    tabItem.setFont(GuiResource.getInstance().getFontDefault());
+    tabItem.setText(viewer.getName());
+    tabItem.setImage(viewer.getTitleImage());
+    tabItem.setToolTipText(viewer.getTitleToolTip());
+
+    tabItem.setControl(viewer.getControl());
+    tabItem.setData(viewer);
+
+    viewers.add(viewer);
+
+    // Activate the perspective unless we are restoring tabs after a project switch
+    //
+    if (!restoringTabs) {
+      this.activate();
+    }
+
+    // Switch to the tab
+    //
+    tabFolder.setSelection(tabItem);
+
+    viewer.setFocus();
+
+    viewer.refresh();
+  }
+
+  /**
+   * Find a metadata editor
+   *
+   * @param logChannelId the ID of the execution (log channel)
+   * @param name the name of the workflow or pipeline which is executing
+   * @return the metadata editor or null if not found
+   */
+  public IExecutionViewer findViewer(String logChannelId, String name) {
+    if (logChannelId == null || name == null) return null;
+
+    for (IExecutionViewer viewer : viewers) {
+      if (logChannelId.equals(viewer.getLogChannelId()) && name.equals(viewer.getName())) {
+        return viewer;
+      }
+    }
+    return null;
+  }
+
+  public void setActiveViewer(IExecutionViewer viewer) {
+    for (CTabItem item : tabFolder.getItems()) {
+      if (item.getData().equals(viewer)) {
+        tabFolder.setSelection(item);
+        tabFolder.showItem(item);
+
+        viewer.setFocus();
+      }
+    }
+  }
+
+  public IExecutionViewer getActiveViewer() {
+    if (tabFolder.getSelectionIndex() < 0) {
+      return null;
+    }
+
+    return (IExecutionViewer) tabFolder.getSelection().getData();
+  }
+
+  protected void onTabClose(CTabFolderEvent event) {
+    CTabItem tabItem = (CTabItem) event.item;
+    closeTab(event, tabItem);
+  }
+
+  public void onNewViewer() {
+
+    try {
+      if (tree.getSelectionCount() != 1) {
+        return;
+      }
+
+      TreeItem treeItem = tree.getSelection()[0];
+      if (treeItem != null) {
+        if (Boolean.TRUE.equals(treeItem.getData(CONFIGURE_LOCATIONS))) {
+          createNewExecutionInfoLocation();
+        } else if (treeItem.getData() instanceof Execution execution) {
+          ExecutionInfoLocation location =
+              (ExecutionInfoLocation) treeItem.getParentItem().getData();
+          ExecutionState executionState =
+              location.getExecutionInfoLocation().getExecutionState(execution.getId());
+          createExecutionViewer(location.getName(), execution, executionState);
+        } else if (treeItem.getData(CONST_ERROR) instanceof Exception exception) {
+          new ErrorDialog(getShell(), CONST_ERROR1, "Location error:", exception);
+        }
+      }
+    } catch (Exception e) {
+      getShell().setCursor(null);
+      new ErrorDialog(getShell(), CONST_ERROR1, "Error showing viewer for execution", e);
+    }
+  }
+
+  /**
+   * Opens a new Execution Information Location editor in the metadata perspective. Used when the
+   * user double-clicks the empty-state placeholder in the execution tree.
+   */
+  private void createNewExecutionInfoLocation() {
+    try {
+      MetadataManager<ExecutionInfoLocation> manager =
+          new MetadataManager<>(
+              hopGui.getVariables(),
+              hopGui.getMetadataProvider(),
+              ExecutionInfoLocation.class,
+              hopGui.getShell());
+      manager.newMetadataWithEditor("");
+      hopGui.getEventsHandler().fire(HopGuiEvents.MetadataCreated.name());
+    } catch (Exception e) {
+      new ErrorDialog(
+          getShell(),
+          CONST_ERROR1,
+          BaseMessages.getString(PKG, "ExecutionPerspective.CreateLocation.Error.Message"),
+          e);
+    }
+  }
+
+  public void createExecutionViewer(
+      String locationName, Execution execution, ExecutionState executionState) throws Exception {
+    Cursor busyCursor = getBusyCursor();
+
+    try {
+      if (locationName == null || execution == null) {
+        return;
+      }
+      getShell().setCursor(busyCursor);
+
+      // See if the viewer is already active...
+      //
+      IExecutionViewer active = findViewer(execution.getId(), execution.getName());
+      if (active != null) {
+        setActiveViewer(active);
+        return;
+      }
+
+      // Load metadata
+      IHopMetadataProvider provider = new SerializableMetadataProvider(execution.getMetadataJson());
+      IVariables variables = Variables.getADefaultVariableSpace();
+      //noinspection deprecation
+      variables.setVariables(execution.getVariableValues());
+
+      switch (execution.getExecutionType()) {
+        case Pipeline:
+          {
+            Node pipelineNode =
+                XmlHandler.loadXmlString(execution.getExecutorXml(), PipelineMeta.XML_TAG);
+            PipelineMeta pipelineMeta = new PipelineMeta(pipelineNode, provider);
+            pipelineMeta.setName(execution.getName());
+            pipelineMeta.setFilename(execution.getFilename());
+            PipelineExecutionViewer viewer =
+                new PipelineExecutionViewer(
+                    tabFolder, hopGui, pipelineMeta, locationName, this, execution, executionState);
+            addViewer(viewer);
+          }
+          break;
+        case Workflow:
+          {
+            Node workflowNode =
+                XmlHandler.loadXmlString(execution.getExecutorXml(), WorkflowMeta.XML_TAG);
+            WorkflowMeta workflowMeta = new WorkflowMeta(workflowNode, provider, variables);
+            workflowMeta.setName(execution.getName());
+            workflowMeta.setFilename(execution.getFilename());
+            WorkflowExecutionViewer viewer =
+                new WorkflowExecutionViewer(
+                    tabFolder, hopGui, workflowMeta, locationName, this, execution, executionState);
+            addViewer(viewer);
+          }
+          break;
+        default:
+          break;
+      }
+    } finally {
+      getShell().setCursor(null);
+      busyCursor.dispose();
+    }
+  }
+
+  private Cursor getBusyCursor() {
+    return new Cursor(getShell().getDisplay(), SWT.CURSOR_WAIT);
+  }
+
+  /**
+   * Simply search the tree items to look for the first matching pipeline execution
+   *
+   * @param locationName the exec info location to use
+   * @param executionType The type of execution to look for
+   * @param name The name of the pipeline
+   */
+  public void createLastExecutionView(String locationName, ExecutionType executionType, String name)
+      throws Exception {
+    try {
+      ExecutionInfoLocation location = locationMap.get(locationName);
+      if (location == null) {
+        return;
+      }
+      IExecutionInfoLocation iLocation = location.getExecutionInfoLocation();
+
+      Execution execution = iLocation.findLastExecution(executionType, name);
+
+      // Ignore if never executed
+      if (execution != null) {
+        ExecutionState executionState = iLocation.getExecutionState(execution.getId());
+        createExecutionViewer(location.getName(), execution, executionState);
+      }
+    } catch (Exception e) {
+      new ErrorDialog(
+          getShell(), CONST_ERROR1, "Error opening view on last execution information", e);
+    }
+  }
+
+  public void updateGui() {
+    if (hopGui == null || toolBarWidgets == null || toolBar == null || toolBar.isDisposed()) {
+      return;
+    }
+
+    // Update the filter icons in the toolbar
+    //
+    // Only showing parent executions
+    ToolItem item = toolBarWidgets.findToolItem(TOOLBAR_ITEM_SELECT_PARENTS);
+    if (item != null && !item.isDisposed()) {
+      if (onlyShowingParents) {
+        item.setImage(GuiResource.getInstance().getImageUp());
+      } else {
+        item.setImage(GuiResource.getInstance().getImageUpDisabled());
+      }
+    }
+
+    // Failed
+    item = toolBarWidgets.findToolItem(TOOLBAR_ITEM_SELECT_FAILED);
+    if (item != null && !item.isDisposed()) {
+      if (onlyShowingFailed) {
+        item.setImage(GuiResource.getInstance().getImageError());
+      } else {
+        item.setImage(GuiResource.getInstance().getImageErrorDisabled());
+      }
+    }
+
+    // Running
+    item = toolBarWidgets.findToolItem(TOOLBAR_ITEM_SELECT_RUNNING);
+    if (item != null && !item.isDisposed()) {
+      if (onlyShowingRunning) {
+        item.setImage(GuiResource.getInstance().getImageRunningIcon());
+      } else {
+        item.setImage(GuiResource.getInstance().getImageRunningIconDisabled());
+      }
+    }
+
+    // Finished
+    item = toolBarWidgets.findToolItem(TOOLBAR_ITEM_SELECT_FINISHED);
+    if (item != null && !item.isDisposed()) {
+      if (onlyShowingFinished) {
+        item.setImage(GuiResource.getInstance().getImageFinishedIcon());
+      } else {
+        item.setImage(GuiResource.getInstance().getImageFinishedIconDisabled());
+      }
+    }
+
+    // Workflows
+    item = toolBarWidgets.findToolItem(TOOLBAR_ITEM_SELECT_WORKFLOWS);
+    if (item != null && !item.isDisposed()) {
+      if (onlyShowingWorkflows) {
+        item.setImage(GuiResource.getInstance().getImageWorkflow());
+      } else {
+        item.setImage(GuiResource.getInstance().getImageWorkflowDisabled());
+      }
+    }
+
+    // Pipelines
+    item = toolBarWidgets.findToolItem(TOOLBAR_ITEM_SELECT_PIPELINES);
+    if (item != null && !item.isDisposed()) {
+      if (onlyShowingPipelines) {
+        item.setImage(GuiResource.getInstance().getImagePipeline());
+      } else {
+        item.setImage(GuiResource.getInstance().getImagePipelineDisabled());
+      }
+    }
+
+    // Time filter combo (safe to push model → widget)
+    Combo timeCombo = getToolbarCombo(TOOLBAR_ITEM_TIME_FILTER);
+    if (timeCombo != null) {
+      timeCombo.setText(timeFilter.getDescription());
+    }
+
+    // Do not overwrite the free-text filter box here: the user may have typed text that is not
+    // yet committed via Enter. refresh() always syncs model ← widget instead.
+
+    final IHopFileTypeHandler activeHandler = getActiveFileTypeHandler();
+    if (activeHandler != null) {
+      hopGui
+          .getDisplay()
+          .asyncExec(
+              () ->
+                  hopGui.handleFileCapabilities(
+                      activeHandler.getFileType(), activeHandler.hasChanged(), false, false));
+    }
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_FORCE_REFRESH,
+      toolTip = "i18n::ExecutionPerspective.ToolbarElement.ForceRefresh.Tooltip",
+      image = "ui/images/force-refresh.svg")
+  @GuiKeyboardShortcut(key = SWT.F6)
+  @GuiOsxKeyboardShortcut(key = SWT.F6)
+  public void forcedRefresh() {
+    // This is a manual refresh button push.
+    // As such we consider this a forced refresh.
+    // This means we'll clear the cache of the locations.
+    //
+    for (ExecutionInfoLocation location : locationMap.values()) {
+      location.getExecutionInfoLocation().clearCaches();
+    }
+
+    // Now do a refresh
+    //
+    refresh();
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_REFRESH,
+      toolTip = "i18n::ExecutionPerspective.ToolbarElement.Refresh.Tooltip",
+      image = "ui/images/refresh.svg")
+  @GuiKeyboardShortcut(key = SWT.F5)
+  @GuiOsxKeyboardShortcut(key = SWT.F5)
+  public void refresh() {
+    // Only refresh if we're actually displaying anything.
+    // Let's be conservative with responsiveness.
+    //
+    if (!isInitialized() || !hopGui.isActivePerspective(this)) {
+      return;
+    }
+
+    // Always pick up whatever is currently in the filter box (including text typed without Enter).
+    syncFilterTextFromToolbar();
+
+    Cursor busyCursor = getBusyCursor();
+
+    try {
+      getShell().setCursor(busyCursor);
+
+      // If there are any cached locations we want to close them before initializing new ones
+      //
+      for (ExecutionInfoLocation location : locationMap.values()) {
+        location.getExecutionInfoLocation().close();
+      }
+      locationMap.clear();
+
+      tree.setRedraw(false);
+      tree.removeAll();
+
+      // top level: the execution information locations
+      //
+      IHopMetadataProvider metadataProvider = hopGui.getMetadataProvider();
+      IHopMetadataSerializer<ExecutionInfoLocation> serializer =
+          metadataProvider.getSerializer(ExecutionInfoLocation.class);
+
+      List<ExecutionInfoLocation> locations = serializer.loadAll();
+      locations.sort(Comparator.comparing(HopMetadataBase::getName));
+
+      // When no locations are configured, show a helpful placeholder the user can double-click
+      // to create a new Execution Information Location in the metadata perspective.
+      //
+      if (locations.isEmpty()) {
+        TreeItem configureItem = new TreeItem(tree, SWT.NONE);
+        configureItem.setText(
+            0, BaseMessages.getString(PKG, "ExecutionPerspective.Tree.ConfigureLocations"));
+        configureItem.setImage(GuiResource.getInstance().getImageLocation());
+        configureItem.setData(CONFIGURE_LOCATIONS, true);
+        tree.setToolTipText(
+            BaseMessages.getString(PKG, "ExecutionPerspective.Tree.ConfigureLocations.Tooltip"));
+      } else {
+        ILogChannel log = hopGui.getLog();
+        Metrics startLocationRefresh =
+            new Metrics(MetricsSnapshotType.START, SNAP_ID_EIL_REFRESH, "Refresh EIL tree");
+        Metrics endLocationRefresh =
+            new Metrics(MetricsSnapshotType.STOP, SNAP_ID_EIL_REFRESH, "Refresh EIL tree end");
+
+        log.setGatheringMetrics(true);
+        tree.setToolTipText(null);
+
+        for (ExecutionInfoLocation location : locations) {
+          log.snap(startLocationRefresh);
+          IExecutionInfoLocation iLocation = location.getExecutionInfoLocation();
+
+          try {
+            // Initialize the location first...
+            //
+            iLocation.initialize(hopGui.getVariables(), hopGui.getMetadataProvider());
+
+            // Keep the location around to close at the next refresh.
+            //
+            locationMap.put(location.getName(), location);
+
+            TreeItem locationItem = new TreeItem(tree, SWT.NONE);
+            locationItem.setText(0, Const.NVL(location.getName(), ""));
+            locationItem.setImage(GuiResource.getInstance().getImageLocation());
+            TreeMemory.getInstance().storeExpanded(EXECUTION_PERSPECTIVE_TREE, locationItem, true);
+            locationItem.setData(location);
+
+            try {
+              // Get the data in the location.  The plugins are supposed to prune as much of the IDs
+              // upfront.
+              // Below we'll run the isSelected() condition again to make sure.
+              //
+              IExecutionSelector executionSelector =
+                  new DefaultExecutionSelector(
+                      onlyShowingParents,
+                      onlyShowingFailed,
+                      onlyShowingRunning,
+                      onlyShowingFinished,
+                      onlyShowingWorkflows,
+                      onlyShowingPipelines,
+                      filterText,
+                      timeFilter);
+              List<String> ids = iLocation.findExecutionIDs(executionSelector);
+
+              // Display the executions
+              //
+              for (String id : ids) {
+                try {
+                  Execution execution = iLocation.getExecution(id);
+                  if (execution != null) {
+                    // Apply an extra filter to make sure
+                    //
+                    if (!executionSelector.isSelected(execution)) {
+                      continue;
+                    }
+                    // We only need to consider the state after the previous filtering
+                    //
+                    ExecutionState state = iLocation.getExecutionState(id);
+                    if (!executionSelector.isSelected(state)) {
+                      continue;
+                    }
+
+                    TreeItem executionItem = new TreeItem(locationItem, SWT.NONE);
+                    switch (execution.getExecutionType()) {
+                      case Pipeline:
+                        decoratePipelineTreeItem(executionItem, location, execution, state);
+                        break;
+                      case Workflow:
+                        decorateWorkflowTreeItem(executionItem, location, execution, state);
+                        break;
+                      default:
+                        break;
+                    }
+                  }
+                } catch (Exception e) {
+                  TreeItem errorItem = new TreeItem(locationItem, SWT.NONE);
+                  errorItem.setText("Error reading " + id + " (double click for details)");
+                  errorItem.setForeground(GuiResource.getInstance().getColorRed());
+                  errorItem.setData(CONST_ERROR, e);
+                  errorItem.setImage(GuiResource.getInstance().getImageError());
+                }
+              }
+            } catch (Exception e) {
+              // Error contacting location
+              //
+              TreeItem errorItem = new TreeItem(locationItem, SWT.NONE);
+              errorItem.setText("Not reachable (double click for details)");
+              errorItem.setForeground(GuiResource.getInstance().getColorRed());
+              errorItem.setData(CONST_ERROR, e);
+              errorItem.setImage(GuiResource.getInstance().getImageError());
+            }
+          } catch (Exception e) {
+            // We couldn't initialize a location
+            //
+            TreeItem locationItem = new TreeItem(tree, SWT.NONE);
+            locationItem.setText(
+                0, Const.NVL(location.getName(), "") + " (error: double click for details)");
+            locationItem.setForeground(GuiResource.getInstance().getColorRed());
+            locationItem.setImage(GuiResource.getInstance().getImageLocation());
+            locationItem.setData(CONST_ERROR, e);
+          }
+          log.snap(endLocationRefresh);
+        }
+        log.setGatheringMetrics(false);
+      }
+
+      TreeUtil.setOptimalWidthOnColumns(tree);
+      TreeMemory.setExpandedFromMemory(tree, EXECUTION_PERSPECTIVE_TREE);
+
+      tree.setRedraw(true);
+      updateSelection();
+    } catch (Exception e) {
+      getShell().setCursor(null);
+      new ErrorDialog(
+          getShell(),
+          BaseMessages.getString(PKG, "ExecutionPerspective.Refresh.Error.Header"),
+          BaseMessages.getString(PKG, "ExecutionPerspective.Refresh.Error.Message"),
+          e);
+    } finally {
+      getShell().setCursor(null);
+    }
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_SELECT_PARENTS,
+      toolTip = "i18n::ExecutionPerspective.ToolbarElement.SelectParents.Tooltip",
+      image = "ui/images/up.svg")
+  public void selectParents() {
+    this.onlyShowingParents = !this.onlyShowingParents;
+
+    // Update the icon && apply the filter
+    updateGui();
+    refresh();
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_SELECT_FAILED,
+      toolTip = "i18n::ExecutionPerspective.ToolbarElement.SelectFailed.Tooltip",
+      image = "ui/images/error-disabled.svg")
+  public void selectFailed() {
+    this.onlyShowingFailed = !this.onlyShowingFailed;
+
+    // Update the icon && apply the filter
+    updateGui();
+    refresh();
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_SELECT_RUNNING,
+      toolTip = "i18n::ExecutionPerspective.ToolbarElement.SelectRunning.Tooltip",
+      image = "ui/images/running-icon-disabled.svg")
+  public void selectRunning() {
+    this.onlyShowingRunning = !this.onlyShowingRunning;
+    this.onlyShowingFinished = false;
+    this.onlyShowingFailed = false;
+
+    // Update the icon && apply the filter
+    updateGui();
+    refresh();
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_SELECT_FINISHED,
+      toolTip = "i18n::ExecutionPerspective.ToolbarElement.SelectFinished.Tooltip",
+      image = "ui/images/finished-icon-disabled.svg")
+  public void selectFinished() {
+    this.onlyShowingFinished = !this.onlyShowingFinished;
+    this.onlyShowingRunning = false;
+    // Update the icon && apply the filter
+    updateGui();
+    refresh();
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_SELECT_PIPELINES,
+      toolTip = "i18n::ExecutionPerspective.ToolbarElement.SelectPipelines.Tooltip",
+      image = "ui/images/pipeline-disabled.svg")
+  public void selectPipelines() {
+    this.onlyShowingPipelines = !this.onlyShowingPipelines;
+    this.onlyShowingWorkflows = false;
+    // Update the icon && apply the filter
+    updateGui();
+    refresh();
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_SELECT_WORKFLOWS,
+      toolTip = "i18n::ExecutionPerspective.ToolbarElement.SelectWorkflows.Tooltip",
+      image = "ui/images/workflow-disabled.svg")
+  public void selectWorkflows() {
+    this.onlyShowingWorkflows = !this.onlyShowingWorkflows;
+    this.onlyShowingPipelines = false;
+    // Update the icon && apply the filter
+    updateGui();
+    refresh();
+  }
+
+  public List<String> getLastPeriodDescriptions() {
+    List<String> descriptions = new ArrayList<>();
+    for (LastPeriod period : LastPeriod.values()) {
+      descriptions.add(period.getDescription());
+    }
+    return descriptions;
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_TIME_FILTER,
+      type = GuiToolbarElementType.COMBO,
+      extraWidth = -1, // make less wide
+      readOnly = true,
+      comboValuesMethod = "getLastPeriodDescriptions",
+      toolTip = "i18n::ExecutionPerspective.ToolbarElement.TimeFilter.Tooltip")
+  public void selectTimeFilter() {
+    Combo combo = getToolbarCombo(TOOLBAR_ITEM_TIME_FILTER);
+    if (combo == null) {
+      return;
+    }
+    this.timeFilter = LastPeriod.lookupDescription(combo.getText());
+
+    // Update the icon && apply the filter
+    updateGui();
+    refresh();
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_CLEAR_FILTERS,
+      toolTip = "i18n::ExecutionPerspective.ToolbarElement.ClearFilters.Tooltip",
+      image = "ui/images/clear.svg")
+  public void clearFilters() {
+    this.onlyShowingParents = true;
+    this.onlyShowingPipelines = false;
+    this.onlyShowingWorkflows = false;
+    this.onlyShowingFinished = false;
+    this.onlyShowingRunning = false;
+    this.onlyShowingFailed = false;
+    this.filterText = "";
+
+    // Clear the box (empty, not the placeholder string as a real filter value).
+    // The filter box itself can be switched off in disabledGuiElements.xml while this button is
+    // not, in which case there is no box to clear.
+    setFilterTextOnToolbar("");
+
+    // Update the icon && apply the filter
+    updateGui();
+    refresh();
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_FILTER_TEXT,
+      toolTip = "i18n::ExecutionPerspective.ToolbarElement.FilterText.Tooltip",
+      type = GuiToolbarElementType.TEXT,
+      defaultText = FILTER_NAME_DATE_ID)
+  public void selectTextFilter() {
+    syncFilterTextFromToolbar();
+
+    // Update the icon && apply the filter
+    updateGui();
+    refresh();
+  }
+
+  private void decoratePipelineTreeItem(
+      TreeItem executionItem,
+      ExecutionInfoLocation location,
+      Execution execution,
+      ExecutionState state) {
+    try {
+      String label = execution.getName();
+      label += " - " + START_DATE_FORMAT.format(execution.getExecutionStartDate());
+      executionItem.setText(label);
+      executionItem.setData(execution);
+
+      decorateItemWithState(executionItem, location, execution, state);
+    } catch (Exception e) {
+      new ErrorDialog(
+          getShell(), CONST_ERROR1, "Error drawing pipeline execution information tree item", e);
+    }
+  }
+
+  private void decorateWorkflowTreeItem(
+      TreeItem executionItem,
+      ExecutionInfoLocation location,
+      Execution execution,
+      ExecutionState state) {
+    try {
+      String label = execution.getName();
+      label +=
+          " - "
+              + new SimpleDateFormat("yyyy/MM/dd HH:mm").format(execution.getExecutionStartDate());
+      executionItem.setText(label);
+      executionItem.setData(execution);
+
+      decorateItemWithState(executionItem, location, execution, state);
+    } catch (Exception e) {
+      new ErrorDialog(
+          getShell(), CONST_ERROR1, "Error drawing workflow execution information tree item", e);
+    }
+  }
+
+  private static void decorateItemWithState(
+      TreeItem executionItem,
+      ExecutionInfoLocation location,
+      Execution execution,
+      ExecutionState state) {
+    long loggingInterval = Const.toLong(location.getDataLoggingInterval(), 20000);
+    ExecutionStatusIcon statusIcon = ExecutionStatusIcon.from(state, loggingInterval);
+    executionItem.setImage(statusIcon.toImage(execution.getExecutionType()));
+
+    if (state == null) {
+      return;
+    }
+    if (state.isFailed()) {
+      executionItem.setBackground(GuiResource.getInstance().getColorLightRed());
+    } else if (state.isStale(loggingInterval)) {
+      executionItem.setBackground(GuiResource.getInstance().getColorLightGray());
+    } else if (state.isRunning()) {
+      executionItem.setBackground(GuiResource.getInstance().getColorLightBlueMuted());
+    }
+  }
+
+  /** Refresh the tab image after a viewer reloads execution state (failed / stalled / default). */
+  public void updateViewerTabImage(IExecutionViewer viewer) {
+    if (tabFolder == null || tabFolder.isDisposed() || viewer == null) {
+      return;
+    }
+    for (CTabItem item : tabFolder.getItems()) {
+      if (viewer.equals(item.getData()) && !item.isDisposed()) {
+        item.setImage(viewer.getTitleImage());
+        return;
+      }
+    }
+  }
+
+  @Override
+  public boolean remove(IHopFileTypeHandler typeHandler) {
+    if (typeHandler instanceof MetadataEditor<?> editor) {
+      if (editor.isCloseable()) {
+        viewers.remove(editor);
+
+        for (CTabItem item : tabFolder.getItems()) {
+          if (editor.equals(item.getData())) {
+            item.dispose();
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Enables toolbar items that depend on the current tree selection (copy is enabled when an
+   * execution is selected so UUID and other options can be offered).
+   */
+  private void updateSelection() {
+    if (toolBarWidgets == null) {
+      return;
+    }
+    toolBarWidgets.enableToolbarItem(TOOLBAR_ITEM_COPY_FILENAME, getSelectedExecution() != null);
+  }
+
+  /**
+   * @return the selected execution tree item data, or {@code null} if none / not an execution
+   */
+  private Execution getSelectedExecution() {
+    if (tree == null || tree.isDisposed() || tree.getSelectionCount() != 1) {
+      return null;
+    }
+    Object data = tree.getSelection()[0].getData();
+    if (data instanceof Execution execution) {
+      return execution;
+    }
+    return null;
+  }
+
+  /**
+   * @return the parent {@link ExecutionInfoLocation} for the selected execution, or {@code null}
+   */
+  private ExecutionInfoLocation getSelectedExecutionLocation() {
+    if (tree == null || tree.isDisposed() || tree.getSelectionCount() != 1) {
+      return null;
+    }
+    TreeItem item = tree.getSelection()[0];
+    if (!(item.getData() instanceof Execution)) {
+      return null;
+    }
+    TreeItem parentItem = item.getParentItem();
+    if (parentItem != null && parentItem.getData() instanceof ExecutionInfoLocation location) {
+      return location;
+    }
+    return null;
+  }
+
+  /**
+   * Shows a popup menu under the copy toolbar button so the user can choose what to copy: full
+   * filename path, project-relative filename, on-disk storage path (file locations only), or UUID.
+   */
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_COPY_FILENAME,
+      toolTip = "i18n::ExecutionPerspective.ToolbarElement.Copy.Tooltip",
+      image = "ui/images/copy.svg")
+  public void copyToClipboard() {
+    Execution execution = getSelectedExecution();
+    if (execution == null) {
+      return;
+    }
+
+    String filename = execution.getFilename();
+    String relativeFilename = toProjectRelativePath(filename);
+    String storageRoot = resolveStorageRootPath(getSelectedExecutionLocation());
+    String storagePath = resolveStoragePath(getSelectedExecutionLocation(), execution);
+    String uuid = execution.getId();
+
+    Menu menu = new Menu(getShell(), SWT.POP_UP);
+
+    addCopyMenuItem(
+        menu,
+        BaseMessages.getString(PKG, "ExecutionPerspective.CopyMenu.Filename"),
+        filename,
+        StringUtils.isNotEmpty(filename));
+    addCopyMenuItem(
+        menu,
+        BaseMessages.getString(PKG, "ExecutionPerspective.CopyMenu.RelativeFilename"),
+        relativeFilename,
+        StringUtils.isNotEmpty(relativeFilename));
+    addCopyMenuItem(
+        menu,
+        BaseMessages.getString(PKG, "ExecutionPerspective.CopyMenu.StorageRoot"),
+        storageRoot,
+        StringUtils.isNotEmpty(storageRoot));
+    addCopyMenuItem(
+        menu,
+        BaseMessages.getString(PKG, "ExecutionPerspective.CopyMenu.StoragePath"),
+        storagePath,
+        StringUtils.isNotEmpty(storagePath));
+    addCopyMenuItem(
+        menu,
+        BaseMessages.getString(PKG, "ExecutionPerspective.CopyMenu.Uuid"),
+        uuid,
+        StringUtils.isNotEmpty(uuid));
+
+    positionCopyMenu(menu);
+    menu.addListener(SWT.Hide, event -> menu.getDisplay().asyncExec(menu::dispose));
+    menu.setVisible(true);
+  }
+
+  private void addCopyMenuItem(Menu menu, String label, String value, boolean enabled) {
+    MenuItem item = new MenuItem(menu, SWT.PUSH);
+    item.setText(label);
+    item.setEnabled(enabled);
+    if (enabled && value != null) {
+      item.addListener(SWT.Selection, e -> GuiResource.getInstance().toClipboard(value));
+    }
+  }
+
+  private void positionCopyMenu(Menu menu) {
+    ToolItem toolItem =
+        toolBarWidgets != null ? toolBarWidgets.findToolItem(TOOLBAR_ITEM_COPY_FILENAME) : null;
+    if (toolItem != null && !toolItem.isDisposed() && toolItem.getParent() != null) {
+      ToolBar bar = toolItem.getParent();
+      Rectangle bounds = toolItem.getBounds();
+      menu.setLocation(bar.toDisplay(bounds.x, bounds.y + bounds.height));
+      return;
+    }
+    Control control =
+        toolBarWidgets != null
+            ? toolBarWidgets.getControlForMenu(TOOLBAR_ITEM_COPY_FILENAME)
+            : null;
+    if (control != null && !control.isDisposed()) {
+      Rectangle bounds = control.getBounds();
+      Point location = control.getParent().toDisplay(bounds.x, bounds.y + bounds.height);
+      menu.setLocation(location);
+      return;
+    }
+    menu.setLocation(getShell().getDisplay().getCursorLocation());
+  }
+
+  /**
+   * Expresses {@code path} relative to {@code PROJECT_HOME} as {@code ${PROJECT_HOME}/…} when
+   * possible. Returns {@code null} when the path cannot be relativized.
+   */
+  private String toProjectRelativePath(String path) {
+    if (StringUtils.isEmpty(path)) {
+      return null;
+    }
+    // Already project-relative
+    if (path.startsWith(Const.VAR_PROJECT_HOME) || path.startsWith("${PROJECT_HOME}")) {
+      return path;
+    }
+    String projectHome = hopGui.getVariables().resolve(Const.VAR_PROJECT_HOME);
+    if (StringUtils.isEmpty(projectHome) || Const.VAR_PROJECT_HOME.equals(projectHome)) {
+      return null;
+    }
+    // Normalize trailing separators on project home for prefix matching
+    String home = projectHome;
+    while (home.endsWith("/") || home.endsWith("\\")) {
+      home = home.substring(0, home.length() - 1);
+    }
+    if (path.startsWith(home + "/") || path.startsWith(home + "\\") || path.equals(home)) {
+      String rel = path.substring(home.length());
+      return Const.VAR_PROJECT_HOME
+          + (rel.isEmpty() || rel.startsWith("/") || rel.startsWith("\\")
+              ? rel.replace('\\', '/')
+              : "/" + rel.replace('\\', '/'));
+    }
+    return null;
+  }
+
+  /**
+   * Builds the on-disk storage path for file-based execution locations, or {@code null} when the
+   * location type does not store execution information as files/folders.
+   */
+  private String resolveStorageRootPath(ExecutionInfoLocation location) {
+    if (location == null) {
+      return null;
+    }
+    IExecutionInfoLocation iLocation = location.getExecutionInfoLocation();
+    if (iLocation instanceof FileExecutionInfoLocation fileLocation) {
+      String root = hopGui.getVariables().resolve(fileLocation.getRootFolder());
+      if (StringUtils.isEmpty(root)) {
+        return null;
+      }
+      return root;
+    }
+    if (iLocation instanceof CachingFileExecutionInfoLocation cachingLocation) {
+      String root = cachingLocation.getActualRootFolder();
+      if (StringUtils.isEmpty(root)) {
+        root = hopGui.getVariables().resolve(cachingLocation.getRootFolder());
+      }
+      if (StringUtils.isEmpty(root)) {
+        return null;
+      }
+      return root;
+    }
+    return null;
+  }
+
+  /**
+   * Builds the on-disk storage path for file-based execution locations, or {@code null} when the
+   * location type does not store execution information as files/folders.
+   */
+  private String resolveStoragePath(ExecutionInfoLocation location, Execution execution) {
+    String root = resolveStorageRootPath(location);
+    if (StringUtils.isEmpty(root)) {
+      return null;
+    }
+    IExecutionInfoLocation iLocation = location.getExecutionInfoLocation();
+    if (iLocation instanceof FileExecutionInfoLocation fileLocation) {
+      if (root.endsWith("/") || root.endsWith("\\")) {
+        return root + execution.getId();
+      }
+      return root + "/" + execution.getId();
+    }
+    if (iLocation instanceof CachingFileExecutionInfoLocation cachingLocation) {
+      // Match CacheEntry.calculateFilename: root + id + ".json"
+      if (root.endsWith("/") || root.endsWith("\\")) {
+        return root + execution.getId() + ".json";
+      }
+      if (root.contains("://") || root.startsWith("file:")) {
+        return root + "/" + execution.getId() + ".json";
+      }
+      return root + Const.FILE_SEPARATOR + execution.getId() + ".json";
+    }
+    return null;
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_DELETE,
+      toolTip = "i18n::ExecutionPerspective.ToolbarElement.Delete.Tooltip",
+      image = "ui/images/delete.svg",
+      separator = true)
+  @GuiKeyboardShortcut(key = SWT.DEL)
+  @GuiOsxKeyboardShortcut(key = SWT.DEL)
+  public void delete() {
+    try {
+      if (tree.getSelectionCount() != 1) {
+        return;
+      }
+      TreeItem item = tree.getSelection()[0];
+      Object itemData = item.getData();
+      if (itemData instanceof ExecutionInfoLocation location) {
+        // Delete the whole location
+        //
+        MessageBox box = new MessageBox(getShell(), SWT.APPLICATION_MODAL | SWT.NO | SWT.YES);
+        box.setText("Confirm delete");
+        box.setMessage("Are you sure you want to delete all information in this location?");
+        int answer = box.open();
+        if ((answer & SWT.YES) == 0) {
+          return;
+        }
+
+        IExecutionInfoLocation iLocation = location.getExecutionInfoLocation();
+        List<String> executionIds = iLocation.getExecutionIds(false, 0);
+        for (int i = executionIds.size() - 1; i >= 0; i--) {
+          iLocation.deleteExecution(executionIds.get(i));
+        }
+        refresh();
+      } else if (itemData instanceof Execution execution) {
+        // Delete one execution: do not ask for confirmation
+        //
+        TreeItem parentItem = item.getParentItem();
+        ExecutionInfoLocation location = (ExecutionInfoLocation) parentItem.getData();
+        IExecutionInfoLocation iLocation = location.getExecutionInfoLocation();
+        iLocation.deleteExecution(execution.getId());
+        refresh();
+      }
+    } catch (Exception e) {
+      new ErrorDialog(getShell(), CONST_ERROR1, "Error deleting location(s)", e);
+    }
+  }
+
+  @Override
+  public void navigateToPreviousFile() {
+    if (hasNavigationPreviousFile()) {
+      int index = tabFolder.getSelectionIndex() - 1;
+      if (index < 0) {
+        index = tabFolder.getItemCount() - 1;
+      }
+      tabFolder.setSelection(index);
+    }
+  }
+
+  @Override
+  public void navigateToNextFile() {
+    if (hasNavigationNextFile()) {
+      int index = tabFolder.getSelectionIndex() + 1;
+      if (index >= tabFolder.getItemCount()) {
+        index = 0;
+      }
+      tabFolder.setSelection(index);
+    }
+  }
+
+  public boolean hasNavigationPreviousFile() {
+    return tabFolder.getItemCount() > 1;
+  }
+
+  public boolean hasNavigationNextFile() {
+    return tabFolder.getItemCount() > 1;
+  }
+
+  @Override
+  public Control getControl() {
+    return sash;
+  }
+
+  protected Shell getShell() {
+    return hopGui.getShell();
+  }
+
+  @Override
+  public List<IGuiContextHandler> getContextHandlers() {
+    return new ArrayList<>();
+  }
+
+  @Override
+  public List<ISearchable> getSearchables() {
+    return new ArrayList<>();
+  }
+
+  @Override
+  public void closeTab(CTabFolderEvent event, CTabItem tabItem) {
+    IExecutionViewer viewer = (IExecutionViewer) tabItem.getData();
+
+    boolean isRemoved = viewers.remove(viewer);
+    tabItem.dispose();
+
+    if (isRemoved) {
+      // Skip during bulk close (project/environment switch or closeAllTabs): the open-files list
+      // was saved before closeAllFiles; writing here would overwrite it with empty tabs after
+      // pipelines/workflows were already closed (issue #7692).
+      //
+      if (!closingAllTabs && !hopGui.fileDelegate.isClosing()) {
+        hopGui.auditDelegate.writeLastOpenFiles();
+      }
+      // Keep the per-project open-tabs audit in sync when the user closes a single tab.
+      // Skip during closeAllTabs so a prior saveState() for project switch is not wiped.
+      //
+      if (!closingAllTabs) {
+        saveState();
+      }
+    }
+    if (!isRemoved && event != null) {
+      event.doit = false;
+    }
+
+    // If all editor are closed
+    //
+    if (tabFolder.getItemCount() == 0) {
+      HopGui.getInstance().handleFileCapabilities(new EmptyFileType(), false, false, false);
+    }
+  }
+
+  /**
+   * Close every open execution viewer tab. Does not write audit state — callers that need to
+   * remember tabs (project switch) must call {@link #saveState()} first.
+   */
+  public void closeAllTabs() {
+    if (!isInitialized() || tabFolder == null || tabFolder.isDisposed()) {
+      return;
+    }
+
+    closingAllTabs = true;
+    try {
+      // Copy the list — closeTab disposes items and mutates the folder
+      //
+      List<CTabItem> items = new ArrayList<>();
+      for (CTabItem item : tabFolder.getItems()) {
+        items.add(item);
+      }
+      for (CTabItem item : items) {
+        if (!item.isDisposed()) {
+          closeTab(null, item);
+        }
+      }
+    } finally {
+      closingAllTabs = false;
+    }
+  }
+
+  @Override
+  public CTabFolder getTabFolder() {
+    return tabFolder;
+  }
+
+  public void saveState() {
+    // Nothing was ever restored or shown, so saving would only overwrite the state on disk with
+    // the field defaults.
+    //
+    if (!isInitialized()) {
+      return;
+    }
+    try {
+      String namespace = HopNamespace.getNamespace();
+      String activeKey = "";
+      IExecutionViewer activeViewer = getActiveViewer();
+      List<String> openTabs = new ArrayList<>();
+
+      if (tabFolder != null && !tabFolder.isDisposed()) {
+        for (CTabItem item : tabFolder.getItems()) {
+          if (item.isDisposed()) {
+            continue;
+          }
+          Object data = item.getData();
+          if (data instanceof BaseExecutionViewer baseViewer) {
+            String locationName = Const.NVL(baseViewer.getLocationName(), "");
+            String executionId =
+                baseViewer.getExecution() != null
+                    ? Const.NVL(baseViewer.getExecution().getId(), "")
+                    : "";
+            if (StringUtils.isEmpty(locationName) || StringUtils.isEmpty(executionId)) {
+              continue;
+            }
+            String tabKey = toTabKey(locationName, executionId);
+            openTabs.add(tabKey);
+            if (baseViewer == activeViewer) {
+              activeKey = tabKey;
+            }
+          }
+        }
+      }
+
+      Map<String, Object> toolbarProps = new HashMap<>();
+      toolbarProps.put(AUDIT_ONLY_PARENTS, onlyShowingParents);
+      toolbarProps.put(AUDIT_ONLY_FAILED, onlyShowingFailed);
+      toolbarProps.put(AUDIT_ONLY_RUNNING, onlyShowingRunning);
+      toolbarProps.put(AUDIT_ONLY_FINISHED, onlyShowingFinished);
+      toolbarProps.put(AUDIT_ONLY_WORKFLOWS, onlyShowingWorkflows);
+      toolbarProps.put(AUDIT_ONLY_PIPELINES, onlyShowingPipelines);
+      toolbarProps.put(AUDIT_FILTER_TEXT, Const.NVL(filterText, ""));
+      toolbarProps.put(AUDIT_TIME_FILTER, timeFilter.getCode());
+      toolbarProps.put(AUDIT_ACTIVE_TAB, activeKey);
+
+      AuditStateMap stateMap = new AuditStateMap();
+      stateMap.add(new AuditState(AUDIT_EXECUTION_TOOLBAR, toolbarProps));
+
+      AuditManager.getActive().saveAuditStateMap(namespace, EXECUTION_AUDIT_TYPE, stateMap);
+      AuditManager.getActive()
+          .storeList(namespace, EXECUTION_TABS_AUDIT_TYPE, new AuditList(openTabs));
+    } catch (Exception e) {
+      hopGui.getLog().logError("Error saving execution perspective state", e);
+    }
+  }
+
+  /** Restore the state of this perspective. */
+  public void restoreState() {
+    // There is no toolbar or tree to restore the state into.
+    //
+    if (!isInitialized()) {
+      return;
+    }
+    try {
+      String namespace = HopNamespace.getNamespace();
+      AuditStateMap stateMap =
+          AuditManager.getActive().loadAuditStateMap(namespace, EXECUTION_AUDIT_TYPE);
+      AuditState toolbarState = stateMap.get(AUDIT_EXECUTION_TOOLBAR);
+      if (toolbarState == null) {
+        toolbarState = new AuditState();
+      }
+      onlyShowingParents = toolbarState.extractBoolean(AUDIT_ONLY_PARENTS, true);
+      onlyShowingFailed = toolbarState.extractBoolean(AUDIT_ONLY_FAILED, false);
+      onlyShowingFinished = toolbarState.extractBoolean(AUDIT_ONLY_FINISHED, false);
+      onlyShowingRunning = toolbarState.extractBoolean(AUDIT_ONLY_RUNNING, false);
+      onlyShowingWorkflows = toolbarState.extractBoolean(AUDIT_ONLY_WORKFLOWS, false);
+      onlyShowingPipelines = toolbarState.extractBoolean(AUDIT_ONLY_PIPELINES, false);
+      filterText = toolbarState.extractString(AUDIT_FILTER_TEXT, "");
+      if (FILTER_NAME_DATE_ID.equals(filterText)) {
+        filterText = "";
+      }
+      String timeFilterName = toolbarState.extractString(AUDIT_TIME_FILTER, "");
+      timeFilter = IEnumHasCode.lookupCode(LastPeriod.class, timeFilterName, LastPeriod.ONE_HOUR);
+      String activeKey = toolbarState.extractString(AUDIT_ACTIVE_TAB, "");
+
+      // Restore filter text onto the widget before updateGui/refresh (updateGui does not write it).
+      setFilterTextOnToolbar(filterText);
+      updateGui();
+      refresh();
+
+      // Re-open execution viewer tabs that were open last time this project was used.
+      // Missing locations/executions fail silently — they are not important enough to block
+      // project activation.
+      //
+      restoreOpenTabs(namespace, activeKey);
+    } catch (Exception e) {
+      hopGui.getLog().logError("Error restoring execution perspective state", e);
+    }
+  }
+
+  /**
+   * Restore previously open execution tabs for the given project namespace. Failures for individual
+   * tabs are logged and skipped.
+   */
+  private void restoreOpenTabs(String namespace, String activeKey) {
+    if (tabFolder == null || tabFolder.isDisposed()) {
+      return;
+    }
+
+    AuditList auditList;
+    try {
+      auditList = AuditManager.getActive().retrieveList(namespace, EXECUTION_TABS_AUDIT_TYPE);
+    } catch (Exception e) {
+      hopGui.getLog().logError("Error loading open execution tabs for project restore", e);
+      return;
+    }
+    if (auditList == null || auditList.getNames() == null || auditList.getNames().isEmpty()) {
+      return;
+    }
+
+    restoringTabs = true;
+    IExecutionViewer activeViewer = null;
+    try {
+      for (String tabKey : auditList.getNames()) {
+        if (StringUtils.isEmpty(tabKey)) {
+          continue;
+        }
+        try {
+          String[] parts = tabKey.split(TAB_KEY_DELIMITER, 2);
+          if (parts.length < 2 || StringUtils.isEmpty(parts[0]) || StringUtils.isEmpty(parts[1])) {
+            hopGui
+                .getLog()
+                .logDebug("Skipping invalid execution tab key during restore: " + tabKey);
+            continue;
+          }
+          String locationName = parts[0];
+          String executionId = parts[1];
+
+          ExecutionInfoLocation location = ensureLocationInitialized(locationName);
+          if (location == null) {
+            hopGui
+                .getLog()
+                .logDebug(
+                    "Skipping restore of execution tab: location '"
+                        + locationName
+                        + "' not available");
+            continue;
+          }
+
+          IExecutionInfoLocation iLocation = location.getExecutionInfoLocation();
+          Execution execution = iLocation.getExecution(executionId);
+          if (execution == null) {
+            hopGui
+                .getLog()
+                .logDebug(
+                    "Skipping restore of execution tab: execution '"
+                        + executionId
+                        + "' not found in location '"
+                        + locationName
+                        + "'");
+            continue;
+          }
+
+          ExecutionState executionState = iLocation.getExecutionState(executionId);
+          createExecutionViewer(locationName, execution, executionState);
+
+          if (tabKey.equals(activeKey)) {
+            activeViewer = findViewer(execution.getId(), execution.getName());
+          }
+        } catch (Exception e) {
+          // Missing or corrupt execution information is not important enough to surface.
+          //
+          hopGui
+              .getLog()
+              .logDebug("Skipping restore of execution tab '" + tabKey + "': " + e.getMessage());
+        }
+      }
+
+      if (activeViewer != null) {
+        setActiveViewer(activeViewer);
+      }
+    } finally {
+      restoringTabs = false;
+    }
+  }
+
+  /**
+   * Ensure the named execution information location is initialized and present in {@link
+   * #locationMap}. Does not require the perspective to be active (unlike {@link #refresh()}).
+   *
+   * @param locationName metadata name of the location
+   * @return the location, or null if it cannot be loaded/initialized
+   */
+  private ExecutionInfoLocation ensureLocationInitialized(String locationName) {
+    if (StringUtils.isEmpty(locationName) || locationMap == null) {
+      return null;
+    }
+
+    ExecutionInfoLocation location = locationMap.get(locationName);
+    if (location != null) {
+      return location;
+    }
+
+    try {
+      IHopMetadataSerializer<ExecutionInfoLocation> serializer =
+          hopGui.getMetadataProvider().getSerializer(ExecutionInfoLocation.class);
+      if (!serializer.exists(locationName)) {
+        return null;
+      }
+      location = serializer.load(locationName);
+      if (location == null || location.getExecutionInfoLocation() == null) {
+        return null;
+      }
+      location
+          .getExecutionInfoLocation()
+          .initialize(hopGui.getVariables(), hopGui.getMetadataProvider());
+      locationMap.put(locationName, location);
+      return location;
+    } catch (Exception e) {
+      hopGui
+          .getLog()
+          .logDebug(
+              "Could not initialize execution location '" + locationName + "' for tab restore", e);
+      return null;
+    }
+  }
+
+  private static String toTabKey(String locationName, String executionId) {
+    return locationName + TAB_KEY_DELIMITER + executionId;
+  }
+
+  public ExecutionInfoLocation lookupLocation(String locationName) {
+    ExecutionInfoLocation location = locationMap.get(locationName);
+    if (location == null) {
+      // Not yet loaded in the map in the refresh
+      //
+      refresh();
+    }
+    return locationMap.get(locationName);
+  }
+}

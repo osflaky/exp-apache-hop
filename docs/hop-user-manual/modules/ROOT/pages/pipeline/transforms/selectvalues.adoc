@@ -1,0 +1,120 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+:documentationPath: /pipeline/transforms/
+:language: en_US
+:description: Use 'Select Values' for selecting, removing, renaming, changing data types and configuring the length and precision of the fields on the stream.
+:page-engines: Hop Engine=yes, Single Threaded=yes, Native Spark=yes, Beam Spark=maybe, Beam Flink=maybe, Beam Dataflow=maybe
+
+= image:transforms/icons/selectvalues.svg[Select Values transform Icon, role="image-doc-icon"] Select Values
+
+== Description
+
+The Select Values transform is useful for selecting, removing, renaming, changing data types and configuring the length and precision of the fields on the stream.
+
+These operations are organized into different categories:
+
+* **Select & Alter** — Specify the exact order and name in which the fields have to be placed in the output rows
+* **Remove** — Specify the fields that have to be removed from the output rows
+* **Meta-data** - Change the name, type, length and precision (the metadata) of one or more fields
+
+== Options
+
+=== General settings
+
+[options="header"]
+|===
+|Option|Description
+|Transform Name|Name of the transform: this name has to be unique in a single pipeline
+|===
+
+=== Select & Alter tab
+
+This tab contains options for selecting the fields to forward to the next transform, as well as changing their order.
+The `Get fields to select` button will retrieve available fields based on the existing input transforms and populate the entries in this tab.
+
+[options="header"]
+|===
+|Option|Description
+|Fieldname|The name of the field from the input stream
+|Rename to|The new name of the field.
+Leave blank if you do not wish to rename the field
+|Length|The field length
+|Precision|The precision option depends on the field type, but only Number is supported; it returns the number of floating point digits
+|Include unspecified fields, ordered by name|Enable if you want to implicitly select all other fields from the input stream(s) that are not explicitly selected in the Fields section
+|===
+
+[NOTE]
+To copy a field, simply specify the same field name multiple times with different rename values.
+
+=== Remove tab
+
+This tab allows you to remove fields from the input stream.
+Click `Get fields to remove` to import fields from previous transforms (this will populate the table with all the fields, you'll probably need to remove those you want to keep in the stream).
+
+=== Meta-data tab
+
+Options under this tab allow you to rename input fields, convert them to different data types, and alter their length, and precision.
+Click `Get fields to change` to import fields from previous transforms.
+
+[options="header"]
+|===
+|Option|Description
+|Fieldname|The name of the input field
+|Rename to|If you want to rename this field, this is where you put the new name
+|Type|The data type for this field
+|Length|The field length
+|Precision|The precision option depends on the field type, but only Number is supported; it returns the number of floating point digits
+|Binary to Normal?|Converts a string to a numeric data type, when appropriate
+|Format|The format mask (number type or date format).
+See xref:pipeline/formatting-values.adoc[Formatting numbers and dates].
+|Date Format Lenient?|Determines whether the date parser is strict or lenient.
+Leniency means that invalid date values are processed.
+If set to N, only strictly valid date values will be accepted; if set to Y, the parser will attempt to determine the intention of an incorrect date, if possible, and correct it.
+Do not use Y to hide daylight-saving gaps — see xref:pipeline/formatting-values.adoc#string-to-date[String to Date and Date to String].
+|Date Locale|Specifies the date locale to use for date conversions and calculations.
+Leave blank to use the default encoding on your system or chose from the populated this list accordingly.
+|Date Time Zone|Specifies the date time zone to use for date conversions and calculations.
+Leave blank to use the JVM default (`TimeZone.getDefault()`).
+Set this to `UTC` when the string is a timezone-less UTC timestamp, or include `Z` / `X` in the Format mask.
+See xref:pipeline/formatting-values.adoc#string-to-date[String to Date and Date to String].
+|Lenient number conversion|When this option is set to Y, numbers get parsed until it finds a non-numeric value (e.g. a dash or slash) and stops parsing without reporting an error.
+When set to N, numbers get parsed strictly throwing an error in case invalid numbers are in the input.
+|Encoding|Specifies the text file encoding to use.
+Leave blank to use the default encoding on your system.
+To use Unicode, specify UTF-8 or UTF-16. On first use, Hop searches your system for available encodings and populates this list accordingly.
+|Decimal|A decimal point; this is either a dot or a comma
+|Grouping|Thousands grouping symbol (`.` or `,`).
+This is *not* a row group.
+See xref:pipeline/formatting-values.adoc[Formatting numbers and dates].
+|Currency|Symbol used to represent currencies
+|Rounding type|This option allows you to define how Numbers are rounded when they are converted to String.
+This happens when previewing the data, but also when data is bulk loaded or converted to a string in scripts.
+|===
+
+== Special use cases
+
+=== Duplicating fields
+
+You can send multiple copies of a single field to the next transform, provided that they have different names. Just enter the field to replicate in multiple rows of the *Select & Alter* tab, and assign each one a different name in the `Rename to` column.
+
+=== Use of multiple tabs
+
+Although discouraged for better clarity and simplicity of use, filling more than one tab is possible. They will be processed in the following order:
+
+1. first the *Select & Alter* tab is processed: if populated, the fields will be filtered, renamed and reordered as specified
+2. then the *Remove* tab is processed, but you cannot remove fields that haven't been selected in the previous step: if you renamed them, you must use the new name in the `Fieldname` column
+3. finally the *Meta-data* tab is processed: you cannot change unselected (step 1) and removed (step 2) fields, and if you renamed them you must use the new name in the `Fieldname` column

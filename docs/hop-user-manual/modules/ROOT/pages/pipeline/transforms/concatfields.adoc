@@ -1,0 +1,83 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+:documentationPath: /pipeline/transforms/
+:language: en_US
+:description: The Concat fields transform concatenates multiple fields into one target field. The fields can be separated by a separator and an enclosure.
+:page-engines: Hop Engine=yes, Single Threaded=yes, Native Spark=yes, Beam Spark=yes, Beam Flink=yes, Beam Dataflow=yes
+
+= image:transforms/icons/concatfields.svg[Concat fields transform Icon, role="image-doc-icon"] Concat fields
+
+== Description
+
+The Concat fields transform concatenates multiple fields into one target field. Type in a target field name which always creates a new field. You can optionally use a Separator field or Enclosure between fields and add the fields or free text you would like to concatenate in order.
+
+== Options
+
+=== General
+
+[options="header"]
+|===
+|Option|Description
+|Transform name|Name of the transform.
+|Target Field Name|The name of the target field (String type)
+|Length of Target Field|The length of the string type (setting the meta-data of the String type, this is also used by the Fast Data Dump option for performance optimization)
+|Separator|Specify the character that separates the fields in a single line of text.
+Typically this is ; or a tab.
+|Enclosure|A pair of strings can enclose some fields.
+This allows separator characters in fields.
+The enclosure string is optional.
+|Force enclosure?|Force adding the enclosing character before and after each field that is added to the concatenated string.
+|Remove concatenated fields from output?|If checked, the fields that were used to create the concatenated field (specified in `Target Field Name`) will be removed from the output and wil not be available in later transforms.
+|===
+
+=== Fields Tab
+
+This is identical to the fields tab option of the Text File Output transform and has the same functionality.
+
+[options="header"]
+|===
+|Option|Description
+|Name|The name of the field.
+|Type|Type of the field can be either String, Date or Number.
+|Format|The format mask to convert with.
+See xref:pipeline/formatting-values.adoc[Formatting numbers and dates].
+|Length a|The length option depends on the field type follows:
+
+- Number - Total number of significant figures in a number
+
+- String - total length of string
+
+- Date - length of printed output of the string (e.g. 4 only gives back year)
+
+|Precision a|The precision option depends on the field type as follows:
+
+- Number - Number of floating point digits
+- String - unused
+- Date - unused
+
+|Currency|Symbol used to represent currencies like $10,000.00 or E5.000,00
+|Decimal|A decimal point can be a "." (10,000.00) or "," (5.000,00)
+|Group|A grouping can be a "," (10,000.00) or "." (5.000,00)
+|Trim type|The trimming method to apply on the string.
+Trimming only works when there is no field length given.
+|Null|A string to replace null values of this field with, by default null is replaced with an empty string.
+|Get|Click to retrieve the list of fields from the input fields stream(s)
+|Minimal width|Alter the options in the fields tab in such a way that the resulting width of lines in the text file is minimal.
+So instead of save 0000001, we write 1, etc.
+String fields will no longer be padded to their specified length.
+|===
+

@@ -1,0 +1,109 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ */
+package org.apache.hop.pipeline.transforms.googlesheets;
+
+import com.google.api.client.http.HttpRequestInitializer;
+import com.google.api.client.http.HttpTransport;
+import com.google.api.services.sqladmin.SQLAdminScopes;
+import com.google.auth.http.HttpCredentialsAdapter;
+import com.google.auth.http.HttpTransportFactory;
+import com.google.auth.oauth2.GoogleCredentials;
+import com.google.auth.oauth2.ServiceAccountCredentials;
+import com.google.auth.oauth2.UserCredentials;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Collections;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hop.core.exception.HopFileException;
+import org.apache.hop.core.variables.IVariables;
+import org.apache.hop.core.vfs.HopVfs;
+
+/** Describe your transform plugin. */
+public class GoogleSheetsCredentials {
+  private GoogleSheetsCredentials() {}
+
+  public static final String APPLICATION_NAME = "Apache-Hop-Google-Sheets";
+
+  public static HttpCredentialsAdapter getCredentialsJson(
+      String scope,
+      String jsonCredentialPath,
+      String impersonation,
+      IVariables variables,
+      HttpTransport httpTransport)
+      throws IOException {
+
+    GoogleCredentials credential;
+
+    InputStream in;
+    try {
+      in = HopVfs.getInputStream(jsonCredentialPath, variables);
+    } catch (HopFileException ex) {
+      throw new IOException("Error opening JSON Credentials file " + jsonCredentialPath, ex);
+    }
+
+    if (in == null) {
+      throw new FileNotFoundException("Resource not found:" + jsonCredentialPath);
+    }
+
+    try {
+      credential = GoogleCredentials.fromStream(in);
+    } catch (IOException e) {
+      throw new IOException(
+          "Unable to load Google credentials from '"
+              + jsonCredentialPath
+              + "'. Expected a service-account JSON key file (as downloaded from Google Cloud). "
+              + "Integration tests require GCP_KEY_FILE pointing at that JSON (Jenkins uses "
+              + "credentials 'gcp-access-hop'); the default dummy file is not valid JSON.",
+          e);
+    }
+
+    if (httpTransport != null) {
+      HttpTransportFactory proxyTransportFactory = () -> httpTransport;
+
+      if (credential instanceof ServiceAccountCredentials sc) {
+        credential = sc.toBuilder().setHttpTransportFactory(proxyTransportFactory).build();
+      } else if (credential instanceof UserCredentials uc) {
+        credential = uc.toBuilder().setHttpTransportFactory(proxyTransportFactory).build();
+      }
+    }
+
+    if (StringUtils.isEmpty(impersonation)) {
+      credential = credential.createScoped(Collections.singleton(scope));
+    } else {
+      credential =
+          credential
+              .createScoped(Collections.singleton(SQLAdminScopes.SQLSERVICE_ADMIN))
+              .createDelegated(impersonation);
+    }
+
+    return new HttpCredentialsAdapter(credential);
+  }
+
+  public static HttpRequestInitializer setHttpTimeout(
+      final HttpRequestInitializer requestInitializer, final String timeout) {
+    return httpRequest -> {
+      int t0 = Integer.parseInt(timeout);
+      requestInitializer.initialize(httpRequest);
+      // 10 minutes connect timeout
+      httpRequest.setConnectTimeout(t0 * 60000);
+      // 10 minutes read timeout
+      httpRequest.setReadTimeout(t0 * 60000);
+    };
+  }
+}

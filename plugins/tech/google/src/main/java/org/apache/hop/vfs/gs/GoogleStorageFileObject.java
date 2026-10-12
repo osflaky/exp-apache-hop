@@ -1,0 +1,501 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ */
+
+package org.apache.hop.vfs.gs;
+
+import com.google.api.gax.paging.Page;
+import com.google.api.gax.rpc.NotFoundException;
+import com.google.cloud.WriteChannel;
+import com.google.cloud.storage.Blob;
+import com.google.cloud.storage.BlobId;
+import com.google.cloud.storage.BlobInfo;
+import com.google.cloud.storage.Bucket;
+import com.google.cloud.storage.BucketInfo;
+import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.Storage.BlobListOption;
+import com.google.storage.control.v2.DeleteFolderRequest;
+import com.google.storage.control.v2.FolderName;
+import com.google.storage.control.v2.StorageControlClient;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
+import org.apache.commons.vfs2.FileObject;
+import org.apache.commons.vfs2.FileType;
+import org.apache.commons.vfs2.provider.AbstractFileName;
+import org.apache.commons.vfs2.provider.AbstractFileObject;
+import org.apache.hop.core.Const;
+import org.apache.hop.vfs.gs.config.GoogleCloudConfig;
+import org.apache.hop.vfs.gs.config.GoogleCloudConfigSingleton;
+
+public class GoogleStorageFileObject extends AbstractFileObject<GoogleStorageFileSystem> {
+
+  Blob blob = null;
+  Bucket bucket = null;
+
+  String bucketName;
+  String bucketPath;
+  String scheme;
+
+  private FileType cachedType = null;
+  private Long cachedSize = null;
+  private Instant cachedLastModified = null;
+
+  protected GoogleStorageFileObject(
+      String scheme, AbstractFileName name, GoogleStorageFileSystem fs) {
+    super(name, fs);
+    this.bucketName = getAbstractFileSystem().getBucketName(getName()).trim();
+    this.bucketPath = getAbstractFileSystem().getBucketPath(getName()).trim();
+    this.scheme = scheme;
+  }
+
+  protected GoogleStorageFileObject(
+      String scheme, AbstractFileName name, GoogleStorageFileSystem fs, Bucket bucket, Blob blob) {
+    super(name, fs);
+    bucketName = getAbstractFileSystem().getBucketName(getName()).trim();
+    bucketPath = getAbstractFileSystem().getBucketPath(getName()).trim();
+    this.bucket = bucket;
+    this.blob = blob;
+    this.scheme = scheme;
+  }
+
+  private boolean hasBucket() {
+    return bucket != null;
+  }
+
+  private boolean hasObject() {
+    return blob != null;
+  }
+
+  @Override
+  protected void doAttach() throws Exception {
+    Storage storage = getAbstractFileSystem().setupStorage();
+    if (!bucketName.isEmpty()) {
+      if (this.bucket == null) {
+        this.bucket = storage.get(bucketName);
+      }
+      if (!bucketPath.isEmpty() && this.blob == null) {
+        String parentPrefix = GoogleStorageListCache.parentPrefix(bucketPath);
+        GoogleStorageListCache.ChildInfo cached =
+            getAbstractFileSystem().getFromListCache(bucketName, parentPrefix, bucketPath);
+        if (cached == null) {
+          cached =
+              getAbstractFileSystem().getFromListCache(bucketName, parentPrefix, bucketPath + "/");
+        }
+        if (cached != null) {
+          cachedType = cached.type;
+          cachedSize = cached.size;
+          cachedLastModified = cached.lastModified;
+          return;
+        }
+
+        this.blob = storage.get(bucketName, bucketPath);
+        String parent = getParentFolder(bucketPath);
+        String child = lastPathElement(stripTrailingSlash(bucketPath));
+        Page<Blob> page;
+        if (!parent.isEmpty()) {
+          page =
+              storage.list(
+                  bucketName,
+                  BlobListOption.currentDirectory(),
+                  BlobListOption.prefix(parent + "/"));
+
+        } else {
+          page = storage.list(bucketName, BlobListOption.currentDirectory());
+        }
+        for (Blob b : page.iterateAll()) {
+          if (lastPathElement(stripTrailingSlash(b.getName())).equals(child)) {
+            this.blob = b;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  @Override
+  protected long doGetContentSize() throws Exception {
+    if (cachedSize != null) {
+      return cachedSize;
+    }
+    return hasObject() ? blob.getSize() : 0L;
+  }
+
+  @Override
+  protected InputStream doGetInputStream() throws Exception {
+    if (!isFile()) {
+      throw new FileNotFoundException();
+    }
+    Storage storage = getAbstractFileSystem().setupStorage();
+    if (blob != null) {
+      return new ReadChannelInputStream(storage.reader(blob.getBlobId()));
+    }
+    return new ReadChannelInputStream(storage.reader(BlobId.of(bucketName, bucketPath)));
+  }
+
+  @Override
+  protected FileType doGetType() throws Exception {
+    if (cachedType != null) {
+      return cachedType;
+    }
+    if (getName() instanceof GoogleStorageFileName) {
+      return getName().getType();
+    }
+    if (hasBucket()) {
+      if (hasObject()) {
+        return blob.isDirectory() ? FileType.FOLDER : FileType.FILE;
+      }
+      if (bucketPath.isEmpty()) {
+        return FileType.FOLDER;
+      }
+      return FileType.IMAGINARY;
+    }
+    return FileType.FOLDER;
+  }
+
+  @Override
+  protected String[] doListChildren() throws Exception {
+    if (!isFolder()) {
+      throw new IOException("Object is not a directory");
+    }
+    Storage storage = getAbstractFileSystem().setupStorage();
+    List<String> results = new ArrayList<>();
+    if (!hasBucket()) {
+      Page<Bucket> page = storage.list();
+      for (Bucket b : page.iterateAll()) {
+        results.add(b.getName());
+      }
+    } else {
+      String prefix;
+      if (!bucketPath.isEmpty()) {
+        prefix = appendTrailingSlash(bucketPath);
+      } else {
+        prefix = "";
+      }
+      Page<Blob> page;
+      if (!prefix.isEmpty()) {
+        page =
+            storage.list(
+                bucketName, BlobListOption.currentDirectory(), BlobListOption.prefix(prefix));
+      } else {
+        page = storage.list(bucketName, BlobListOption.currentDirectory());
+      }
+      Map<String, GoogleStorageListCache.ChildInfo> cacheEntries = new LinkedHashMap<>();
+      for (Blob b : page.iterateAll()) {
+        if (stripTrailingSlash(b.getName()).equals(stripTrailingSlash(bucketPath))) {
+          continue;
+        }
+        results.add(lastPathElement(stripTrailingSlash(b.getName())));
+        FileType childType = b.isDirectory() ? FileType.FOLDER : FileType.FILE;
+        long childSize = b.getSize() != null ? b.getSize() : 0L;
+        Instant childLastMod =
+            b.getUpdateTimeOffsetDateTime() != null
+                ? b.getUpdateTimeOffsetDateTime().toInstant()
+                : Instant.EPOCH;
+        cacheEntries.put(
+            b.getName(), new GoogleStorageListCache.ChildInfo(childType, childSize, childLastMod));
+      }
+      if (!cacheEntries.isEmpty()) {
+        getAbstractFileSystem().putListCache(bucketName, prefix, cacheEntries);
+      }
+    }
+    return results.toArray(new String[0]);
+  }
+
+  @Override
+  protected void doCreateFolder() throws Exception {
+    Storage storage = getAbstractFileSystem().setupStorage();
+    if (!hasBucket()) {
+      this.bucket = storage.create(BucketInfo.newBuilder(bucketName).build());
+    } else {
+      this.blob =
+          storage.create(BlobInfo.newBuilder(bucket, appendTrailingSlash(bucketPath)).build());
+      getAbstractFileSystem().invalidateListCacheForParentOf(bucketName, bucketPath);
+    }
+  }
+
+  @Override
+  protected void doDelete() throws Exception {
+    if (hasObject()) {
+      blob.delete();
+      if (isHnsEnabled()) {
+        handleHnsDirectoryDeletion(stripLeadingSlash(bucketPath));
+      }
+    } else if (bucketName != null
+        && !bucketName.isEmpty()
+        && bucketPath != null
+        && !bucketPath.isEmpty()) {
+      Storage storage = getAbstractFileSystem().setupStorage();
+      String path = stripLeadingSlash(bucketPath);
+      Blob found = findBlob(storage, path);
+      if (found != null) {
+        found.delete();
+      }
+      if (isHnsEnabled()) {
+        handleHnsDirectoryDeletion(path);
+      }
+    } else {
+      throw new IOException("Cannot delete: missing bucket/object path for '" + this + "'");
+    }
+    getAbstractFileSystem().invalidateListCacheForParentOf(bucketName, bucketPath);
+  }
+
+  private Blob findBlob(Storage storage, String path) {
+    Blob found = storage.get(BlobId.of(bucketName, path));
+    if (found == null) {
+      found = storage.get(BlobId.of(bucketName, path + "/"));
+    }
+    return found;
+  }
+
+  private void handleHnsDirectoryDeletion(String path) throws IOException {
+    String folderName = FolderName.format("_", bucketName, stripTrailingSlash(path));
+    try {
+      StorageControlClient controlClient = getAbstractFileSystem().getStorageControlClient();
+      DeleteFolderRequest folderRequest =
+          DeleteFolderRequest.newBuilder().setName(folderName).build();
+      controlClient.deleteFolder(folderRequest);
+    } catch (NotFoundException e) {
+      // Not an HNS folder, skip.
+    }
+  }
+
+  private boolean isHnsEnabled() {
+    if (bucket == null || bucket.getHierarchicalNamespace() == null) {
+      return false;
+    }
+    return bucket.getHierarchicalNamespace().getEnabled();
+  }
+
+  @Override
+  protected void doDetach() throws Exception {
+    bucket = null;
+    blob = null;
+    cachedType = null;
+    cachedSize = null;
+    cachedLastModified = null;
+  }
+
+  @Override
+  protected boolean doSetLastModifiedTime(long modTime) throws Exception {
+    // GCS objects are immutable. Returning true keeps modified time identical to created time.
+    return true;
+  }
+
+  @Override
+  protected long doGetLastModifiedTime() throws Exception {
+    if (cachedLastModified != null && !Instant.EPOCH.equals(cachedLastModified)) {
+      return cachedLastModified.toEpochMilli();
+    }
+    if (hasObject()) {
+      GoogleCloudConfig config = GoogleCloudConfigSingleton.getConfig();
+      if (isFolder()) {
+        // Only return the last modified time for a folder if the user wants to scan for it.
+
+        if (Boolean.TRUE.equals(config.getScanFoldersForLastModifDate())
+            || Const.toBoolean(System.getenv(Const.HOP_GCP_GET_FOLDER_LASTMODIFICATION_DATE))) {
+          return getLatestModifiedFileTime().toInstant().toEpochMilli();
+        } else {
+          return 0;
+        }
+      }
+      return blob.getUpdateTime();
+    }
+    if (hasBucket()) {
+      return bucket.getCreateTime();
+    } else {
+      return 0L;
+    }
+  }
+
+  @Override
+  protected OutputStream doGetOutputStream(boolean bAppend) throws Exception {
+    if (isFolder()) {
+      throw new IOException("Object is a directory or bucket");
+    }
+    if (!hasBucket()) {
+      throw new IOException("Object must be placed in bucket");
+    }
+    if (bucketPath.isEmpty()) {
+      throw new IOException("Object needs a path within the bucket");
+    }
+    Storage storage = getAbstractFileSystem().setupStorage();
+    String objectName = stripTrailingSlash(bucketPath);
+
+    if (bAppend) {
+      Blob current = storage.get(BlobId.of(bucketName, objectName));
+      if (current != null && current.getSize() != null && current.getSize() > 0) {
+        return openComposeAppendStream(storage, current, objectName);
+      }
+    }
+
+    if (!hasObject()) {
+      this.blob = storage.create(BlobInfo.newBuilder(bucket, objectName).build());
+    }
+    getAbstractFileSystem().invalidateListCacheForParentOf(bucketName, bucketPath);
+    return new WriteChannelOutputStream(storage.writer(blob));
+  }
+
+  /**
+   * Open a {@link ComposeAppendOutputStream} that streams the appended bytes into a throwaway
+   * temporary object next to the target and, on close, composes {@code target + temp} back onto the
+   * target. See <a href="https://cloud.google.com/storage/docs/composite-objects#appends">GCS
+   * appends</a>.
+   */
+  private OutputStream openComposeAppendStream(Storage storage, Blob current, String objectName) {
+    String tempName = objectName + ".hop-append-" + UUID.randomUUID() + ".tmp";
+    WriteChannel tempChannel = storage.writer(BlobInfo.newBuilder(bucketName, tempName).build());
+    getAbstractFileSystem().invalidateListCacheForParentOf(bucketName, bucketPath);
+    return new ComposeAppendOutputStream(
+        storage, bucketName, objectName, tempName, current.getGeneration(), tempChannel);
+  }
+
+  @Override
+  protected FileObject[] doListChildrenResolved() throws Exception {
+    if (!isFolder()) {
+      throw new IOException("Object is not a directory");
+    }
+    Storage storage = getAbstractFileSystem().setupStorage();
+    List<FileObject> results = new ArrayList<>();
+    if (!hasBucket()) {
+      Page<Bucket> page = storage.list();
+      for (Bucket b : page.iterateAll()) {
+        results.add(getAbstractFileSystem().resolveFile("/" + b.getName()));
+      }
+    } else {
+      String prefix;
+      if (!bucketPath.isEmpty()) {
+        prefix = appendTrailingSlash(bucketPath);
+      } else {
+        prefix = "";
+      }
+      Page<Blob> page;
+      if (!prefix.isEmpty()) {
+        page =
+            storage.list(
+                bucketName, BlobListOption.currentDirectory(), BlobListOption.prefix(prefix));
+      } else {
+        page = storage.list(bucketName, BlobListOption.currentDirectory());
+      }
+      Map<String, GoogleStorageListCache.ChildInfo> cacheEntries = new LinkedHashMap<>();
+      for (Blob b : page.iterateAll()) {
+        if (stripTrailingSlash(b.getName()).equals(stripTrailingSlash(bucketPath))) {
+          continue;
+        }
+        FileType childType = b.isDirectory() ? FileType.FOLDER : FileType.FILE;
+        long childSize = b.getSize() != null ? b.getSize() : 0L;
+        Instant childLastMod =
+            b.getUpdateTimeOffsetDateTime() != null
+                ? b.getUpdateTimeOffsetDateTime().toInstant()
+                : Instant.EPOCH;
+        cacheEntries.put(
+            b.getName(), new GoogleStorageListCache.ChildInfo(childType, childSize, childLastMod));
+        results.add(
+            getAbstractFileSystem()
+                .resolveFile("/" + bucketName + "/" + stripTrailingSlash(b.getName())));
+      }
+      if (!cacheEntries.isEmpty()) {
+        getAbstractFileSystem().putListCache(bucketName, prefix, cacheEntries);
+      }
+    }
+    return results.toArray(new FileObject[0]);
+  }
+
+  String getParentFolder(String name) {
+    name = stripTrailingSlash(name);
+    int idx = name.lastIndexOf('/');
+    if (idx > -1) {
+      return name.substring(0, idx);
+    }
+    return "";
+  }
+
+  boolean hasTrailingSlash(String name) {
+    return name.endsWith("/");
+  }
+
+  String stripTrailingSlash(String name) {
+    if (name.endsWith("/")) {
+      return name.substring(0, name.length() - 1);
+    }
+    return name;
+  }
+
+  String appendTrailingSlash(String name) {
+    if (!name.endsWith("/")) {
+      return name + "/";
+    }
+    return name;
+  }
+
+  String stripLeadingSlash(String name) {
+    if (name.startsWith("/")) {
+      return name.substring(1);
+    }
+    return name;
+  }
+
+  String lastPathElement(String name) {
+    int idx = name.lastIndexOf('/');
+    if (idx > -1) {
+      return name.substring(idx + 1);
+    } else {
+      return name;
+    }
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) return true;
+    if (o == null || getClass() != o.getClass()) return false;
+    GoogleStorageFileObject that = (GoogleStorageFileObject) o;
+
+    return Objects.equals(getName().getPath(), that.getName().getPath());
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(getName().getPath());
+  }
+
+  private OffsetDateTime getLatestModifiedFileTime() {
+    Storage storage = getAbstractFileSystem().setupStorage();
+    OffsetDateTime latest = OffsetDateTime.ofInstant(Instant.EPOCH, ZoneOffset.UTC);
+    Page<Blob> page =
+        storage.list(
+            bucketName, BlobListOption.prefix(stripLeadingSlash(appendTrailingSlash(bucketPath))));
+    for (Blob blob : page.iterateAll()) {
+      if (!blob.isDirectory()) {
+        OffsetDateTime updated = blob.getUpdateTimeOffsetDateTime();
+        if (updated != null && updated.isAfter(latest)) {
+          latest = updated;
+        }
+      }
+    }
+    return latest;
+  }
+}

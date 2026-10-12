@@ -1,0 +1,382 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.pipeline.transforms.xml.addxml;
+
+import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
+import javax.xml.XMLConstants;
+import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.transform.OutputKeys;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerConfigurationException;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.exception.HopValueException;
+import org.apache.hop.core.row.IValueMeta;
+import org.apache.hop.core.row.RowDataUtil;
+import org.apache.hop.core.util.Utils;
+import org.apache.hop.core.xml.XmlHandler;
+import org.apache.hop.core.xml.XmlParserFactoryProducer;
+import org.apache.hop.i18n.BaseMessages;
+import org.apache.hop.pipeline.Pipeline;
+import org.apache.hop.pipeline.PipelineMeta;
+import org.apache.hop.pipeline.transform.BaseTransform;
+import org.apache.hop.pipeline.transform.TransformMeta;
+import org.w3c.dom.DOMImplementation;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
+/** Converts input rows to one or more XML files. */
+public class AddXml extends BaseTransform<AddXmlMeta, AddXmlData> {
+  private static final Class<?> PKG = AddXml.class;
+
+  /** Attribute name declaring a default namespace, and the prefix of a namespace declaration. */
+  private static final String XMLNS = "xmlns";
+
+  private static final String XMLNS_PREFIX = XMLNS + ":";
+
+  private DOMImplementation domImplentation;
+  private Transformer serializer;
+
+  public AddXml(
+      TransformMeta transformMeta,
+      AddXmlMeta meta,
+      AddXmlData sdi,
+      int copyNr,
+      PipelineMeta tm,
+      Pipeline trans) {
+    super(transformMeta, meta, sdi, copyNr, tm, trans);
+  }
+
+  @Override
+  public boolean processRow() throws HopException {
+    Object[] r = getRow(); // This also waits for a row to be finished.
+    if (r == null) {
+      // no more input to be expected...
+      setOutputDone();
+      return false;
+    }
+
+    if (first) {
+      first = false;
+
+      processRowFirstCall();
+    }
+
+    // A default namespace can only be established when the document is created, so the value of
+    // the declaring field has to be read before the output fields are walked.
+    String documentNamespace = getDocumentNamespace(r);
+
+    Document xmlDoc =
+        getDomImplentation().createDocument(documentNamespace, meta.getRootNode(), null);
+    Element root = xmlDoc.getDocumentElement();
+    for (int i = 0; i < meta.getOutputFields().size(); i++) {
+      if (i == data.namespaceFieldIndex) {
+        // Already applied to the document element; emitting it again would duplicate the
+        // declaration.
+        continue;
+      }
+
+      XmlField outputField = meta.getOutputFields().get(i);
+      String fieldName = outputField.getFieldName();
+
+      IValueMeta v = getInputRowMeta().getValueMeta(data.fieldIndexes[i]);
+      Object valueData = r[data.fieldIndexes[i]];
+
+      if (!meta.getOmitDetails().isOmittingNullValues() || !v.isNull(valueData)) {
+        String value = formatField(v, valueData, outputField);
+
+        String element = outputField.getElementName();
+        if (Utils.isEmpty(element)) {
+          element = fieldName;
+        }
+
+        if (Utils.isEmpty(element)) {
+          throw new HopException("XML does not allow empty strings for element names.");
+        }
+        if (outputField.isAttribute()) {
+          String attributeParentName = outputField.getAttributeParentName();
+
+          Element node;
+
+          if (Utils.isEmpty(attributeParentName)) {
+            node = root;
+          } else {
+            NodeList nodelist = root.getElementsByTagName(attributeParentName);
+            if (nodelist.getLength() > 0) {
+              node = (Element) nodelist.item(0);
+            } else {
+              node = root;
+            }
+          }
+
+          if (XMLNS.equals(element) || element.startsWith(XMLNS_PREFIX)) {
+            // A namespace declaration only survives serialization when it is set as an attribute
+            // in the xmlns namespace; as a plain attribute the serializer discards its value.
+            node.setAttributeNS(XMLConstants.XMLNS_ATTRIBUTE_NS_URI, element, value);
+          } else {
+            node.setAttribute(element, value);
+          }
+
+        } else {
+          /* encode as subnode */
+          if (!element.equals(meta.getRootNode())) {
+            Element e = createElement(xmlDoc, documentNamespace, element);
+            Node n = xmlDoc.createTextNode(value);
+            e.appendChild(n);
+            root.appendChild(e);
+          } else {
+            Node n = xmlDoc.createTextNode(value);
+            root.appendChild(n);
+          }
+        }
+      }
+    }
+
+    StringWriter sw = new StringWriter();
+    DOMSource domSource = new DOMSource(xmlDoc);
+    try {
+      this.getSerializer().transform(domSource, new StreamResult(sw));
+
+    } catch (Exception e) {
+      throw new HopException(e);
+    }
+
+    Object[] outputRowData = RowDataUtil.addValueData(r, getInputRowMeta().size(), sw.toString());
+
+    putRow(data.outputRowMeta, outputRowData);
+
+    return true;
+  }
+
+  /**
+   * Finds the output field declaring the namespace of the root node. An unprefixed root node is
+   * declared by a field named {@code xmlns}, a prefixed one by {@code xmlns:prefix}.
+   */
+  private void resolveNamespaceField() throws HopException {
+    data.namespaceFieldIndex = -1;
+
+    String rootNode = Const.NVL(meta.getRootNode(), "");
+    int colon = rootNode.indexOf(':');
+    String declaration = colon > 0 ? XMLNS_PREFIX + rootNode.substring(0, colon) : XMLNS;
+    data.rootNamespaceIsDefault = colon <= 0;
+
+    for (int i = 0; i < meta.getOutputFields().size(); i++) {
+      XmlField field = meta.getOutputFields().get(i);
+      String element = field.getElementName();
+      if (Utils.isEmpty(element)) {
+        element = field.getFieldName();
+      }
+      if (declaration.equals(element)) {
+        data.namespaceFieldIndex = i;
+        return;
+      }
+    }
+
+    if (colon > 0) {
+      // The DOM refuses a prefixed root node without a namespace URI. Say which field is missing
+      // rather than failing with a bare DOMException.
+      throw new HopException(
+          BaseMessages.getString(
+              PKG, "AddXML.Exception.MissingNamespaceDeclaration", rootNode, declaration));
+    }
+  }
+
+  private void processRowFirstCall() throws HopException {
+    data.outputRowMeta = getInputRowMeta().clone();
+    meta.getFields(data.outputRowMeta, getTransformName(), null, null, this, metadataProvider);
+
+    // Cache the field name indexes
+    //
+    data.fieldIndexes = new int[meta.getOutputFields().size()];
+    for (int i = 0; i < data.fieldIndexes.length; i++) {
+      String fieldsName = meta.getOutputFields().get(i).getFieldName();
+      data.fieldIndexes[i] = getInputRowMeta().indexOfValue(fieldsName);
+      if (data.fieldIndexes[i] < 0) {
+        throw new HopException(
+            BaseMessages.getString(PKG, "AddXML.Exception.FieldNotFound", fieldsName));
+      }
+    }
+
+    resolveNamespaceField();
+  }
+
+  /**
+   * Reads the namespace URI for the root node from the current row. The declaring field is the one
+   * whose element name matches the root node's prefix: {@code xmlns} for an unprefixed root node,
+   * {@code xmlns:prefix} otherwise.
+   *
+   * @return the namespace URI, or null when the root node has no namespace
+   */
+  private String getDocumentNamespace(Object[] r) throws HopValueException {
+    if (data.namespaceFieldIndex < 0) {
+      return null;
+    }
+    XmlField field = meta.getOutputFields().get(data.namespaceFieldIndex);
+    int index = data.fieldIndexes[data.namespaceFieldIndex];
+    String namespace = formatField(getInputRowMeta().getValueMeta(index), r[index], field);
+    return Utils.isEmpty(namespace) ? null : namespace;
+  }
+
+  /**
+   * Creates a child element. When the root node declares a default namespace, unprefixed children
+   * are created in it so that the DOM matches what is serialized. Under a prefixed root node an
+   * unprefixed child is genuinely in no namespace, and names that already carry a prefix are
+   * created as-is: the declaration for that prefix is the user's own.
+   */
+  private Element createElement(Document doc, String documentNamespace, String name) {
+    if (documentNamespace == null || !data.rootNamespaceIsDefault || name.indexOf(':') >= 0) {
+      return doc.createElement(name);
+    }
+    return doc.createElementNS(documentNamespace, name);
+  }
+
+  private String formatField(IValueMeta valueMeta, Object valueData, XmlField field)
+      throws HopValueException {
+    String retval = "";
+    if (field == null) {
+      return "";
+    }
+
+    if (valueMeta == null || valueMeta.isNull(valueData)) {
+      String defaultNullValue = field.getNullString();
+      return Utils.isEmpty(defaultNullValue) ? "" : defaultNullValue;
+    }
+
+    if (valueMeta.isNumeric()) {
+      // Formatting
+      if (!Utils.isEmpty(field.getFormat())) {
+        data.df.applyPattern(field.getFormat());
+      } else {
+        data.df.applyPattern(data.defaultDecimalFormat.toPattern());
+      }
+      // Decimal
+      if (!Utils.isEmpty(field.getDecimalSymbol())) {
+        data.dfs.setDecimalSeparator(field.getDecimalSymbol().charAt(0));
+      } else {
+        data.dfs.setDecimalSeparator(data.defaultDecimalFormatSymbols.getDecimalSeparator());
+      }
+      // Grouping
+      if (!Utils.isEmpty(field.getGroupingSymbol())) {
+        data.dfs.setGroupingSeparator(field.getGroupingSymbol().charAt(0));
+      } else {
+        data.dfs.setGroupingSeparator(data.defaultDecimalFormatSymbols.getGroupingSeparator());
+      }
+      // Currency symbol
+      if (!Utils.isEmpty(field.getCurrencySymbol())) {
+        data.dfs.setCurrencySymbol(field.getCurrencySymbol());
+      } else {
+        data.dfs.setCurrencySymbol(data.defaultDecimalFormatSymbols.getCurrencySymbol());
+      }
+
+      data.df.setDecimalFormatSymbols(data.dfs);
+
+      if (valueMeta.isBigNumber()) {
+        retval = data.df.format(valueMeta.getBigNumber(valueData));
+      } else if (valueMeta.isNumber()) {
+        retval = data.df.format(valueMeta.getNumber(valueData));
+      } else {
+        // Integer
+        retval = data.df.format(valueMeta.getInteger(valueData));
+      }
+    } else if (valueMeta.isDate()) {
+      if (!Utils.isEmpty(field.getFormat()) && valueMeta.getDate(valueData) != null) {
+        if (!Utils.isEmpty(field.getFormat())) {
+          data.daf.applyPattern(field.getFormat());
+        } else {
+          data.daf.applyPattern(data.defaultDateFormat.toLocalizedPattern());
+        }
+        data.daf.setDateFormatSymbols(data.dafs);
+        retval = data.daf.format(valueMeta.getDate(valueData));
+      } else {
+        if (valueMeta.isNull(valueData)) {
+          if (!Utils.isEmpty(field.getNullString())) {
+            retval = field.getNullString();
+          }
+        } else {
+          retval = valueMeta.getString(valueData);
+        }
+      }
+    } else if (valueMeta.isString()) {
+      retval = valueMeta.getString(valueData);
+    } else if (valueMeta.isBinary()) {
+      if (valueMeta.isNull(valueData)) {
+        if (!Utils.isEmpty(field.getNullString())) {
+          retval = field.getNullString();
+        } else {
+          retval = Const.NULL_BINARY;
+        }
+      } else {
+        retval = new String(valueMeta.getBinary(valueData), StandardCharsets.UTF_8);
+      }
+    } else {
+      // Boolean
+      retval = valueMeta.getString(valueData);
+    }
+
+    return retval;
+  }
+
+  @Override
+  public boolean init() {
+    if (!super.init()) {
+      return false;
+    }
+
+    try {
+      setSerializer(XmlHandler.createSecureTransformerFactory().newTransformer());
+
+      setDomImplentation(
+          XmlParserFactoryProducer.createSecureDocBuilderFactory()
+              .newDocumentBuilder()
+              .getDOMImplementation());
+
+      if (meta.getEncoding() != null) {
+        getSerializer().setOutputProperty(OutputKeys.ENCODING, meta.getEncoding());
+      }
+
+      if (meta.getOmitDetails().isOmittingXmlHeader()) {
+        getSerializer().setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "yes");
+      }
+    } catch (TransformerConfigurationException | ParserConfigurationException e) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private void setDomImplentation(DOMImplementation domImplentation) {
+    this.domImplentation = domImplentation;
+  }
+
+  private DOMImplementation getDomImplentation() {
+    return domImplentation;
+  }
+
+  private void setSerializer(Transformer serializer) {
+    this.serializer = serializer;
+  }
+
+  private Transformer getSerializer() {
+    return serializer;
+  }
+}

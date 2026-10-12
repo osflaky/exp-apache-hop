@@ -1,0 +1,97 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+:description: This describes how to use the versatile hop command line tool.
+
+= Hop
+
+The `hop` command line tool is simplification of the many scripts that the project ships with like 'hop-run`, `hop-search`, `hop-gui`, and so on.
+The main goal is to have a single wrapper script to make maintenance easier for the developers, but also to allow plugins to contribute new commands.
+
+.Usage
+[%collapsible]
+=====
+
+== Usage
+
+To see the usage of the `hop` tool, you can simply use the `help` command to see which commands are available.
+The command list depends on the plugins in your installation; the sample below shows the common options and a typical set of commands.
+
+[source,bash]
+----
+$ ./hop help
+Usage: hop [-hV] [--dev-debug] [--dev-debug-wait] [-ime]
+           [-e=<environmentOption>] [-j=<projectOption>]
+           [--environment-conf-files=<environmentConfigFiles>[,
+           <environmentConfigFiles>...]]... [--environments=<environments>[,
+           <environments>...]]... [-pl=<projectLocations>[,
+           <projectLocations>...]]... [-s=<systemProperties>[,
+           <systemProperties>...]]... [COMMAND]
+  -e, --environment=<environmentOption>
+                         The name of the lifecycle environment to use
+  -h, --help             Show this help message and exit.
+      -ime, --in-memory  Keep configuration in memory without persisting to
+                           hop-config.json
+  -j, --project=<projectOption>
+                         The name of the project to use
+      -pl, --project-locations=<projectLocations>[,<projectLocations>...]
+                         Comma-separated list of project locations
+                           (name=location or archive files)
+  -s, --system-properties=<systemProperties>[,<systemProperties>...]
+                         A comma separated list of KEY=VALUE pairs
+  -V, --version          Print version information and exit.
+Commands:
+  help     Display help information about the specified command.
+  conf     Configure Hop
+  encrypt  Encrypt secrets
+  gui      The Hop GUI
+  import   Import metadata
+  run      Run a pipeline or workflow
+  search   Search in Hop metadata
+  server   Run a Hop server
+  setup    Configure Hop environment variables
+----
+
+=====
+
+== Options
+
+[options="header"]
+|===
+|Short|Extended|Description
+|`-e`|`--environment`|The name of the lifecycle environment to enable before the subcommand runs.
+|`-h`|`--help`|Displays this help message and quits.
+|`-ime`|`--in-memory`|Keep Hop configuration in memory. Changes are not written to `hop-config.json`. Implied by `--project-locations` and `--environments`.
+|`-j`|`--project`|The name of the project to enable before the subcommand runs.
+|`-pl`|`--project-locations`|Comma-separated project locations to register for this process only (`name=/path`, a zip/jar, or a bare folder). See xref:projects/advanced.adoc#_use_a_project_without_hop_config_json[Use a project without hop-config.json].
+||`--environments`|Comma-separated environment definitions (`name=[project:]file1;file2`) registered in memory for this process.
+||`--environment-conf-files` / `--environment-config-files`|Extra environment configuration files to apply to the enabled project or environment.
+|`-s`|`--system-properties`|A comma separated list of KEY=VALUE pairs, set before Hop starts.
+|`-V`|`--version`|Show the current Hop version.
+|===
+
+Root options such as `--project-locations` are processed before the subcommand (`run`, `gui`, `search`, ...), so the project is already registered when the command runs:
+
+[source,bash]
+----
+hop --project-locations my-project=/data/my-project run -f pipeline.hpl -r local
+hop --project-locations my-project=/data/my-project gui -j my-project -f pipeline.hpl
+----
+
+== Setup
+
+xref:hop-tools/hop-setup.adoc[hop setup] writes launcher environment variables (`HOP_CONFIG_FOLDER`, `HOP_AUDIT_FOLDER`, and related). It is not the same as `hop conf`, which edits `hop-config.json`.
+

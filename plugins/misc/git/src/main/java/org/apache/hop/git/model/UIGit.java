@@ -1,0 +1,1827 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.git.model;
+
+import com.google.common.annotations.VisibleForTesting;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import lombok.Getter;
+import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.exception.HopFileException;
+import org.apache.hop.core.logging.LogChannel;
+import org.apache.hop.core.vfs.HopVfs;
+import org.apache.hop.git.model.revision.GitObjectRevision;
+import org.apache.hop.git.model.revision.ObjectRevision;
+import org.apache.hop.i18n.BaseMessages;
+import org.apache.hop.ui.core.dialog.EnterSelectionDialog;
+import org.apache.hop.ui.core.dialog.ErrorDialog;
+import org.apache.hop.ui.hopgui.HopGui;
+import org.eclipse.jgit.api.AddCommand;
+import org.eclipse.jgit.api.CloneCommand;
+import org.eclipse.jgit.api.DiffCommand;
+import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.ListBranchCommand.ListMode;
+import org.eclipse.jgit.api.LogCommand;
+import org.eclipse.jgit.api.MergeResult;
+import org.eclipse.jgit.api.MergeResult.MergeStatus;
+import org.eclipse.jgit.api.PushCommand;
+import org.eclipse.jgit.api.RemoteAddCommand;
+import org.eclipse.jgit.api.RemoteRemoveCommand;
+import org.eclipse.jgit.api.ResetCommand;
+import org.eclipse.jgit.api.ResetCommand.ResetType;
+import org.eclipse.jgit.api.RevertCommand;
+import org.eclipse.jgit.api.Status;
+import org.eclipse.jgit.api.StatusCommand;
+import org.eclipse.jgit.api.errors.CheckoutConflictException;
+import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.api.errors.TransportException;
+import org.eclipse.jgit.diff.DiffEntry;
+import org.eclipse.jgit.diff.DiffEntry.ChangeType;
+import org.eclipse.jgit.diff.RenameDetector;
+import org.eclipse.jgit.dircache.DirCacheIterator;
+import org.eclipse.jgit.errors.CorruptObjectException;
+import org.eclipse.jgit.errors.IncorrectObjectTypeException;
+import org.eclipse.jgit.errors.MissingObjectException;
+import org.eclipse.jgit.errors.NoWorkTreeException;
+import org.eclipse.jgit.errors.RevisionSyntaxException;
+import org.eclipse.jgit.lib.Config;
+import org.eclipse.jgit.lib.ConfigConstants;
+import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectLoader;
+import org.eclipse.jgit.lib.ObjectReader;
+import org.eclipse.jgit.lib.PersonIdent;
+import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.lib.RefUpdate;
+import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.RepositoryState;
+import org.eclipse.jgit.lib.StoredConfig;
+import org.eclipse.jgit.lib.UserConfig;
+import org.eclipse.jgit.merge.MergeStrategy;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevObject;
+import org.eclipse.jgit.revwalk.RevTree;
+import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.transport.CredentialsProvider;
+import org.eclipse.jgit.transport.HttpTransport;
+import org.eclipse.jgit.transport.PushResult;
+import org.eclipse.jgit.transport.RefSpec;
+import org.eclipse.jgit.transport.RemoteConfig;
+import org.eclipse.jgit.transport.RemoteRefUpdate;
+import org.eclipse.jgit.transport.SshSessionFactory;
+import org.eclipse.jgit.transport.URIish;
+import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
+import org.eclipse.jgit.transport.http.apache.HttpClientConnectionFactory;
+import org.eclipse.jgit.transport.sshd.SshdSessionFactoryBuilder;
+import org.eclipse.jgit.treewalk.AbstractTreeIterator;
+import org.eclipse.jgit.treewalk.CanonicalTreeParser;
+import org.eclipse.jgit.treewalk.EmptyTreeIterator;
+import org.eclipse.jgit.treewalk.FileTreeIterator;
+import org.eclipse.jgit.treewalk.TreeWalk;
+import org.eclipse.jgit.treewalk.filter.PathFilter;
+import org.eclipse.jgit.treewalk.filter.TreeFilter;
+import org.eclipse.jgit.util.FileUtils;
+import org.eclipse.jgit.util.RawParseUtils;
+
+public class UIGit extends VCS {
+  protected static final Class<?> PKG = UIGit.class;
+  public static final String CONST_FOR_COMMIT_ID = "' for commit ID '";
+  public static final String CONST_OURS = ".ours";
+  public static final String CONST_THEIRS = ".theirs";
+  public static final String
+      CONST_AUTHENTICATION_IS_REQUIRED_BUT_NO_CREDENTIALS_PROVIDER_HAS_BEEN_REGISTERED =
+          "Authentication is required but no CredentialsProvider has been registered";
+  public static final String CONST_NOT_AUTHORIZED = "not authorized";
+  public static final String CONST_DIALOG_ERROR = "Dialog.Error";
+  public static final String CONST_MERGE_FAILED_HEADER = "UIGit.Dialog.MergeFailed.Header";
+  public static final String CONST_MERGE_FAILED_LOCAL_CHANGES =
+      "UIGit.Dialog.MergeFailed.LocalChanges.Message";
+
+  static {
+    /**
+     * Use Apache HTTP Client instead of Sun HTTP client. This resolves the issue that Git commands
+     * (e.g., push, clone) via http(s) do not work in EE. This issue is caused by the fact that weka
+     * plugins (namely, knowledge-flow, weka-forecasting, and weka-scoring) calls
+     * java.net.Authenticator.setDefault(). See here
+     * https://bugs.eclipse.org/bugs/show_bug.cgi?id=296201 for more details.
+     */
+    HttpTransport.setConnectionFactory(new HttpClientConnectionFactory());
+    SshSessionFactory.setInstance(
+        new SshdSessionFactoryBuilder()
+            .setHomeDirectory(new File(System.getProperty("user.home")))
+            .setSshDirectory(new File(System.getProperty("user.home"), ".ssh"))
+            .build(null));
+  }
+
+  @Getter private Git git;
+  private CredentialsProvider credentialsProvider;
+
+  public String getDirectory() {
+    return directory;
+  }
+
+  @VisibleForTesting
+  void setDirectory(String directory) {
+    this.directory = directory;
+  }
+
+  @VisibleForTesting
+  void setGit(Git git) {
+    this.git = git;
+  }
+
+  public String getAuthorName(String commitId) {
+    if (commitId.equals(VCS.WORKINGTREE)) {
+      Config config = git.getRepository().getConfig();
+      return config.get(UserConfig.KEY).getAuthorName()
+          + " <"
+          + config.get(UserConfig.KEY).getAuthorEmail()
+          + ">";
+    } else {
+      RevCommit commit = resolve(commitId);
+      PersonIdent author = commit.getAuthorIdent();
+      final StringBuilder r = new StringBuilder();
+      r.append(author.getName());
+      r.append(" <"); //
+      r.append(author.getEmailAddress());
+      r.append(">"); //
+      return r.toString();
+    }
+  }
+
+  public String getCommitMessage(String commitId) {
+    if (commitId.equals(VCS.WORKINGTREE)) {
+      try {
+        String mergeMsg = git.getRepository().readMergeCommitMsg();
+        return mergeMsg == null ? "" : mergeMsg;
+      } catch (Exception e) {
+        return e.getMessage();
+      }
+    } else {
+      RevCommit commit = resolve(commitId);
+      return commit.getFullMessage();
+    }
+  }
+
+  public String getCommitId(String revstr) {
+    ObjectId id = null;
+    try {
+      id = git.getRepository().resolve(revstr);
+    } catch (RevisionSyntaxException | IOException e) {
+      e.printStackTrace();
+    }
+    if (id == null) {
+      return null;
+    } else {
+      return id.getName();
+    }
+  }
+
+  public String getParentCommitId(String revstr) {
+    return getCommitId(revstr + "~");
+  }
+
+  public String getBranch() {
+    try {
+      Ref head = git.getRepository().exactRef(Constants.HEAD);
+      String branch = git.getRepository().getBranch();
+      if (head.getLeaf().getName().equals(Constants.HEAD)) { // if detached
+        return Constants.HEAD + " detached at " + branch.substring(0, 7);
+      } else {
+        return branch;
+      }
+    } catch (Exception e) {
+      return "";
+    }
+  }
+
+  public List<String> listBranches() {
+    List<String> branches = new ArrayList<>();
+    try {
+      List<Ref> branchListCall = git.branchList().call();
+      for (Ref ref : branchListCall) {
+        branches.add(ref.getName());
+      }
+
+      // sort the list of branches
+      Collections.sort(branches);
+
+      return branches;
+    } catch (Exception e) {
+      return Collections.emptyList();
+    }
+  }
+
+  public List<String> getLocalBranches() {
+    return getBranches(null);
+  }
+
+  public List<String> getBranches() {
+    return getBranches(ListMode.ALL);
+  }
+
+  /**
+   * Get a list of branches based on mode
+   *
+   * @param mode
+   * @return
+   */
+  private List<String> getBranches(ListMode mode) {
+    try {
+      return git.branchList().setListMode(mode).call().stream()
+          .filter(ref -> !ref.getName().endsWith(Constants.HEAD))
+          .map(ref -> Repository.shortenRefName(ref.getName()))
+          .toList();
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+    return null;
+  }
+
+  public String getRemote() {
+    try {
+      StoredConfig config = git.getRepository().getConfig();
+      RemoteConfig remoteConfig = new RemoteConfig(config, Constants.DEFAULT_REMOTE_NAME);
+      return remoteConfig.getURIs().iterator().next().toString();
+    } catch (Exception e) {
+      return "";
+    }
+  }
+
+  public void addRemote(String value) {
+    // Make sure you have only one URI for push
+    removeRemote();
+
+    try {
+      URIish uri = new URIish(value);
+      RemoteAddCommand cmd = git.remoteAdd();
+      cmd.setName(Constants.DEFAULT_REMOTE_NAME);
+      cmd.setUri(uri);
+      cmd.call();
+    } catch (URISyntaxException e) {
+      if (value.equals("")) {
+        removeRemote();
+      } else {
+        showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+      }
+    } catch (GitAPIException e) {
+      showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+    }
+  }
+
+  public void removeRemote() {
+    RemoteRemoveCommand cmd = git.remoteRemove();
+    cmd.setRemoteName(Constants.DEFAULT_REMOTE_NAME);
+    try {
+      cmd.call();
+    } catch (GitAPIException e) {
+      showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+    }
+  }
+
+  public boolean hasRemote() {
+    StoredConfig config = git.getRepository().getConfig();
+    Set<String> remotes = config.getSubsections(ConfigConstants.CONFIG_REMOTE_SECTION);
+    return remotes.contains(Constants.DEFAULT_REMOTE_NAME);
+  }
+
+  /**
+   * Commits changes to the repository with a specified author and message.
+   *
+   * @param authorName The name of the author making the commit.
+   * @param message The message describing the commit.
+   * @return true if the commit is successful; otherwise, false.
+   * @throws HopException If an error occurs during the commit operation.
+   */
+  public boolean commit(String authorName, String message) throws HopException {
+    return this.commit(authorName, message, false);
+  }
+
+  /**
+   * Commits changes to the repository with a specified author, message, and amend option.
+   *
+   * @param authorName The name of the author making the commit.
+   * @param message The message describing the commit.
+   * @param amend Whether the commit should amend the previous commit.
+   * @return true if the commit is successful; otherwise, false.
+   * @throws HopException If an error occurs during the commit operation.
+   */
+  public boolean commit(String authorName, String message, boolean amend) throws HopException {
+    PersonIdent committer = getCommitter(authorName);
+    try {
+      git.commit().setAuthor(committer).setMessage(message).setAmend(amend).call();
+      return true;
+    } catch (Exception e) {
+      throw new HopException("Error in git commit", e);
+    }
+  }
+
+  /** The author of a commit, stamped with the local time and the system time zone. */
+  private PersonIdent getCommitter(String authorName) {
+    return new PersonIdent(RawParseUtils.parsePersonIdent(authorName), Instant.now());
+  }
+
+  /**
+   * The state git is in: whether it is in the middle of a merge, a cherry-pick or a revert. A
+   * commit has to record the whole index while one of those is in progress, so nothing may be left
+   * out of it.
+   *
+   * @return the state of the repository
+   */
+  public RepositoryState getRepositoryState() {
+    return git.getRepository().getRepositoryState();
+  }
+
+  /**
+   * Stage the given paths and commit them, so the commit records those paths and nothing else.
+   *
+   * <p>Anything else which was staged is taken back out of the index one path at a time. Resetting
+   * the whole index is the shorter way to write that, but it also clears MERGE_HEAD: the commit
+   * would record a merge as an ordinary commit and git would no longer consider the branch merged.
+   *
+   * <p>Nothing is unstaged while a merge, cherry-pick or revert is in progress. Git commits the
+   * whole index there, so a selection cannot be honoured and the caller is expected to offer all of
+   * it. See {@link #getRepositoryState()}.
+   *
+   * @param pathsToCommit the paths to stage and commit
+   * @param authorName the author of the commit, as "name &lt;email&gt;"
+   * @param message the commit message
+   * @param amend whether the commit should amend the previous commit
+   * @return true if the commit is successful; otherwise, false.
+   * @throws HopException if staging or the commit itself fails
+   */
+  public boolean commitPaths(
+      List<String> pathsToCommit, String authorName, String message, boolean amend)
+      throws HopException {
+    try {
+      Set<String> commitPaths = new HashSet<>();
+      for (String path : pathsToCommit) {
+        commitPaths.add(normalizePathForJGit(path));
+      }
+
+      // What is staged right now, rather than what the caller last saw: a file staged in the
+      // meantime must not be swept into this commit either.
+      //
+      if (getRepositoryState() == RepositoryState.SAFE) {
+        List<String> pathsToUnstage =
+            getStagedFiles().stream()
+                .map(UIFile::getName)
+                .filter(name -> !commitPaths.contains(name))
+                .toList();
+        if (!pathsToUnstage.isEmpty()) {
+          ResetCommand resetCommand = git.reset();
+          pathsToUnstage.forEach(resetCommand::addPath);
+          resetCommand.call();
+        }
+      }
+
+      if (!commitPaths.isEmpty()) {
+        AddCommand addCommand = git.add();
+        commitPaths.forEach(addCommand::addFilepattern);
+        addCommand.call();
+      }
+    } catch (Exception e) {
+      throw new HopException("Error staging the files to commit", e);
+    }
+
+    return commit(authorName, message, amend);
+  }
+
+  /**
+   * Make a single path look the way it does in a commit, in the working tree and in the index. A
+   * path the commit does not have is removed here as well: not having it is what that commit did to
+   * it.
+   *
+   * @param path the path to restore, relative to the repository root
+   * @param commitId the commit to take the path from
+   * @throws HopException when the path cannot be restored
+   */
+  public void restorePathFromCommit(String path, String commitId) throws HopException {
+    String normalizedPath = normalizePathForJGit(path);
+    try {
+      if (existsInCommit(normalizedPath, commitId)) {
+        git.checkout().setStartPoint(commitId).addPath(normalizedPath).call();
+      } else {
+        // Not in that commit, so it should not be here either. A path which is not in the index is
+        // simply left alone by git rm.
+        //
+        git.rm().addFilepattern(normalizedPath).call();
+      }
+    } catch (Exception e) {
+      throw new HopException("Error restoring '" + path + "' from commit '" + commitId + "'", e);
+    }
+  }
+
+  /** Whether a commit has the given path in its tree. */
+  private boolean existsInCommit(String path, String commitId) throws IOException {
+    RevCommit commit = resolve(commitId);
+    if (commit == null) {
+      return false;
+    }
+    try (TreeWalk treeWalk = TreeWalk.forPath(git.getRepository(), path, commit.getTree())) {
+      return treeWalk != null;
+    }
+  }
+
+  /**
+   * Commit a single path, leaving anything else which is staged out of the commit.
+   *
+   * @param path the only path to commit, relative to the repository root
+   * @param authorName the author of the commit, as "name &lt;email&gt;"
+   * @param message the commit message
+   * @return true when a commit was made, false when the path holds nothing to commit
+   * @throws HopException when the commit fails
+   */
+  public boolean commitPath(String path, String authorName, String message) throws HopException {
+    String normalizedPath = normalizePathForJGit(path);
+    try {
+      // Git has no empty commit to make here, and a path scoped commit of nothing is an error
+      //
+      if (!git.status().addPath(normalizedPath).call().hasUncommittedChanges()) {
+        return false;
+      }
+      git.commit()
+          .setOnly(normalizedPath)
+          .setAuthor(getCommitter(authorName))
+          .setMessage(message)
+          .call();
+      return true;
+    } catch (Exception e) {
+      throw new HopException("Error committing '" + path + "'", e);
+    }
+  }
+
+  public List<ObjectRevision> getRevisions() {
+    return getRevisions(null);
+  }
+
+  public List<ObjectRevision> getRevisions(String path) {
+    List<ObjectRevision> revisions = new ArrayList<>();
+    try {
+      // Normalize the path for JGit (forward slashes, no leading slash)
+      String normalizedPath = normalizePathForJGit(path);
+      if (path != null && !".".equals(path)) {
+        LogChannel.UI.logDebug(
+            "Getting revisions for path - original: '"
+                + path
+                + "', normalized: '"
+                + normalizedPath
+                + "'");
+      }
+
+      // Check if there are working tree changes for the specific path
+      boolean hasWorkingTreeChanges = false;
+      if (!isClean()
+          || git.getRepository().getRepositoryState() == RepositoryState.MERGING_RESOLVED) {
+        // If a specific path is provided, check if that path has changes
+        if (normalizedPath != null && !".".equals(normalizedPath)) {
+          List<UIFile> stagedFiles = getStagedFiles();
+          List<UIFile> unstagedFiles = getUnstagedFiles();
+          for (UIFile file : stagedFiles) {
+            if (file.getName().equals(normalizedPath)
+                || file.getName().startsWith(normalizedPath + "/")) {
+              hasWorkingTreeChanges = true;
+              break;
+            }
+          }
+          if (!hasWorkingTreeChanges) {
+            for (UIFile file : unstagedFiles) {
+              if (file.getName().equals(normalizedPath)
+                  || file.getName().startsWith(normalizedPath + "/")) {
+                hasWorkingTreeChanges = true;
+                break;
+              }
+            }
+          }
+        } else {
+          // No specific path, so there are working tree changes
+          hasWorkingTreeChanges = true;
+        }
+
+        if (hasWorkingTreeChanges) {
+          GitObjectRevision rev =
+              new GitObjectRevision(WORKINGTREE, "*", new Date(), " // " + VCS.WORKINGTREE);
+          revisions.add(rev);
+        }
+      }
+      LogCommand logCommand = git.log();
+      if (normalizedPath != null && !".".equals(normalizedPath)) {
+        logCommand = logCommand.addPath(normalizedPath);
+      }
+      Iterable<RevCommit> iterable = logCommand.call();
+      for (RevCommit commit : iterable) {
+        GitObjectRevision rev =
+            new GitObjectRevision(
+                commit.getName(),
+                commit.getAuthorIdent().getName(),
+                commit.getAuthorIdent().getWhen(),
+                commit.getShortMessage());
+        revisions.add(rev);
+      }
+    } catch (Exception e) {
+      LogChannel.UI.logError("Error getting git revisions for path: " + path, e);
+    }
+    return revisions;
+  }
+
+  public List<UIFile> getUnstagedFiles() {
+    return getUnstagedFiles(null);
+  }
+
+  public List<UIFile> getUnstagedFiles(String path) {
+    List<UIFile> files = new ArrayList<>();
+    Status status = null;
+    try {
+      String normalizedPath = normalizePathForJGit(path);
+      StatusCommand statusCommand = git.status();
+      if (normalizedPath != null && !".".equals(normalizedPath)) {
+        statusCommand = statusCommand.addPath(normalizedPath);
+      }
+
+      status = statusCommand.call();
+    } catch (Exception e) {
+      e.printStackTrace();
+      return files;
+    }
+    Set<String> ignored = getCaseInsensitiveIgnored(status.getUntracked());
+    status.getUntracked().stream()
+        .filter(name -> !ignored.contains(name))
+        .forEach(name -> files.add(new UIFile(name, ChangeType.ADD, false)));
+    status.getConflicting().forEach(name -> files.add(new UIFile(name, ChangeType.MODIFY, false)));
+    // Changed in the working tree but not staged: "git add" is what stages these
+    status.getModified().forEach(name -> files.add(new UIFile(name, ChangeType.MODIFY, false)));
+    status.getMissing().forEach(name -> files.add(new UIFile(name, ChangeType.DELETE, false)));
+    return files;
+  }
+
+  public List<UIFile> getStagedFiles() {
+    List<UIFile> files = new ArrayList<>();
+    Status status = null;
+    try {
+      status = git.status().call();
+    } catch (Exception e) {
+      e.printStackTrace();
+      return files;
+    }
+    // Only what is in the index: working tree changes are reported by getUnstagedFiles()
+    status.getAdded().forEach(name -> files.add(new UIFile(name, ChangeType.ADD, true)));
+    status.getChanged().forEach(name -> files.add(new UIFile(name, ChangeType.MODIFY, true)));
+    status.getRemoved().forEach(name -> files.add(new UIFile(name, ChangeType.DELETE, true)));
+    return files;
+  }
+
+  public List<UIFile> getStagedFiles(String oldCommitId, String newCommitId) {
+    List<UIFile> files = new ArrayList<>();
+    try {
+      List<DiffEntry> diffs =
+          getDiffCommand(oldCommitId, newCommitId).setShowNameAndStatusOnly(true).call();
+      RenameDetector rd = new RenameDetector(git.getRepository());
+      rd.addAll(diffs);
+      diffs = rd.compute();
+      diffs.forEach(
+          diff ->
+              files.add(
+                  new UIFile(
+                      diff.getChangeType() == ChangeType.DELETE
+                          ? diff.getOldPath()
+                          : diff.getNewPath(),
+                      diff.getChangeType(),
+                      false)));
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+    return files;
+  }
+
+  public boolean hasStagedFiles() {
+    if (git.getRepository().getRepositoryState() == RepositoryState.SAFE) {
+      return !getStagedFiles().isEmpty();
+    } else {
+      return git.getRepository().getRepositoryState().canCommit();
+    }
+  }
+
+  public void initRepo(String baseDirectory) throws Exception {
+    git = Git.init().setDirectory(new File(baseDirectory)).call();
+    directory = baseDirectory;
+  }
+
+  public void openRepo(String baseDirectory) throws Exception {
+    git = Git.open(new File(baseDirectory));
+    directory = baseDirectory;
+  }
+
+  public void closeRepo() {
+    if (git != null) {
+      git.close();
+      git = null;
+    }
+  }
+
+  public void add(String filePattern) throws HopException {
+    try {
+      String normalizedPattern = normalizePathForJGit(filePattern);
+      if (normalizedPattern.endsWith(CONST_OURS) || normalizedPattern.endsWith(CONST_THEIRS)) {
+        FileUtils.rename(
+            new File(directory, normalizedPattern),
+            new File(directory, FilenameUtils.removeExtension(normalizedPattern)),
+            StandardCopyOption.REPLACE_EXISTING);
+        normalizedPattern = FilenameUtils.removeExtension(normalizedPattern);
+        org.apache.commons.io.FileUtils.deleteQuietly(
+            new File(directory, normalizedPattern + CONST_OURS));
+        org.apache.commons.io.FileUtils.deleteQuietly(
+            new File(directory, normalizedPattern + CONST_THEIRS));
+      }
+      git.add().addFilepattern(normalizedPattern).call();
+    } catch (Exception e) {
+      throw new HopException("Error adding '" + filePattern + "'to git", e);
+    }
+  }
+
+  public void rm(String filepattern) {
+    try {
+      String normalizedPattern = normalizePathForJGit(filepattern);
+      git.rm().addFilepattern(normalizedPattern).call();
+    } catch (Exception e) {
+      showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+    }
+  }
+
+  /** Reset to a commit (mixed) */
+  public void reset(String name) {
+    reset(name, ResetType.MIXED);
+  }
+
+  public void reset(String name, ResetType type) {
+    try {
+      git.reset().setRef(name).setMode(type).call();
+    } catch (Exception e) {
+      showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+    }
+  }
+
+  /** Reset a file to HEAD (mixed) */
+  public void resetPath(String path) {
+    try {
+      String normalizedPath = normalizePathForJGit(path);
+      git.reset().addPath(normalizedPath).call();
+    } catch (Exception e) {
+      showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+    }
+  }
+
+  @VisibleForTesting
+  void resetHard() throws Exception {
+    git.reset().setMode(ResetType.HARD).call();
+  }
+
+  public boolean rollback(String name) {
+    if (hasUncommittedChanges()) {
+      showMessageBox(
+          BaseMessages.getString(PKG, CONST_DIALOG_ERROR),
+          BaseMessages.getString(PKG, "Git.Dialog.UncommittedChanges.Message"));
+      return false;
+    }
+    String commit = resolve(Constants.HEAD).getName();
+    RevertCommand cmd = git.revert();
+    for (int i = 0; i < getRevisions().size(); i++) {
+      String commitId = getRevisions().get(i).getRevisionId();
+      /*
+       * Revert commits from HEAD to the specified commit in reverse order.
+       */
+      cmd.include(resolve(commitId));
+      if (commitId.equals(name)) {
+        break;
+      }
+    }
+    try {
+      cmd.call();
+      git.reset().setRef(commit).call();
+      return true;
+    } catch (Exception e) {
+      showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+    }
+    return false;
+  }
+
+  public boolean fetch() throws HopException {
+    if (!hasRemote()) {
+      throw new HopException("There is no remote set up to fetch from. Please set this up first.");
+    }
+
+    try {
+      git.fetch().setCredentialsProvider(credentialsProvider).setCheckFetchedObjects(true).call();
+    } catch (Exception e) {
+      throw new HopException("There was an error doing a git fetch", e);
+    }
+    return false;
+  }
+
+  public boolean pull() throws HopException {
+    if (hasUncommittedChanges()) {
+      throw new HopException(
+          "You have uncommitted changes. Please commit work before pulling changes.");
+    }
+    if (!hasRemote()) {
+      throw new HopException("There is no remote set up to pull from. Please set this up first.");
+    }
+
+    try {
+      // Pull = Fetch + Merge
+      git.fetch().setCredentialsProvider(credentialsProvider).call();
+      return mergeBranch(
+          Constants.DEFAULT_REMOTE_NAME + "/" + getBranch(), MergeStrategy.RECURSIVE);
+    } catch (TransportException e) {
+      if (e.getMessage()
+              .contains(
+                  CONST_AUTHENTICATION_IS_REQUIRED_BUT_NO_CREDENTIALS_PROVIDER_HAS_BEEN_REGISTERED)
+          || e.getMessage()
+              .contains(CONST_NOT_AUTHORIZED)) { // when the cached credential does not work
+        if (e.getMessage().contains(CONST_NOT_AUTHORIZED)) {
+          new ErrorDialog(
+              HopGui.getInstance().getShell(),
+              "Git Error",
+              "Error Authenticating to Git service",
+              e);
+        }
+        if (promptUsernamePassword()) {
+          return pull();
+        }
+      } else {
+        throw new HopException("There was an error doing a git pull", e);
+      }
+    } catch (Exception e) {
+      throw new HopException("There was an error doing a git pull", e);
+    }
+    return false;
+  }
+
+  public boolean push() throws HopException {
+    return push("default");
+  }
+
+  /** Ask which branch or tag to push and push it. */
+  public boolean push(String type) throws HopException {
+    if (!hasRemote()) {
+      throw new HopException("There is no remote set up to push to. Please set this up.");
+    }
+    String name = null;
+    List<String> names;
+    EnterSelectionDialog esd;
+    if (type.equals(VCS.TYPE_BRANCH)) {
+      names = getLocalBranches();
+      esd =
+          getEnterSelectionDialog(
+              names.toArray(new String[names.size()]),
+              "Select Branch",
+              "Select the branch to push...");
+      name = esd.open();
+      if (name == null) {
+        return false;
+      }
+    } else if (type.equals(VCS.TYPE_TAG)) {
+      names = getTags();
+      esd =
+          getEnterSelectionDialog(
+              names.toArray(new String[names.size()]), "Select Tag", "Select the tag to push...");
+      name = esd.open();
+      if (name == null) {
+        return false;
+      }
+    }
+    return push(type, name);
+  }
+
+  /**
+   * Push a single branch or tag by name, without asking which one.
+   *
+   * @param type the type of the reference: {@link VCS#TYPE_BRANCH} or {@link VCS#TYPE_TAG}
+   * @param name the short name of the branch or tag, null to push the default refspec
+   */
+  public boolean push(String type, String name) throws HopException {
+    return push(name == null ? null : new RefSpec(getExpandedName(name, type)));
+  }
+
+  /** Delete a tag on the remote: git push origin :refs/tags/name */
+  public boolean deleteRemoteTag(String name) throws HopException {
+    return push(new RefSpec(":" + getExpandedName(name, VCS.TYPE_TAG)));
+  }
+
+  /**
+   * Delete a branch on the remote: git push origin :refs/heads/name
+   *
+   * <p>The remote tracking ref is removed as well, a delete doesn't prune it automatically.
+   *
+   * @param trackingRefName the name of the remote tracking ref, e.g. refs/remotes/origin/feature
+   */
+  public boolean deleteRemoteBranch(String trackingRefName) throws HopException {
+    String[] remoteAndBranch = splitTrackingRefName(trackingRefName);
+    String remote = remoteAndBranch[0];
+    String branch = remoteAndBranch[1];
+
+    if (!push(remote, List.of(new RefSpec(":" + Constants.R_HEADS + branch)), true)) {
+      return false;
+    }
+    deleteTrackingRef(trackingRefName);
+    return true;
+  }
+
+  /**
+   * Rename a branch on the remote. Git has no rename over the wire: the branch is pushed under its
+   * new name first and only removed under the old name once that succeeded.
+   *
+   * @param trackingRefName the name of the remote tracking ref, e.g. refs/remotes/origin/feature
+   * @param newBranchName the new name of the branch on the remote, without the remote prefix
+   */
+  public boolean renameRemoteBranch(String trackingRefName, String newBranchName)
+      throws HopException {
+    String[] remoteAndBranch = splitTrackingRefName(trackingRefName);
+    String remote = remoteAndBranch[0];
+    String oldBranchName = remoteAndBranch[1];
+
+    try {
+      Ref ref = git.getRepository().findRef(trackingRefName);
+      if (ref == null) {
+        throw new HopException("Remote branch '" + trackingRefName + "' could not be found");
+      }
+
+      // Create the branch under its new name, at the commit the old one points at.
+      // Bail out if the remote rejects it: the old branch is all that is left otherwise.
+      //
+      String commitId = ref.getObjectId().name();
+      if (!push(
+          remote,
+          List.of(new RefSpec(commitId + ":" + Constants.R_HEADS + newBranchName)),
+          false)) {
+        return false;
+      }
+
+      if (!push(remote, List.of(new RefSpec(":" + Constants.R_HEADS + oldBranchName)), true)) {
+        return false;
+      }
+
+      // Keep the tracking refs in step, the rename is only picked up by the next fetch otherwise
+      //
+      updateTrackingRef(Constants.R_REMOTES + remote + "/" + newBranchName, ref.getObjectId());
+      deleteTrackingRef(trackingRefName);
+      return true;
+    } catch (HopException e) {
+      throw e;
+    } catch (Exception e) {
+      throw new HopException(
+          "There was an error renaming remote branch '" + trackingRefName + "'", e);
+    }
+  }
+
+  /**
+   * Split a remote tracking ref name into the remote and the name of the branch on that remote:
+   * refs/remotes/origin/feature/hop becomes origin and feature/hop.
+   */
+  private String[] splitTrackingRefName(String trackingRefName) throws HopException {
+    if (!trackingRefName.startsWith(Constants.R_REMOTES)) {
+      throw new HopException("'" + trackingRefName + "' is not a remote branch");
+    }
+    // A branch name can contain slashes, so match on the configured remotes instead of splitting
+    // on the first slash.
+    //
+    String name = trackingRefName.substring(Constants.R_REMOTES.length());
+    for (String remote : git.getRepository().getRemoteNames()) {
+      if (name.startsWith(remote + "/")) {
+        return new String[] {remote, name.substring(remote.length() + 1)};
+      }
+    }
+    throw new HopException("No remote configured for remote branch '" + trackingRefName + "'");
+  }
+
+  /** Point a remote tracking ref at a commit locally, without touching the remote. */
+  private void updateTrackingRef(String trackingRefName, ObjectId objectId) throws HopException {
+    try {
+      RefUpdate update = git.getRepository().updateRef(trackingRefName);
+      update.setNewObjectId(objectId);
+      update.setForceUpdate(true);
+      update.update();
+    } catch (IOException e) {
+      throw new HopException("Unable to update remote tracking ref '" + trackingRefName + "'", e);
+    }
+  }
+
+  /** Remove a remote tracking ref locally, without touching the remote. */
+  private void deleteTrackingRef(String trackingRefName) throws HopException {
+    try {
+      RefUpdate update = git.getRepository().updateRef(trackingRefName);
+      update.setForceUpdate(true);
+      update.delete();
+    } catch (IOException e) {
+      throw new HopException("Unable to remove remote tracking ref '" + trackingRefName + "'", e);
+    }
+  }
+
+  /**
+   * Check whether a remote branch is the default branch (HEAD) of its remote. That is only known
+   * when the remote HEAD was fetched, so a false doesn't guarantee the branch is safe to remove:
+   * the remote has the final say.
+   *
+   * @param trackingRefName the name of the remote tracking ref, e.g. refs/remotes/origin/main
+   */
+  public boolean isRemoteHead(String trackingRefName) {
+    try {
+      String[] remoteAndBranch = splitTrackingRefName(trackingRefName);
+      Ref head = git.getRepository().exactRef(Constants.R_REMOTES + remoteAndBranch[0] + "/HEAD");
+      return head != null
+          && head.isSymbolic()
+          && head.getTarget().getName().equals(trackingRefName);
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  private boolean push(RefSpec refSpec) throws HopException {
+    return push(Constants.DEFAULT_REMOTE_NAME, refSpec == null ? null : List.of(refSpec), true);
+  }
+
+  /**
+   * Push a set of refspecs to a remote.
+   *
+   * @param remote the name of the remote to push to
+   * @param refSpecs the refspecs to push, null to push the default refspec
+   * @param reportSuccess report a successful push to the user. Set this to false for a push that is
+   *     only a step in a larger operation, the caller reports on the end result then.
+   * @return true if every ref was updated on the remote
+   */
+  private boolean push(String remote, List<RefSpec> refSpecs, boolean reportSuccess)
+      throws HopException {
+    if (!hasRemote()) {
+      throw new HopException("There is no remote set up to push to. Please set this up.");
+    }
+    try {
+      PushCommand cmd = git.push();
+      cmd.setRemote(remote);
+
+      String url = git.getRepository().getConfig().getString("remote", remote, "url");
+      if (!StringUtils.isEmpty(url) && (url.startsWith("https://") || url.startsWith("http://"))) {
+        cmd.setCredentialsProvider(credentialsProvider);
+      }
+
+      if (refSpecs != null) {
+        cmd.setRefSpecs(refSpecs);
+      }
+
+      Iterable<PushResult> resultIterable = cmd.call();
+      return processPushResult(resultIterable, reportSuccess);
+    } catch (TransportException e) {
+      if (e.getMessage()
+              .contains(
+                  CONST_AUTHENTICATION_IS_REQUIRED_BUT_NO_CREDENTIALS_PROVIDER_HAS_BEEN_REGISTERED)
+          || e.getMessage()
+              .contains(CONST_NOT_AUTHORIZED)) { // when the cached credential does not work
+        if (promptUsernamePassword()) {
+          return push(remote, refSpecs, reportSuccess);
+        }
+      } else {
+        throw new HopException("There was an error doing a git push", e);
+      }
+    } catch (Exception e) {
+      throw new HopException("There was an error doing a git push", e);
+    }
+    return false;
+  }
+
+  /**
+   * Report on the outcome of a push.
+   *
+   * @return true if every ref was updated on the remote
+   */
+  private boolean processPushResult(Iterable<PushResult> resultIterable, boolean reportSuccess) {
+    boolean success = true;
+    for (PushResult result : resultIterable) { // for each (push)url
+      StringBuilder sb = new StringBuilder();
+      result.getRemoteUpdates().stream()
+          .filter(update -> update.getStatus() != RemoteRefUpdate.Status.OK)
+          .filter(update -> update.getStatus() != RemoteRefUpdate.Status.UP_TO_DATE)
+          // Deleting a ref that is already gone on the remote is not an error
+          .filter(update -> update.getStatus() != RemoteRefUpdate.Status.NON_EXISTING)
+          .forEach(
+              // for each failed refspec
+              update -> {
+                boolean isTag = update.getRemoteName().startsWith(Constants.R_TAGS);
+                sb.append("Errors while pushing: ")
+                    .append("\n")
+                    .append("Destination: ")
+                    .append(result.getURI().toString())
+                    .append("\n")
+                    .append(isTag ? "Tag name: " : "Branch name: ")
+                    // A delete has no source ref, report the ref on the remote instead
+                    .append(Repository.shortenRefName(update.getRemoteName()))
+                    .append("\n");
+                switch (update.getStatus()) {
+                  case REJECTED_NONFASTFORWARD:
+                    sb.append(" * ")
+                        .append(update.getStatus().toString())
+                        .append(
+                            isTag
+                                ? " - The tag already exists on the remote and points to another commit."
+                                : " - Remote repository contains changes. Merge the remote changes (e.g. 'git pull') before pushing again.")
+                        .append("\n");
+                    break;
+                  default:
+                    sb.append(" * ")
+                        .append(update.getStatus().toString())
+                        .append(" - ")
+                        .append(update.getMessage() == null ? "" : "\n" + update.getMessage())
+                        .append("\n");
+                    break;
+                }
+              });
+      if (sb.isEmpty()) {
+        if (reportSuccess) {
+          showMessageBox(
+              BaseMessages.getString(PKG, "Dialog.Success"),
+              BaseMessages.getString(PKG, "Dialog.Success"));
+        }
+      } else {
+        success = false;
+        showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), sb.toString());
+      }
+    }
+    return success;
+  }
+
+  public String diff(String oldCommitId, String newCommitId) {
+    return diff(oldCommitId, newCommitId, null);
+  }
+
+  public String diff(String oldCommitId, String newCommitId, String file) {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    try {
+      String normalizedFile = normalizePathForJGit(file);
+      getDiffCommand(oldCommitId, newCommitId)
+          .setOutputStream(out)
+          .setPathFilter(
+              normalizedFile == null ? TreeFilter.ALL : PathFilter.create(normalizedFile))
+          .call();
+      return out.toString(StandardCharsets.UTF_8);
+    } catch (Exception e) {
+      return e.getMessage();
+    }
+  }
+
+  public InputStream open(String file, String commitId) throws HopException {
+    String normalizedFile = normalizePathForJGit(file);
+    if (commitId.equals(WORKINGTREE)) {
+      String baseDirectory = getDirectory();
+      String filePath = baseDirectory + Const.FILE_SEPARATOR + normalizedFile;
+      try {
+        return HopVfs.getInputStream(filePath);
+      } catch (HopFileException e) {
+        throw new HopException("Unable to find working tree file '" + filePath + "'", e);
+      }
+    }
+    RevCommit commit = resolve(commitId);
+    RevTree tree = commit.getTree();
+    try (TreeWalk tw = new TreeWalk(git.getRepository())) {
+      tw.addTree(tree);
+      tw.setFilter(PathFilter.create(normalizedFile));
+      tw.setRecursive(true);
+      tw.next();
+      ObjectLoader loader = git.getRepository().open(tw.getObjectId(0));
+      return loader.openStream();
+    } catch (MissingObjectException e) {
+      throw new HopException(
+          "Unable to find file '" + normalizedFile + CONST_FOR_COMMIT_ID + commitId + "", e);
+    } catch (IncorrectObjectTypeException e) {
+      throw new HopException(
+          "Incorrect object type error for file '"
+              + normalizedFile
+              + CONST_FOR_COMMIT_ID
+              + commitId
+              + "",
+          e);
+    } catch (CorruptObjectException e) {
+      throw new HopException(
+          "Corrupt object error for file '" + normalizedFile + CONST_FOR_COMMIT_ID + commitId + "",
+          e);
+    } catch (IOException e) {
+      throw new HopException(
+          "Error reading git file '" + normalizedFile + CONST_FOR_COMMIT_ID + commitId + "", e);
+    }
+  }
+
+  /**
+   * Create a CredentialsProvider for token-based authentication (GitHub, GitLab, etc.).
+   *
+   * @param token Personal access token
+   * @return CredentialsProvider, or null if token is null/empty
+   */
+  public static CredentialsProvider createTokenCredentialsProvider(String token) {
+    if (token == null || token.trim().isEmpty()) {
+      return null;
+    }
+    return new UsernamePasswordCredentialsProvider("x-oauth-basic", token.trim());
+  }
+
+  public boolean cloneRepo(String directory, String uri) {
+    return cloneRepo(directory, uri, null, 0);
+  }
+
+  /**
+   * Clone a repository with optional credentials and shallow clone depth.
+   *
+   * @param directory Local directory to clone into
+   * @param uri Repository URI (e.g. https://github.com/user/repo.git)
+   * @param credentialsProvider Optional credentials for authentication (e.g. token). If null and
+   *     auth fails, user will be prompted.
+   * @param depth Shallow clone depth (0 = full clone, 1+ = shallow with that many commits)
+   * @return true if clone succeeded
+   */
+  public boolean cloneRepo(
+      String directory, String uri, CredentialsProvider credentialsProvider, int depth) {
+    CredentialsProvider provider =
+        credentialsProvider != null ? credentialsProvider : this.credentialsProvider;
+    CloneCommand cmd = Git.cloneRepository();
+    cmd.setDirectory(new File(directory));
+    cmd.setURI(uri);
+    cmd.setCredentialsProvider(provider);
+    if (depth > 0) {
+      cmd.setDepth(depth);
+    }
+    try {
+      Git gitClone = cmd.call();
+      gitClone.close();
+      return true;
+    } catch (Exception e) {
+      if ((e instanceof TransportException)
+          && (e.getMessage()
+                  .contains(
+                      CONST_AUTHENTICATION_IS_REQUIRED_BUT_NO_CREDENTIALS_PROVIDER_HAS_BEEN_REGISTERED)
+              || e.getMessage().contains(CONST_NOT_AUTHORIZED))) {
+        if (provider == null && promptUsernamePassword()) {
+          return cloneRepo(directory, uri, null, depth);
+        }
+      }
+      showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+    }
+    return false;
+  }
+
+  public void checkout(String name) {
+    try {
+      git.checkout().setName(name).call();
+    } catch (Exception e) {
+      showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+    }
+  }
+
+  public void checkoutBranch(String name) {
+    checkout(name);
+  }
+
+  public void checkoutTag(String name) {
+    checkout(name);
+  }
+
+  public void revertPath(String path) throws HopException {
+    try {
+      String normalizedPath = normalizePathForJGit(path);
+      // Revert files to HEAD state
+      Status status = git.status().addPath(normalizedPath).call();
+      boolean isAdded = status.getAdded().contains(normalizedPath);
+      if (isAdded || status.getUntracked().contains(normalizedPath)) {
+        // The file is new: it doesn't exist in HEAD. Simply unstage it (if it was staged) and
+        // leave it on disk. Like git itself, revert never removes working tree files: removing
+        // untracked files takes an explicit git clean.
+        //
+        if (isAdded) {
+          resetPath(normalizedPath);
+        }
+        return;
+      }
+
+      /*
+       * This is a work-around to discard changes of conflicting files
+       * Git CLI `git checkout -- conflicted.txt` discards the changes, but jgit does not
+       */
+      git.add().addFilepattern(normalizedPath).call();
+
+      git.checkout().setStartPoint(Constants.HEAD).addPath(normalizedPath).call();
+      org.apache.commons.io.FileUtils.deleteQuietly(new File(directory, path + CONST_OURS));
+      org.apache.commons.io.FileUtils.deleteQuietly(new File(directory, path + CONST_THEIRS));
+    } catch (Exception e) {
+      throw new HopException("Git: error reverting path '" + path + "'", e);
+    }
+  }
+
+  /**
+   * Remove the given untracked files from the working tree: a targeted <code>git clean</code>.
+   * Paths which git doesn't report as untracked (tracked files, ignored files) are skipped, so this
+   * can never remove content which is under version control.
+   *
+   * @param paths The paths to clean (relative to the repository root)
+   * @throws HopException when the clean operation fails
+   */
+  public void cleanPaths(Collection<String> paths) throws HopException {
+    if (paths == null || paths.isEmpty()) {
+      return;
+    }
+    try {
+      Set<String> untracked = git.status().call().getUntracked();
+      File workTree = new File(directory);
+      for (String path : paths) {
+        String normalizedPath = normalizePathForJGit(path);
+        if (normalizedPath == null || !untracked.contains(normalizedPath)) {
+          continue;
+        }
+        File file = new File(workTree, normalizedPath);
+        org.apache.commons.io.FileUtils.deleteQuietly(file);
+        deleteEmptyParentFolders(file.getParentFile(), workTree);
+      }
+    } catch (Exception e) {
+      throw new HopException("Git: error cleaning untracked files", e);
+    }
+  }
+
+  /** Remove the folders a clean left behind empty, up to (excluding) the repository root. */
+  private void deleteEmptyParentFolders(File folder, File workTree) {
+    File parent = folder;
+    while (parent != null
+        && parent.isDirectory()
+        && !parent.equals(workTree)
+        && parent.toPath().startsWith(workTree.toPath())
+        && parent.delete()) { // only succeeds for empty folders
+      parent = parent.getParentFile();
+    }
+  }
+
+  /**
+   * Get the list of files which will be reverted.
+   *
+   * @param path The path to revert
+   * @return The list of affected files
+   */
+  public List<String> getRevertPathFiles(String path) throws HopException {
+    try {
+      Set<String> files = new HashSet<>();
+      String normalizedPath = normalizePathForJGit(path);
+      StatusCommand statusCommand = git.status();
+      if (normalizedPath != null && !".".equals(normalizedPath)) {
+        statusCommand = statusCommand.addPath(normalizedPath);
+      }
+
+      // Get files to be reverted to HEAD state
+      //
+      Status status = statusCommand.call();
+      files.addAll(status.getUntracked());
+      files.addAll(status.getAdded());
+      files.addAll(status.getMissing());
+      files.addAll(status.getChanged());
+      files.addAll(status.getUncommittedChanges());
+
+      return new ArrayList<>(files);
+    } catch (Exception e) {
+      throw new HopException("Git: error reverting path files for '" + path + "'", e);
+    }
+  }
+
+  /**
+   * Get the untracked files under the given path: the files a git clean would remove. Ignored files
+   * are not part of this list, git clean leaves those alone as well.
+   *
+   * @param path The path to clean (relative to the repository root)
+   * @return The untracked files, sorted by name
+   */
+  public List<String> getUntrackedPathFiles(String path) throws HopException {
+    try {
+      String normalizedPath = normalizePathForJGit(path);
+      StatusCommand statusCommand = git.status();
+      if (normalizedPath != null && !".".equals(normalizedPath)) {
+        statusCommand = statusCommand.addPath(normalizedPath);
+      }
+      List<String> files = new ArrayList<>(statusCommand.call().getUntracked());
+      Collections.sort(files);
+      return files;
+    } catch (Exception e) {
+      throw new HopException("Git: error getting untracked files for '" + path + "'", e);
+    }
+  }
+
+  /**
+   * Get the subset of revert-path files which are new: untracked or added but not in HEAD. Revert
+   * only unstages these and leaves them on disk; removing them takes an explicit git clean. For all
+   * other files (changed, missing, uncommitted) revert restores the content from HEAD.
+   *
+   * @param path The path to revert (same as for getRevertPathFiles)
+   * @return The new (untracked + added) paths
+   */
+  public Set<String> getNewRevertPathFiles(String path) throws HopException {
+    try {
+      Set<String> files = new HashSet<>();
+      String normalizedPath = normalizePathForJGit(path);
+      StatusCommand statusCommand = git.status();
+      if (normalizedPath != null && !".".equals(normalizedPath)) {
+        statusCommand = statusCommand.addPath(normalizedPath);
+      }
+      Status status = statusCommand.call();
+      files.addAll(status.getUntracked());
+      files.addAll(status.getAdded());
+      return files;
+    } catch (Exception e) {
+      throw new HopException("Git: error getting revert path files for '" + path + "'", e);
+    }
+  }
+
+  /**
+   * Checks whether a .gitignore already holds a rule for the given path.
+   *
+   * @param gitIgnoreContent The content of the .gitignore file to be checked.
+   * @param path The path to verify against the .gitignore file.
+   * @return true if the path is already ignored; false otherwise.
+   */
+  private boolean isAlreadyIgnored(String gitIgnoreContent, String path) {
+    return gitIgnoreContent.lines().map(String::trim).anyMatch(line -> line.equals(path));
+  }
+
+  public void addPathToIgnore(String path) {
+    try {
+      String rule = normalizePathForJGit(path);
+      if (StringUtils.isBlank(rule)) {
+        return;
+      }
+      rule = rule.trim();
+
+      File gitIgnore = new File(getDirectory(), ".gitignore");
+      String content =
+          gitIgnore.exists() ? Files.readString(gitIgnore.toPath(), StandardCharsets.UTF_8) : "";
+      if (isAlreadyIgnored(content, rule)) {
+        return;
+      }
+
+      // Every rule is a line of its own. A .gitignore does not have to end with a newline, and
+      // appending to one that doesn't would glue the new rule onto the last one, leaving a single
+      // pattern which matches neither file.
+      //
+      String newline = content.contains("\r\n") ? "\r\n" : "\n";
+      String addition =
+          (content.isEmpty() || content.endsWith("\n") ? "" : newline) + rule + newline;
+      Files.writeString(
+          gitIgnore.toPath(), addition, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+
+      // Stage the .gitignore, so the new rule is part of the next commit
+      git.add().addFilepattern(".gitignore").call();
+
+    } catch (Exception e) {
+      showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+    }
+  }
+
+  public boolean createBranch(String name) {
+    try {
+      git.branchCreate().setName(name).call();
+      checkoutBranch(getExpandedName(name, VCS.TYPE_BRANCH));
+      return true;
+    } catch (Exception e) {
+      showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+      return false;
+    }
+  }
+
+  /**
+   * Create a branch that starts at the given start point and check it out.
+   *
+   * @param name the name of the new branch
+   * @param startPoint a commit id or the name of a branch, remote branch or tag to start from.
+   *     Annotated tags are peeled to the commit they point at.
+   */
+  public boolean createBranch(String name, String startPoint) {
+    try {
+      git.branchCreate().setName(name).setStartPoint(startPoint).call();
+      checkoutBranch(getExpandedName(name, VCS.TYPE_BRANCH));
+      return true;
+    } catch (Exception e) {
+      showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+      return false;
+    }
+  }
+
+  public boolean renameBranch(String oldName, String newName) {
+    try {
+      git.branchRename().setOldName(oldName).setNewName(newName).call();
+      // checkoutBranch(getExpandedName(newName, VCS.TYPE_BRANCH));
+      return true;
+    } catch (Exception e) {
+      showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+      return false;
+    }
+  }
+
+  public boolean deleteBranch(String name, boolean force) {
+    try {
+      git.branchDelete()
+          .setBranchNames(getExpandedName(name, VCS.TYPE_BRANCH))
+          .setForce(force)
+          .call();
+      return true;
+    } catch (Exception e) {
+      showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+      return false;
+    }
+  }
+
+  public boolean mergeBranch(String value, MergeStrategy mergeStrategy) throws HopException {
+    try {
+      ObjectId obj = git.getRepository().resolve(value);
+      MergeResult result = git.merge().include(obj).setStrategy(mergeStrategy).call();
+      if (result.getMergeStatus() == MergeStatus.ALREADY_UP_TO_DATE) {
+        // The merge succeeded but did nothing. That is surprising to anyone with work in progress,
+        // so point out that staged or modified files are not part of a branch yet.
+        //
+        showMessageBox(
+            BaseMessages.getString(PKG, "UIGit.Dialog.NothingToMerge.Header"),
+            BaseMessages.getString(
+                PKG,
+                "UIGit.Dialog.NothingToMerge.Message",
+                value,
+                getBranch(),
+                getUncommittedChangesBlock()));
+        return false;
+      }
+      if (result.getMergeStatus().isSuccessful()) {
+        return true;
+      }
+
+      boolean conflicting = result.getMergeStatus() == MergeStatus.CONFLICTING;
+      if (conflicting) {
+        Map<String, int[][]> conflicts = result.getConflicts();
+        for (String path : conflicts.keySet()) {
+          checkout(path, Constants.HEAD, CONST_OURS);
+          checkout(path, getExpandedName(value, VCS.TYPE_BRANCH), CONST_THEIRS);
+        }
+      }
+
+      // TODO: get rid of message box
+      //
+      showMessageBox(
+          BaseMessages.getString(PKG, CONST_MERGE_FAILED_HEADER),
+          getMergeFailureMessage(value, result));
+
+      return conflicting;
+    } catch (CheckoutConflictException e) {
+      // A fast-forward merge never starts when local changes are in the way. Explain that instead
+      // of showing a stack trace.
+      //
+      showMessageBox(
+          BaseMessages.getString(PKG, CONST_MERGE_FAILED_HEADER),
+          BaseMessages.getString(
+              PKG,
+              CONST_MERGE_FAILED_LOCAL_CHANGES,
+              value,
+              getBranch(),
+              getPathList(e.getConflictingPaths())));
+      return false;
+    } catch (Exception e) {
+      throw new HopException(
+          "Error merging branch '" + value + "' with strategy '" + mergeStrategy + "'", e);
+    }
+  }
+
+  /**
+   * JGit only reports a terse status like "Failed" or "Conflicting". Turn that into an explanation
+   * the user can act on: which files are in the way and what to do about them.
+   *
+   * @param value the branch, tag or commit that was merged in
+   * @param result the unsuccessful merge result
+   * @return a message describing the failure and how to recover from it
+   */
+  private String getMergeFailureMessage(String value, MergeResult result) {
+    String currentBranch = getBranch();
+    switch (result.getMergeStatus()) {
+      case FAILED:
+        return getLocalChangesMessage(
+            value,
+            currentBranch,
+            result.getFailingPaths() == null ? null : result.getFailingPaths().keySet(),
+            result);
+      case CHECKOUT_CONFLICT:
+        return getLocalChangesMessage(value, currentBranch, result.getCheckoutConflicts(), result);
+      case CONFLICTING:
+        return BaseMessages.getString(
+            PKG,
+            "UIGit.Dialog.MergeFailed.Conflicting.Message",
+            value,
+            currentBranch,
+            getPathList(result.getConflicts() == null ? Set.of() : result.getConflicts().keySet()));
+      case ABORTED:
+        return BaseMessages.getString(
+            PKG, "UIGit.Dialog.MergeFailed.Aborted.Message", value, currentBranch);
+      default:
+        return getGenericMessage(value, currentBranch, result);
+    }
+  }
+
+  /**
+   * Local changes are in the way. Naming them is the whole point of the message, so fall back on
+   * the plain status when JGit did not tell us which files those are.
+   */
+  private String getLocalChangesMessage(
+      String value, String currentBranch, Collection<String> paths, MergeResult result) {
+    if (paths == null || paths.isEmpty()) {
+      return getGenericMessage(value, currentBranch, result);
+    }
+    return BaseMessages.getString(
+        PKG, CONST_MERGE_FAILED_LOCAL_CHANGES, value, currentBranch, getPathList(paths));
+  }
+
+  private String getGenericMessage(String value, String currentBranch, MergeResult result) {
+    return BaseMessages.getString(
+        PKG,
+        "UIGit.Dialog.MergeFailed.Generic.Message",
+        value,
+        currentBranch,
+        result.getMergeStatus().toString());
+  }
+
+  /**
+   * Nothing to merge usually means the work is still sitting in the index or the working tree
+   * instead of on the branch. List those files so the user can see where their changes are.
+   *
+   * @return the uncommitted changes to mention, or an empty string when the working tree is clean
+   */
+  private String getUncommittedChangesBlock() {
+    try {
+      Status status = git.status().call();
+      if (!status.hasUncommittedChanges()) {
+        return "";
+      }
+      Set<String> paths = new TreeSet<>();
+      paths.addAll(status.getAdded());
+      paths.addAll(status.getChanged());
+      paths.addAll(status.getRemoved());
+      paths.addAll(status.getModified());
+      paths.addAll(status.getMissing());
+      return BaseMessages.getString(
+          PKG, "UIGit.Dialog.NothingToMerge.UncommittedChanges.Label", getPathList(paths));
+    } catch (NoWorkTreeException | GitAPIException e) {
+      return "";
+    }
+  }
+
+  private String getPathList(Collection<String> paths) {
+    StringBuilder list = new StringBuilder();
+    paths.forEach(path -> list.append(" - ").append(path).append(Const.CR));
+    return list.toString();
+  }
+
+  private boolean hasUncommittedChanges() {
+    try {
+      return git.status().call().hasUncommittedChanges();
+    } catch (NoWorkTreeException | GitAPIException e) {
+      e.printStackTrace();
+      return false;
+    }
+  }
+
+  private void checkout(String path, String commitId, String postfix) throws HopException {
+    String normalizedPath = normalizePathForJGit(path);
+    InputStream stream = open(normalizedPath, commitId);
+    File file = new File(directory + Const.FILE_SEPARATOR + normalizedPath + postfix);
+    try {
+      org.apache.commons.io.FileUtils.copyInputStreamToFile(stream, file);
+      stream.close();
+    } catch (IOException e) {
+      throw new HopException(
+          "Error checking out file '"
+              + normalizedPath
+              + CONST_FOR_COMMIT_ID
+              + commitId
+              + "' and postfix "
+              + postfix,
+          e);
+    }
+  }
+
+  private DiffCommand getDiffCommand(String oldCommitId, String newCommitId) throws Exception {
+    return git.diff()
+        .setOldTree(getTreeIterator(oldCommitId))
+        .setNewTree(getTreeIterator(newCommitId));
+  }
+
+  private AbstractTreeIterator getTreeIterator(String commitId) throws Exception {
+    if (commitId == null) {
+      return new EmptyTreeIterator();
+    }
+    if (commitId.equals(WORKINGTREE)) {
+      return new FileTreeIterator(git.getRepository());
+    } else if (commitId.equals(INDEX)) {
+      return new DirCacheIterator(git.getRepository().readDirCache());
+    } else {
+      ObjectId id = git.getRepository().resolve(commitId);
+      if (id == null) { // commitId does not exist
+        return new EmptyTreeIterator();
+      } else {
+        CanonicalTreeParser treeIterator = new CanonicalTreeParser();
+        try (RevWalk rw = new RevWalk(git.getRepository())) {
+          RevTree tree = rw.parseTree(id);
+          try (ObjectReader reader = git.getRepository().newObjectReader()) {
+            treeIterator.reset(reader, tree.getId());
+          }
+        }
+        return treeIterator;
+      }
+    }
+  }
+
+  /**
+   * Normalize a file path for JGit operations. JGit requires paths to: - Use forward slashes (/) as
+   * separators - Be relative to the repository root - Not start with a slash
+   *
+   * @param path The path to normalize (can be null)
+   * @return The normalized path, or the original if it's null or "."
+   */
+  private String normalizePathForJGit(String path) {
+    if (path == null || ".".equals(path)) {
+      return path;
+    }
+    // Convert backslashes to forward slashes
+    String normalized = path.replace("\\", "/");
+    // Remove leading slash if present
+    if (normalized.startsWith("/")) {
+      normalized = normalized.substring(1);
+    }
+    return normalized;
+  }
+
+  public String getShortenedName(String name) {
+    if (name.length() == Constants.OBJECT_ID_STRING_LENGTH) {
+      return name.substring(0, 7);
+    } else {
+      return Repository.shortenRefName(name);
+    }
+  }
+
+  public boolean isClean() {
+    try {
+      return git.status().call().isClean();
+    } catch (Exception e) {
+      e.printStackTrace();
+      return false;
+    }
+  }
+
+  public List<String> getTags() {
+    try {
+      return git.tagList().call().stream()
+          .map(ref -> Repository.shortenRefName(ref.getName()))
+          .toList();
+    } catch (GitAPIException e) {
+      e.printStackTrace();
+    }
+    return null;
+  }
+
+  public boolean createTag(String name) {
+    try {
+      git.tag().setName(name).call();
+      return true;
+    } catch (Exception e) {
+      showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+      return false;
+    }
+  }
+
+  public boolean createTag(String name, String commitId) {
+    try {
+      RevCommit commit = resolve(commitId);
+      git.tag().setName(name).setObjectId(commit).call();
+      return true;
+    } catch (Exception e) {
+      showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+      return false;
+    }
+  }
+
+  public boolean deleteTag(String name) {
+    try {
+      git.tagDelete().setTags(getExpandedName(name, VCS.TYPE_TAG)).call();
+      return true;
+    } catch (GitAPIException e) {
+      showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+      return false;
+    }
+  }
+
+  public String getExpandedName(String name, String type) {
+    switch (type) {
+      case TYPE_TAG:
+        return Constants.R_TAGS + name;
+      case TYPE_BRANCH:
+        try {
+          return git.getRepository().findRef(Constants.R_HEADS + name).getName();
+        } catch (Exception e) {
+          try {
+            return git.getRepository().findRef(Constants.R_REMOTES + name).getName();
+          } catch (Exception e1) {
+            showMessageBox(BaseMessages.getString(PKG, CONST_DIALOG_ERROR), e.getMessage());
+          }
+        }
+      default:
+        return getCommitId(name);
+    }
+  }
+
+  @Override
+  public void setCredential(String username, String password) {
+    credentialsProvider = new UsernamePasswordCredentialsProvider(username, password);
+  }
+
+  public RevCommit resolve(String commitId) {
+    ObjectId id = null;
+    try {
+      id = git.getRepository().resolve(commitId);
+    } catch (RevisionSyntaxException | IOException e1) {
+      e1.printStackTrace();
+    }
+    try (RevWalk rw = new RevWalk(git.getRepository())) {
+      RevObject obj = rw.parseAny(id);
+      return (RevCommit) obj;
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
+    return null;
+  }
+
+  @VisibleForTesting
+  EnterSelectionDialog getEnterSelectionDialog(String[] choices, String shellText, String message) {
+    return new EnterSelectionDialog(HopGui.getInstance().getShell(), choices, shellText, message);
+  }
+
+  public Set<String> getIgnored(String path) {
+    try {
+      String normalizedPath = normalizePathForJGit(path);
+      StatusCommand statusCommand = git.status();
+      if (normalizedPath != null && !".".equals(normalizedPath)) {
+        statusCommand = statusCommand.addPath(normalizedPath);
+      }
+      Status status = statusCommand.call();
+      Set<String> ignored = new HashSet<>(status.getIgnoredNotInIndex());
+      ignored.addAll(getCaseInsensitiveIgnored(status.getUntracked()));
+      return ignored;
+    } catch (GitAPIException e) {
+      LogChannel.UI.logError("Error getting list of files ignored by git", e);
+      return new HashSet<>();
+    }
+  }
+
+  /**
+   * The files JGit reports as untracked but git itself ignores. JGit matches ignore rules case
+   * sensitively whatever core.ignorecase says, so on a case insensitive file system a rule like
+   * "output/" leaves everything in a folder named "Output" untracked. Empty for repositories that
+   * are matched case sensitively, where JGit and git agree.
+   */
+  private Set<String> getCaseInsensitiveIgnored(Set<String> untrackedFiles) {
+    Repository repository = git.getRepository();
+    if (untrackedFiles.isEmpty() || !CaseInsensitiveIgnores.appliesTo(repository)) {
+      return Set.of();
+    }
+    CaseInsensitiveIgnores ignores = new CaseInsensitiveIgnores(repository);
+    Set<String> ignored = new HashSet<>();
+    for (String file : untrackedFiles) {
+      if (ignores.isIgnored(file)) {
+        ignored.add(file);
+      }
+    }
+    return ignored;
+  }
+}

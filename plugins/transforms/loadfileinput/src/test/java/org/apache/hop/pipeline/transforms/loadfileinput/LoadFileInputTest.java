@@ -1,0 +1,422 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.pipeline.transforms.loadfileinput;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+
+import java.io.UnsupportedEncodingException;
+import java.lang.reflect.Field;
+import java.nio.charset.Charset;
+import org.apache.commons.io.IOUtils;
+import org.apache.commons.vfs2.FileObject;
+import org.apache.commons.vfs2.FileSystemException;
+import org.apache.commons.vfs2.FileSystemManager;
+import org.apache.commons.vfs2.VFS;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.HopClientEnvironment;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.exception.HopRuntimeException;
+import org.apache.hop.core.fileinput.FileInputList;
+import org.apache.hop.core.plugins.PluginRegistry;
+import org.apache.hop.core.plugins.TransformPluginType;
+import org.apache.hop.core.row.IRowMeta;
+import org.apache.hop.core.row.IValueMeta;
+import org.apache.hop.core.row.value.ValueMetaBinary;
+import org.apache.hop.core.row.value.ValueMetaString;
+import org.apache.hop.core.variables.IVariables;
+import org.apache.hop.junit.rules.RestoreHopEngineEnvironmentExtension;
+import org.apache.hop.pipeline.Pipeline;
+import org.apache.hop.pipeline.PipelineMeta;
+import org.apache.hop.pipeline.engines.local.LocalPipelineEngine;
+import org.apache.hop.pipeline.transform.TransformMeta;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+import org.mockito.Mockito;
+
+class LoadFileInputTest {
+  @RegisterExtension
+  static RestoreHopEngineEnvironmentExtension env = new RestoreHopEngineEnvironmentExtension();
+
+  private FileSystemManager fs;
+  private String filesPath;
+
+  private FileInputList fileInputList;
+
+  private LoadFileInput loadFileInput;
+  private LoadFileInputMeta loadFileInputMeta;
+  private LoadFileInputField loadFileInputField;
+  private static String wasEncoding;
+
+  @BeforeAll
+  static void setupBeforeClass() throws HopException {
+    if (Const.isWindows()) {
+      wasEncoding = System.getProperty("file.encoding");
+      fiddleWithDefaultCharset("utf8");
+    }
+    HopClientEnvironment.init();
+  }
+
+  @AfterAll
+  static void teardownAfterClass() {
+    if (wasEncoding != null) {
+      fiddleWithDefaultCharset(wasEncoding);
+    }
+  }
+
+  // Yeah, I don't like it much either, but it lets me set file.encoding after
+  // the VM has fired up. Remove this code when the backlog ticket BACKLOG-20800 gets fixed.
+  private static void fiddleWithDefaultCharset(String fiddleValue) {
+    try {
+      Class<Charset> charSet = Charset.class;
+      Field defaultCharsetFld = charSet.getDeclaredField("defaultCharset");
+      defaultCharsetFld.setAccessible(true);
+      defaultCharsetFld.set(null, Charset.forName(fiddleValue));
+    } catch (Exception ex) {
+      System.out.println("*** Fiddling with Charset class failed");
+    }
+  }
+
+  @BeforeEach
+  void setup() throws FileSystemException {
+    fs = VFS.getManager();
+    filesPath = '/' + this.getClass().getPackage().getName().replace('.', '/') + "/files/";
+
+    String pipelineName = "LoadFileInput";
+    PipelineMeta pipelineMeta = new PipelineMeta();
+    pipelineMeta.setName(pipelineName);
+    Pipeline pipeline = new LocalPipelineEngine(pipelineMeta);
+
+    loadFileInputMeta = spy(new LoadFileInputMeta());
+    fileInputList = new FileInputList();
+    Mockito.doReturn(fileInputList).when(loadFileInputMeta).getFiles(any(IVariables.class));
+    String transformId =
+        PluginRegistry.getInstance().getPluginId(TransformPluginType.class, loadFileInputMeta);
+    TransformMeta transformMeta =
+        new TransformMeta(transformId, "Load File Input", loadFileInputMeta);
+    pipelineMeta.addTransform(transformMeta);
+
+    LoadFileInputData loadFileInputData = new LoadFileInputData();
+
+    int transformCopyNr = 0;
+
+    loadFileInput =
+        new LoadFileInput(
+            transformMeta,
+            loadFileInputMeta,
+            loadFileInputData,
+            transformCopyNr,
+            pipelineMeta,
+            pipeline);
+
+    assertSame(loadFileInputMeta, transformMeta.getTransform());
+
+    loadFileInputField = new LoadFileInputField();
+    loadFileInputMeta.getInputFields().add(loadFileInputField);
+    loadFileInput.init();
+  }
+
+  private FileObject getFile(final String filename) {
+    try {
+      return fs.resolveFile(this.getClass().getResource(filesPath + filename));
+    } catch (Exception e) {
+      throw new HopRuntimeException("fail. " + e.getMessage(), e);
+    }
+  }
+
+  @Test
+  void testOpenNextFile_noFiles() {
+    assertFalse(loadFileInputMeta.isIgnoreEmptyFile()); // ensure default value
+
+    assertFalse(loadFileInput.openNextFile());
+  }
+
+  @Test
+  void testOpenNextFile_noFiles_ignoreEmpty() {
+    loadFileInputMeta.setIgnoreEmptyFile(true);
+
+    assertFalse(loadFileInput.openNextFile());
+  }
+
+  @Test
+  void testOpenNextFile_0() {
+    assertFalse(loadFileInputMeta.isIgnoreEmptyFile()); // ensure default value
+
+    fileInputList.addFile(getFile("input0.txt"));
+
+    assertTrue(loadFileInput.openNextFile());
+    assertFalse(loadFileInput.openNextFile());
+  }
+
+  @Test
+  void testOpenNextFile_0_ignoreEmpty() {
+    loadFileInputMeta.setIgnoreEmptyFile(true);
+
+    fileInputList.addFile(getFile("input0.txt"));
+
+    assertFalse(loadFileInput.openNextFile());
+  }
+
+  @Test
+  void testOpenNextFile_000() {
+    assertFalse(loadFileInputMeta.isIgnoreEmptyFile()); // ensure default value
+
+    fileInputList.addFile(getFile("input0.txt"));
+    fileInputList.addFile(getFile("input0.txt"));
+    fileInputList.addFile(getFile("input0.txt"));
+
+    assertTrue(loadFileInput.openNextFile());
+    assertTrue(loadFileInput.openNextFile());
+    assertTrue(loadFileInput.openNextFile());
+    assertFalse(loadFileInput.openNextFile());
+  }
+
+  @Test
+  void testOpenNextFile_000_ignoreEmpty() {
+    loadFileInputMeta.setIgnoreEmptyFile(true);
+
+    fileInputList.addFile(getFile("input0.txt"));
+    fileInputList.addFile(getFile("input0.txt"));
+    fileInputList.addFile(getFile("input0.txt"));
+
+    assertFalse(loadFileInput.openNextFile());
+  }
+
+  @Test
+  void testOpenNextFile_10() {
+    assertFalse(loadFileInputMeta.isIgnoreEmptyFile()); // ensure default value
+
+    fileInputList.addFile(getFile("input1.txt"));
+    fileInputList.addFile(getFile("input0.txt"));
+
+    assertTrue(loadFileInput.openNextFile());
+    assertTrue(loadFileInput.openNextFile());
+    assertFalse(loadFileInput.openNextFile());
+  }
+
+  @Test
+  void testOpenNextFile_10_ignoreEmpty() {
+    loadFileInputMeta.setIgnoreEmptyFile(true);
+
+    fileInputList.addFile(getFile("input1.txt"));
+    fileInputList.addFile(getFile("input0.txt"));
+
+    assertTrue(loadFileInput.openNextFile());
+    assertFalse(loadFileInput.openNextFile());
+  }
+
+  @Test
+  void testOpenNextFile_01() {
+    assertFalse(loadFileInputMeta.isIgnoreEmptyFile()); // ensure default value
+
+    fileInputList.addFile(getFile("input0.txt"));
+    fileInputList.addFile(getFile("input1.txt"));
+
+    assertTrue(loadFileInput.openNextFile());
+    assertTrue(loadFileInput.openNextFile());
+    assertFalse(loadFileInput.openNextFile());
+  }
+
+  @Test
+  void testOpenNextFile_01_ignoreEmpty() {
+    loadFileInputMeta.setIgnoreEmptyFile(true);
+
+    fileInputList.addFile(getFile("input0.txt"));
+    fileInputList.addFile(getFile("input1.txt"));
+
+    assertTrue(loadFileInput.openNextFile());
+    assertFalse(loadFileInput.openNextFile());
+  }
+
+  @Test
+  void testOpenNextFile_010() {
+    assertFalse(loadFileInputMeta.isIgnoreEmptyFile()); // ensure default value
+
+    fileInputList.addFile(getFile("input0.txt"));
+    fileInputList.addFile(getFile("input1.txt"));
+    fileInputList.addFile(getFile("input0.txt"));
+
+    assertTrue(loadFileInput.openNextFile());
+    assertTrue(loadFileInput.openNextFile());
+    assertTrue(loadFileInput.openNextFile());
+    assertFalse(loadFileInput.openNextFile());
+  }
+
+  @Test
+  void testOpenNextFile_010_ignoreEmpty() {
+    loadFileInputMeta.setIgnoreEmptyFile(true);
+
+    fileInputList.addFile(getFile("input0.txt"));
+    fileInputList.addFile(getFile("input1.txt"));
+    fileInputList.addFile(getFile("input0.txt"));
+
+    assertTrue(loadFileInput.openNextFile());
+    assertFalse(loadFileInput.openNextFile());
+  }
+
+  @Test
+  void testGetOneRow() throws Exception {
+    // string without specified encoding
+    fileInputList.addFile(getFile("input1.txt"));
+
+    assertNotNull(loadFileInput.getOneRow());
+    assertEquals("input1 - not empty", new String(loadFileInput.getData().filecontent));
+  }
+
+  @Test
+  void testUTF8Encoding() throws HopException, FileSystemException {
+    loadFileInputMeta.setIncludeFilename(true);
+    loadFileInputMeta.setFilenameField("filename");
+    loadFileInputMeta.setIncludeRowNumber(true);
+    loadFileInputMeta.setRowNumberField("rownumber");
+    loadFileInputMeta.getAdditionalFields().setShortFilenameField("shortname");
+    loadFileInputMeta.getAdditionalFields().setExtensionField("extension");
+    loadFileInputMeta.getAdditionalFields().setPathField("path");
+    loadFileInputMeta.getAdditionalFields().setHiddenField("hidden");
+    loadFileInputMeta.getAdditionalFields().setLastModificationField("lastmodified");
+    loadFileInputMeta.getAdditionalFields().setUriField("uri");
+    loadFileInputMeta.getAdditionalFields().setRootUriField("root uri");
+
+    // string with UTF-8 encoding
+    loadFileInputMeta.setEncoding(Const.UTF_8);
+    fileInputList.addFile(getFile("UTF-8.txt"));
+    Object[] result = loadFileInput.getOneRow();
+    assertEquals(" UTF-8 string ÕÕÕ€ ", result[0]);
+    assertEquals(1L, result[2]);
+    assertEquals("UTF-8.txt", result[3]);
+    assertEquals("txt", result[4]);
+    assertEquals(false, result[6]);
+    assertEquals(getFile("UTF-8.txt").getURL().toString(), result[8]);
+    assertEquals(getFile("UTF-8.txt").getName().getRootURI(), result[9]);
+  }
+
+  @Test
+  void testUTF8TrimLeft() throws HopException {
+    loadFileInputMeta.setEncoding(Const.UTF_8);
+    loadFileInputField.setTrimType(IValueMeta.TRIM_TYPE_LEFT);
+    fileInputList.addFile(getFile("UTF-8.txt"));
+    assertEquals("UTF-8 string ÕÕÕ€ ", loadFileInput.getOneRow()[0]);
+  }
+
+  @Test
+  void testUTF8TrimRight() throws HopException {
+    loadFileInputMeta.setEncoding(Const.UTF_8);
+    loadFileInputField.setTrimType(IValueMeta.TRIM_TYPE_RIGHT);
+    fileInputList.addFile(getFile("UTF-8.txt"));
+    assertEquals(" UTF-8 string ÕÕÕ€", loadFileInput.getOneRow()[0]);
+  }
+
+  @Test
+  void testUTF8Trim() throws HopException {
+    loadFileInputMeta.setEncoding(Const.UTF_8);
+    loadFileInputField.setTrimType(IValueMeta.TRIM_TYPE_BOTH);
+    fileInputList.addFile(getFile("UTF-8.txt"));
+    assertEquals("UTF-8 string ÕÕÕ€", loadFileInput.getOneRow()[0]);
+  }
+
+  @Test
+  void testWindowsEncoding() throws HopException {
+    loadFileInputMeta.setEncoding("Windows-1252");
+    loadFileInputField.setTrimType(IValueMeta.TRIM_TYPE_NONE);
+    fileInputList.addFile(getFile("Windows-1252.txt"));
+    assertEquals(" Windows-1252 string ÕÕÕ€ ", loadFileInput.getOneRow()[0]);
+  }
+
+  @Test
+  void testWithNoEncoding() throws HopException, UnsupportedEncodingException {
+    // string with Windows-1252 encoding but with no encoding set
+    loadFileInputMeta.setEncoding(null);
+    fileInputList.addFile(getFile("Windows-1252.txt"));
+    assertNotEquals(" Windows-1252 string ÕÕÕ€ ", loadFileInput.getOneRow()[0]);
+    assertEquals(
+        " Windows-1252 string ÕÕÕ€ ",
+        new String(loadFileInput.getData().filecontent, "Windows-1252"));
+  }
+
+  @Test
+  void testByteArray() throws Exception {
+    IRowMeta mockedRowMetaInterface = mock(IRowMeta.class);
+    loadFileInput.getData().outputRowMeta = mockedRowMetaInterface;
+    loadFileInput.getData().convertRowMeta = mockedRowMetaInterface;
+    Mockito.doReturn(new ValueMetaString()).when(mockedRowMetaInterface).getValueMeta(anyInt());
+
+    // byte array
+    Mockito.doReturn(new ValueMetaBinary()).when(mockedRowMetaInterface).getValueMeta(anyInt());
+    loadFileInputMeta.setEncoding(Const.UTF_8);
+    fileInputList.addFile(getFile("hop.jpg"));
+    loadFileInputField = new LoadFileInputField();
+    loadFileInputField.setType(IValueMeta.TYPE_BINARY);
+    loadFileInputMeta.getInputFields().add(loadFileInputField);
+
+    assertNotNull(loadFileInput.getOneRow());
+    assertArrayEquals(
+        IOUtils.toByteArray(getFile("hop.jpg").getContent().getInputStream()),
+        loadFileInput.getData().filecontent);
+  }
+
+  @Test
+  void testCopyOrCloneArrayFromLoadFileWithSmallerSizedReadRowArray() {
+    int size = 5;
+    Object[] rowData = new Object[size];
+    Object[] readRow = new Object[size - 1];
+    LoadFileInput mockedTransform = mock(LoadFileInput.class);
+
+    Mockito.when(mockedTransform.copyOrCloneArrayFromLoadFile(rowData, readRow))
+        .thenCallRealMethod();
+
+    assertEquals(5, mockedTransform.copyOrCloneArrayFromLoadFile(rowData, readRow).length);
+  }
+
+  @Test
+  void testCopyOrCloneArrayFromLoadFileWithBiggerSizedReadRowArray() {
+    int size = 5;
+    Object[] rowData = new Object[size];
+    Object[] readRow = new Object[size + 1];
+    LoadFileInput mockedTransform = mock(LoadFileInput.class);
+
+    Mockito.when(mockedTransform.copyOrCloneArrayFromLoadFile(rowData, readRow))
+        .thenCallRealMethod();
+
+    assertEquals(6, mockedTransform.copyOrCloneArrayFromLoadFile(rowData, readRow).length);
+  }
+
+  @Test
+  void testCopyOrCloneArrayFromLoadFileWithSameSizedReadRowArray() {
+    int size = 5;
+    Object[] rowData = new Object[size];
+    Object[] readRow = new Object[size];
+    LoadFileInput mockedTransform = mock(LoadFileInput.class);
+
+    Mockito.when(mockedTransform.copyOrCloneArrayFromLoadFile(rowData, readRow))
+        .thenCallRealMethod();
+
+    assertEquals(5, mockedTransform.copyOrCloneArrayFromLoadFile(rowData, readRow).length);
+  }
+}

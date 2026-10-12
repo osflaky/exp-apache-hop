@@ -1,0 +1,193 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.pipeline.transforms.normaliser;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Set;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.row.IValueMeta;
+import org.apache.hop.i18n.BaseMessages;
+import org.apache.hop.pipeline.Pipeline;
+import org.apache.hop.pipeline.PipelineMeta;
+import org.apache.hop.pipeline.transform.BaseTransform;
+import org.apache.hop.pipeline.transform.TransformMeta;
+
+/** Normalise de-normalised input data. */
+public class Normaliser extends BaseTransform<NormaliserMeta, NormaliserData> {
+  private static final Class<?> PKG = NormaliserMeta.class;
+
+  public Normaliser(
+      TransformMeta transformMeta,
+      NormaliserMeta meta,
+      NormaliserData data,
+      int copyNr,
+      PipelineMeta pipelineMeta,
+      Pipeline pipeline) {
+    super(transformMeta, meta, data, copyNr, pipelineMeta, pipeline);
+  }
+
+  @Override
+  public boolean processRow() throws HopException {
+
+    Object[] r = getRow(); // get row from rowset, wait for our turn, indicate busy!
+    if (r == null) { // no more input to be expected...
+
+      setOutputDone();
+      return false;
+    }
+
+    if (first) { // INITIALISE
+
+      first = false;
+
+      data.inputRowMeta = getInputRowMeta();
+      data.outputRowMeta = data.inputRowMeta.clone();
+      meta.getFields(data.outputRowMeta, getTransformName(), null, null, this, metadataProvider);
+      data.typeToPlacements = new HashMap<>();
+      String typeValue;
+      int dataFieldNr;
+
+      // The normalised fields are the last ones of the output row, in this order.
+      //
+      List<String> normNames = meta.getNormalisedFieldNames();
+      int firstNormIndex = data.outputRowMeta.size() - normNames.size();
+
+      String duplicate = meta.getDuplicateMapping();
+      if (duplicate != null) {
+        throw new HopException(duplicate);
+      }
+
+      // Get a unique list of occurrences...
+      //
+      data.type_occ = new ArrayList<>();
+      data.maxlen = 0;
+
+      for (NormaliserField field : meta.getNormaliserFields()) {
+        typeValue = field.getValue();
+        if (!data.type_occ.contains(typeValue)) {
+          data.type_occ.add(typeValue);
+        }
+        if (typeValue.length() > data.maxlen) {
+          data.maxlen = typeValue.length();
+        }
+
+        // For every type, the fields that get normalised under it and where each one goes: into
+        // the normalised field it names, whatever order the fields are listed in.
+        //
+        dataFieldNr = data.inputRowMeta.indexOfValue(field.getName());
+        if (dataFieldNr < 0) {
+          logError(
+              BaseMessages.getString(
+                  PKG, "Normaliser.Log.CouldNotFindFieldInRow", field.getName()));
+          setErrors(1);
+          stopAll();
+          return false;
+        }
+        int outputIndex = firstNormIndex + normNames.indexOf(field.getNorm());
+        IValueMeta source = data.inputRowMeta.getValueMeta(dataFieldNr);
+        IValueMeta target = data.outputRowMeta.getValueMeta(outputIndex);
+        boolean copy =
+            source.getType() == target.getType()
+                && source.getStorageType() == target.getStorageType();
+        data.typeToPlacements
+            .computeIfAbsent(typeValue, k -> new ArrayList<>())
+            .add(
+                new NormaliserData.Placement(
+                    dataFieldNr, outputIndex, source, copy ? null : target));
+      }
+
+      // Which fields are not impacted? We can just copy these, leave them alone.
+      //
+      data.copyFieldnrs = new ArrayList<>();
+
+      Set<String> normaliserFields = meta.getFieldNames();
+      int irmSize = data.inputRowMeta.size();
+
+      for (int i = 0; i < irmSize; i++) {
+        IValueMeta v = data.inputRowMeta.getValueMeta(i);
+        // Backwards compatibility - old loop called Const.indexofstring which uses equalsIgnoreCase
+        if (!normaliserFields.contains(v.getName().toLowerCase())) {
+          data.copyFieldnrs.add(i);
+        }
+      }
+    }
+
+    // Modest performance improvement over millions of rows - don't recalculate on each loop
+    // iteration something that doesn't change
+    int typeOccSize = data.type_occ.size();
+    int copyFldNrsSz = data.copyFieldnrs.size();
+    int rowMetaSz = data.outputRowMeta.size();
+
+    // Modest performance improvement (large memory improvement) - re-use temporary objects instead
+    // of re-creating them - better for GC over time
+    String typeValue;
+    Object[] outputRowData;
+    int outputIndex, nr;
+    Object value;
+
+    // Now do the normalization
+    // Loop over the unique occurrences of the different types.
+    //
+    for (int e = 0; e < typeOccSize; e++) {
+      typeValue = data.type_occ.get(e);
+
+      // Create an output row per type
+      //
+      outputRowData = new Object[rowMetaSz];
+      outputIndex = 0;
+
+      // Copy the input row data, excluding the fields that are normalized...
+      //
+      for (int i = 0; i < copyFldNrsSz; i++) {
+        nr = data.copyFieldnrs.get(i);
+        outputRowData[outputIndex++] = r[nr];
+      }
+
+      // Add the typefield_value
+      //
+      outputRowData[outputIndex++] = typeValue;
+
+      // Then add the normalized fields...
+      //
+      for (NormaliserData.Placement placement : data.typeToPlacements.get(typeValue)) {
+        value = r[placement.inputIndex()];
+        IValueMeta target = placement.target();
+        if (target != null) {
+          // Either the same type in another storage, or text for a field of mixed types.
+          value =
+              target.getType() == placement.source().getType()
+                  ? placement.source().convertToNormalStorageType(value)
+                  : target.convertData(placement.source(), value);
+        }
+        outputRowData[placement.outputIndex()] = value;
+      }
+
+      // The row is constructed, now give it to the next transform(s)...
+      //
+      putRow(data.outputRowMeta, outputRowData);
+    }
+
+    if (checkFeedback(getLinesRead()) && isBasic()) {
+      logBasic(BaseMessages.getString(PKG, "Normaliser.Log.LineNumber") + getLinesRead());
+    }
+
+    return true;
+  }
+}

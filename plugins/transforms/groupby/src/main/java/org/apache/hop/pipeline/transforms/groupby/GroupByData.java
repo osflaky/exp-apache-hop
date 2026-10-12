@@ -1,0 +1,124 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.pipeline.transforms.groupby;
+
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import org.apache.hop.core.row.IRowMeta;
+import org.apache.hop.core.row.IValueMeta;
+import org.apache.hop.pipeline.transform.BaseTransformData;
+import org.apache.hop.pipeline.transform.ITransformData;
+
+@SuppressWarnings("java:S1104")
+public class GroupByData extends BaseTransformData implements ITransformData {
+  public Object[] previous;
+
+  /** target value meta for aggregation fields */
+  public IRowMeta aggMeta;
+
+  public Object[] agg;
+  public IRowMeta groupMeta;
+  public IRowMeta groupAggMeta; // for speed: groupMeta+aggMeta
+  public int[] groupnrs;
+
+  /** Index of the boolean field that marks rows to exclude from aggregation, or -1 when unused. */
+  public int aggregateIgnoredFieldIndex = -1;
+
+  /**
+   * Per-aggregation flag for {@code FIRST_INCL_NULL}: true once the first non-ignored row of the
+   * current group has been applied.
+   */
+  public boolean[] firstInclNullSet;
+
+  /**
+   * array, length is equal to aggMeta value meta list size and metadata subject fields length.
+   * Values corresponds to input values used to calculate target results.
+   */
+  public int[] subjectnrs;
+
+  public long[] counts;
+
+  public Set<Object>[] distinctObjs;
+
+  public ArrayList<Object[]> bufferList;
+
+  public File tempFile;
+
+  public OutputStream fosToTempFile;
+
+  public DataOutputStream dosToTempFile;
+
+  public int rowsOnFile;
+
+  public boolean firstRead;
+
+  public InputStream fisToTmpFile;
+  public DataInputStream disToTmpFile;
+
+  public Object[] groupResult;
+
+  public boolean hasOutput;
+
+  public IRowMeta inputRowMeta;
+  public IRowMeta outputRowMeta;
+
+  public List<Integer> cumulativeSumSourceIndexes;
+  public List<Integer> cumulativeSumTargetIndexes;
+
+  public List<Integer> cumulativeAvgSourceIndexes;
+  public List<Integer> cumulativeAvgTargetIndexes;
+
+  public List<Integer> movingAvgSourceIndexes;
+  public List<Integer> movingAvgTargetIndexes;
+  public List<Integer> movingAvgWidths;
+  public List<Integer> movingAvgIndexes;
+
+  public Object[] previousSums;
+
+  public Object[] previousAvgSum;
+
+  public long[] previousAvgCount;
+
+  public IValueMeta valueMetaInteger;
+  public IValueMeta valueMetaNumber;
+
+  public double[] mean;
+
+  public boolean newBatch;
+
+  /**
+   * Sliding window buffers for MOVING_AVERAGE aggregations. One ArrayDeque per aggregation index;
+   * null for aggregations that are not MOVING_AVERAGE. Each deque holds the last N non-null numeric
+   * values of the subject field.
+   */
+  @SuppressWarnings("java:S1104")
+  public ArrayDeque<Double>[] movingAvgWindows;
+
+  public GroupByData() {
+    super();
+
+    previous = null;
+  }
+}

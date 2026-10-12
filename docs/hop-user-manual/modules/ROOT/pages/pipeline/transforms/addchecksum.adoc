@@ -1,0 +1,58 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+:documentationPath: /pipeline/transforms/
+:language: en_US
+:description: The Add a Checksum transform calculates checksums for one or more fields in the input stream and adds this to the output as a new field.
+:page-engines: Hop Engine=yes, Single Threaded=yes, Native Spark=yes, Beam Spark=yes, Beam Flink=yes, Beam Dataflow=yes
+
+= image:transforms/icons/checksum.svg[Add a Checksum Icon, role="image-doc-icon"] Add a checksum
+
+== Description
+
+The Add a Checksum transform calculates checksums for one or more fields in the input stream and adds this to the output as a new field.
+
+== Options
+
+[options="header"]
+|===
+|Option|Description
+|Transform name|Name of the transform.
+Note: This name has to be unique in a single pipeline.
+|Type a|The type of checksum that needs to be calculated.
+These are the types that are available:
+
+* CRC32 : 32-bit Cyclic Redundancy Check : http://en.wikipedia.org/wiki/Cyclic_redundancy_check
+* ADLER 32 : Checksum algorithm by Mark Adler: http://en.wikipedia.org/wiki/Adler-32
+* MD5 : Message Digest algorithm 5 : http://en.wikipedia.org/wiki/MD5
+* SHA-1 : Secure Hash Algorithm 1 : http://en.wikipedia.org/wiki/SHA-1
+* SHA-256 : Secure Hash Algorithm 2 : http://en.wikipedia.org/wiki/SHA-256
+|Result Type|Some checksum types allow to set different result types: String, Hexadecimal and Binary
+|Result field|The name of the result field containing the checksum
+|Prefix|An optional string to prepend before the field values when building the input for the checksum calculation.
+This is useful to distinguish hash keys from different topics, for example `CUST` for customer keys and `PROD` for product keys.
+|Separator|An optional string to insert between the field values when building the input for the checksum calculation.
+This helps generate more unique hash codes when multiple fields are concatenated.
+|Suffix|An optional string to append after the field values when building the input for the checksum calculation.
+Like the prefix, this can be used to distinguish hash keys from different topics.
+|Fields used in the checksum|The names of the fields to include in the checksum calculation.
+Note: You can use the "Get Fields" button to insert all input fields from previous transforms.
+|===
+
+== See also
+
+* xref:how-to-guides/cdc-snapshot-comparison.adoc[CDC: comparing snapshots] — storing an MD5 or SHA hash of a row and comparing it on the next run
+

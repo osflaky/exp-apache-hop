@@ -1,0 +1,200 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.hop.pipeline;
+
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import org.apache.hop.core.Const;
+import org.apache.hop.core.logging.LoggingObject;
+import org.apache.hop.core.variables.IVariables;
+import org.apache.hop.core.variables.Variables;
+import org.apache.hop.junit.rules.RestoreHopEngineEnvironmentExtension;
+import org.apache.hop.pipeline.engines.local.LocalPipelineEngine;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+@ExtendWith(RestoreHopEngineEnvironmentExtension.class)
+@ExtendWith(MockitoExtension.class)
+class TransformWithMappingMetaTest {
+
+  @Mock PipelineMeta pipelineMeta;
+
+  @Test
+  void activateParamsTest() throws Exception {
+    String childParam = "childParam";
+    String childValue = "childValue";
+    String paramOverwrite = "paramOverwrite";
+    String parentValue = "parentValue";
+    String transformValue = "transformValue";
+
+    IVariables parent = new Variables();
+    parent.setVariable(paramOverwrite, parentValue);
+
+    PipelineMeta childVariableSpace = new PipelineMeta();
+    childVariableSpace.addParameterDefinition(childParam, "", "");
+
+    LocalPipelineEngine pipeline =
+        new LocalPipelineEngine(pipelineMeta, parent, new LoggingObject("Test"));
+    pipeline.setParameterValue(childParam, childValue);
+
+    String[] parameters = pipeline.listParameters();
+    TransformWithMappingMeta.activateParams(
+        pipeline,
+        pipeline,
+        parent,
+        parameters,
+        new String[] {childParam, paramOverwrite},
+        new String[] {childValue, transformValue},
+        true);
+
+    assertEquals(childValue, pipeline.getVariable(childParam));
+    // the transform parameter prevails
+    assertEquals(transformValue, pipeline.getVariable(paramOverwrite));
+  }
+
+  @Test
+  void activateParamsWithTruePassParametersFlagTest() throws Exception {
+    String childParam = "childParam";
+    String childValue = "childValue";
+    String paramOverwrite = "paramOverwrite";
+    String parentValue = "parentValue";
+    String transformValue = "transformValue";
+    String parentAndChildParameter = "parentAndChildParameter";
+
+    IVariables parent = new Variables();
+    parent.setVariable(paramOverwrite, parentValue);
+    parent.setVariable(parentAndChildParameter, parentValue);
+
+    PipelineMeta childVariableSpace = new PipelineMeta();
+    childVariableSpace.addParameterDefinition(childParam, "", "");
+    childVariableSpace.addParameterDefinition(parentAndChildParameter, "", "");
+
+    LocalPipelineEngine pipeline =
+        new LocalPipelineEngine(pipelineMeta, parent, new LoggingObject("Test"));
+    pipeline.setParameterValue(childParam, childValue);
+    pipeline.setParameterValue(parentAndChildParameter, childValue);
+
+    String[] parameters = pipeline.listParameters();
+    TransformWithMappingMeta.activateParams(
+        pipeline,
+        pipeline,
+        parent,
+        parameters,
+        new String[] {childParam, paramOverwrite},
+        new String[] {childValue, transformValue},
+        true);
+
+    assertEquals(childValue, pipeline.getVariable(childParam));
+    // the transform parameter prevails
+    assertEquals(transformValue, pipeline.getVariable(paramOverwrite));
+
+    assertEquals(parentValue, pipeline.getVariable(parentAndChildParameter));
+  }
+
+  @Test
+  void replaceVariablesWithWorkflowInternalVariablesTest() {
+    String variableOverwrite = "paramOverwrite";
+    String variableChildOnly = "childValueVariable";
+    IVariables childVariables = new Variables();
+    IVariables replaceByParentVariables = new Variables();
+
+    for (String internalVariable : Const.INTERNAL_WORKFLOW_VARIABLES) {
+      childVariables.setVariable(internalVariable, "childValue");
+      replaceByParentVariables.setVariable(internalVariable, "parentValue");
+    }
+
+    childVariables.setVariable(variableChildOnly, "childValueVariable");
+    childVariables.setVariable(variableOverwrite, "childNotInternalValue");
+    replaceByParentVariables.setVariable(variableOverwrite, "parentNotInternalValue");
+
+    TransformWithMappingMeta.replaceVariableValues(childVariables, replaceByParentVariables);
+    // do not replace internal variables
+    assertEquals(
+        "childValue", childVariables.getVariable(Const.INTERNAL_VARIABLE_ENTRY_CURRENT_FOLDER));
+    // replace non internal variables
+    assertEquals("parentNotInternalValue", childVariables.getVariable(variableOverwrite));
+    // keep child only variables
+    assertEquals(variableChildOnly, childVariables.getVariable(variableChildOnly));
+  }
+
+  @Test
+  void replaceVariablesWithPipelineInternalVariablesTest() {
+    String variableOverwrite = "paramOverwrite";
+    String variableChildOnly = "childValueVariable";
+    IVariables childVariables = new Variables();
+    IVariables replaceByParentVariables = new Variables();
+
+    for (String internalVariable : Const.INTERNAL_PIPELINE_VARIABLES) {
+      childVariables.setVariable(internalVariable, "childValue");
+      replaceByParentVariables.setVariable(internalVariable, "parentValue");
+    }
+
+    childVariables.setVariable(variableChildOnly, "childValueVariable");
+    childVariables.setVariable(variableOverwrite, "childNotInternalValue");
+    replaceByParentVariables.setVariable(variableOverwrite, "parentNotInternalValue");
+
+    TransformWithMappingMeta.replaceVariableValues(childVariables, replaceByParentVariables);
+    // do not replace internal variables
+    assertEquals(
+        "childValue", childVariables.getVariable(Const.INTERNAL_VARIABLE_ENTRY_CURRENT_FOLDER));
+    // replace non internal variables
+    assertEquals("parentNotInternalValue", childVariables.getVariable(variableOverwrite));
+    // keep child only variables
+    assertEquals(variableChildOnly, childVariables.getVariable(variableChildOnly));
+  }
+
+  /**
+   * Reproduces issue #7067: a null variable name in the parent space used to NPE when checking
+   * internal variable sets (Set.of(...).contains(null)). Async web services could inject a null key
+   * when header content variable was unset.
+   */
+  @Test
+  void replaceVariableValuesSkipsNullVariableNames() {
+    String variableOverwrite = "paramOverwrite";
+    IVariables childVariables = new Variables();
+    childVariables.setVariable(variableOverwrite, "childValue");
+
+    IVariables replaceByParentVariables = mock(IVariables.class);
+    when(replaceByParentVariables.getVariableNames())
+        .thenReturn(new String[] {null, "", variableOverwrite});
+    when(replaceByParentVariables.getVariable(variableOverwrite)).thenReturn("parentValue");
+
+    assertDoesNotThrow(
+        () ->
+            TransformWithMappingMeta.replaceVariableValues(
+                childVariables, replaceByParentVariables));
+    assertEquals("parentValue", childVariables.getVariable(variableOverwrite));
+  }
+
+  @Test
+  void addMissingVariablesSkipsNullVariableNames() {
+    IVariables fromSpace = new Variables();
+    IVariables toSpace = mock(IVariables.class);
+    when(toSpace.getVariableNames()).thenReturn(new String[] {null, "", "addedVar"});
+    when(toSpace.getVariable("addedVar")).thenReturn("addedValue");
+
+    assertDoesNotThrow(() -> TransformWithMappingMeta.addMissingVariables(fromSpace, toSpace));
+    assertEquals("addedValue", fromSpace.getVariable("addedVar"));
+    assertNull(fromSpace.getVariable(null));
+  }
+}

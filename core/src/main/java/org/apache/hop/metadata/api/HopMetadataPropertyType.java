@@ -1,0 +1,129 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.metadata.api;
+
+/** A HopMetadataPropertyType provides information about the purpose of a HopMetadataProperty. */
+public enum HopMetadataPropertyType {
+  NONE,
+
+  // MISC
+  HOP_FILE,
+  EXEC_INFO_LOCATION,
+  EXEC_INFO_DATA_PROFILE,
+  PARTITION_SCHEMA,
+  CASSANDRA_CONNECTION,
+  MONGODB_CONNECTION,
+  REDIS_CONNECTION,
+  SPLUNK_CONNECTION,
+  AI_PROVIDER,
+
+  // PIPELINE
+  PIPELINE_FILE,
+  PIPELINE_RUN_CONFIG,
+  PIPELINE_LOG,
+  PIPELINE_PROBE,
+  PIPELINE_UNIT_TEST,
+  PIPELINE_DATA_SET,
+
+  // PIPELINE
+  BEAM_FILE_DEFINITION,
+
+  // WORKFLOW
+  WORKFLOW_FILE,
+  WORKFLOW_RUN_CONFIG,
+  WORKFLOW_LOG,
+
+  // SERVER
+  SERVER_DEFINITION,
+  SERVER_WEB_SERVICE,
+  SERVER_WEB_SERVICE_ASYNC,
+
+  // FIELDS
+  FIELD_LIST,
+  /**
+   * The pipeline stream field that feeds a mapping's target — the source half of a field-to-target
+   * mapping, whose other half names what it is written to ({@link #RDBMS_COLUMN}, for example). The
+   * two together describe "stream field X is written to Y".
+   *
+   * <p>At most one property per mapping object may carry this. Such an object often holds other
+   * properties that are also stream fields — the second bound of a BETWEEN condition, say — and
+   * annotating those makes the pair ambiguous.
+   */
+  STREAM_FIELD,
+
+  // FILES
+  FILE_PATH,
+  FILE_REFERENCE,
+  FILE_NAME,
+  FILE_WILDCARD,
+  FILE_ENCODING,
+  FILE_FIELD,
+  FILE_SEPARATOR,
+  FILE_ENCLOSURE,
+  FILE_EXTENSION,
+
+  // RDBMS
+  RDBMS_CONNECTION,
+  RDBMS_SCHEMA,
+  RDBMS_TABLE,
+  RDBMS_COLUMN,
+  RDBMS_SQL,
+  RDBMS_TRUNCATE,
+  RDBMS_SQL_SELECT,
+  RDBMS_SQL_INSERT,
+  RDBMS_SQL_UPDATE,
+  RDBMS_SQL_DELETE,
+  RDBMS_SQL_BULK,
+
+  // REST
+  REST_CONNECTION,
+  SALESFORCE_CONNECTION,
+
+  // MAIL
+  MAIL_SERVER_CONNECTION,
+
+  // GIT
+  GIT_CONNECTION,
+
+  // GRAPH
+  GRAPH_CONNECTION,
+  GRAPH_MODEL,
+  GRAPH_NODE,
+  GRAPH_QUERY,
+  GRAPH_RELATIONSHIP,
+
+  // STATIC SCHEMA
+  STATIC_SCHEMA_DEFINITION,
+
+  // NAMING
+  NAMING_SCHEME,
+
+  // VFS
+  VFS_GCP_CONNECTION,
+  VFS_AZURE_CONNECTION,
+  VFS_MINIO_CONNECTION,
+  VFS_S3_CONNECTION,
+  VFS_WEBDAV_CONNECTION,
+  VFS_DATABRICKS_CONNECTION,
+  VFS_SFTP_CONNECTION,
+  VFS_FTP_CONNECTION,
+  VFS_HDFS_CONNECTION,
+
+  // DATA STREAM
+  DATA_STREAM,
+}

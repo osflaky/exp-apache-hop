@@ -1,0 +1,627 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.ui.hopgui;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.extension.ExtensionPointHandler;
+import org.apache.hop.core.extension.HopExtensionPoint;
+import org.apache.hop.core.gui.plugin.GuiRegistry;
+import org.apache.hop.core.gui.plugin.key.KeyboardShortcut;
+import org.apache.hop.core.logging.LogChannel;
+import org.apache.hop.core.security.HopSecurityConfig;
+import org.apache.hop.core.security.HopSecurityContext;
+import org.apache.hop.history.AuditManager;
+import org.apache.hop.history.AuditState;
+import org.apache.hop.ui.core.PropsUi;
+import org.apache.hop.ui.hopgui.canvas.CanvasGraphRegistry;
+import org.apache.hop.ui.hopgui.explorer.RapExplorerFileService;
+import org.apache.hop.ui.hopgui.file.shared.DrillDownGuiPlugin;
+import org.apache.hop.ui.hopgui.notifications.NotificationService;
+import org.apache.hop.ui.hopgui.perspective.explorer.web.HopWebExplorerFileHelper;
+import org.eclipse.rap.rwt.RWT;
+import org.eclipse.rap.rwt.application.AbstractEntryPoint;
+import org.eclipse.rap.rwt.client.service.JavaScriptExecutor;
+import org.eclipse.rap.rwt.client.service.JavaScriptLoader;
+import org.eclipse.rap.rwt.client.service.StartupParameters;
+import org.eclipse.rap.rwt.internal.client.ConnectionMessages;
+import org.eclipse.rap.rwt.service.ResourceManager;
+import org.eclipse.rap.rwt.service.UISessionEvent;
+import org.eclipse.rap.rwt.service.UISessionListener;
+import org.eclipse.rap.rwt.widgets.WidgetUtil;
+import org.eclipse.swt.SWT;
+import org.eclipse.swt.SWTException;
+import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Display;
+
+public class HopWebEntryPoint extends AbstractEntryPoint {
+
+  /** How long a request may run before the browser shows RAP's wait hint (RAP default: 1000). */
+  static final int WAIT_HINT_TIMEOUT_MS = 1500;
+
+  /**
+   * Shortcuts that must remain active (sent to the server) but must not be cancelled in the
+   * browser, so native text editing still works (e.g. Ctrl+C/V/X in input fields).
+   */
+  private static final Set<String> NATIVE_TEXT_EDITING_SHORTCUTS =
+      Set.of("CTRL+C", "CTRL+V", "CTRL+X");
+
+  /**
+   * Navigation keys used for caret movement and selection in text fields (and tree widgets), both
+   * bare and with SHIFT held down to extend the selection. They may stay in {@code ACTIVE_KEYS} so
+   * the canvas navigation shortcuts still reach the server when focus is on the graph, but must not
+   * be in {@code CANCEL_KEYS} or the browser never moves the caret (see issue #7833). Modifier
+   * combinations with CTRL or ALT are separate RAP keys and remain cancelled when registered as
+   * application shortcuts.
+   */
+  private static final Set<String> NATIVE_TEXT_NAVIGATION_KEYS =
+      Set.of(
+          "ARROW_UP",
+          "ARROW_DOWN",
+          "ARROW_LEFT",
+          "ARROW_RIGHT",
+          "HOME",
+          "END",
+          "PAGE_UP",
+          "PAGE_DOWN",
+          "SHIFT+ARROW_UP",
+          "SHIFT+ARROW_DOWN",
+          "SHIFT+ARROW_LEFT",
+          "SHIFT+ARROW_RIGHT",
+          "SHIFT+HOME",
+          "SHIFT+END",
+          "SHIFT+PAGE_UP",
+          "SHIFT+PAGE_DOWN");
+
+  /** Audit group/type/name for Hop Web theme preference (per-user in audit folder). */
+  public static final String AUDIT_GROUP_HOP_WEB = "hop-web";
+
+  public static final String AUDIT_TYPE_PREFERENCES = "preferences";
+  public static final String AUDIT_NAME_THEME = "theme";
+  public static final String AUDIT_KEY_DARK_MODE = "darkMode";
+  public static final String AUDIT_KEY_FOLLOW_SYSTEM = "followSystem";
+
+  @Override
+  protected void createContents(Composite parent) {
+    // So drill-down and other GUI checks can use Const.getHopPlatformRuntime() from any thread
+    System.setProperty(Const.HOP_PLATFORM_RUNTIME, "GUI");
+
+    String path = null;
+    try {
+      if (RWT.getRequest() != null) {
+        path = RWT.getRequest().getRequestURI();
+      }
+    } catch (Exception ignored) {
+      // ignore
+    }
+    boolean onDarkPath = path != null && path.contains("/ui-dark");
+
+    // Redirect to /ui or /ui-dark if user's saved theme preference (in audit) doesn't match current
+    // path. When followSystem is true, we don't redirect by darkMode; we run system check below.
+    AuditState themeState = null;
+    try {
+      themeState =
+          AuditManager.retrieveState(
+              LogChannel.UI, AUDIT_GROUP_HOP_WEB, AUDIT_TYPE_PREFERENCES, AUDIT_NAME_THEME);
+      if (themeState != null && !themeState.extractBoolean(AUDIT_KEY_FOLLOW_SYSTEM, true)) {
+        boolean preferDark = themeState.extractBoolean(AUDIT_KEY_DARK_MODE, false);
+        if (preferDark && !onDarkPath) {
+          parent.getDisplay().asyncExec(() -> redirectToTheme(true));
+          return;
+        }
+        if (!preferDark && onDarkPath) {
+          parent.getDisplay().asyncExec(() -> redirectToTheme(false));
+          return;
+        }
+      }
+    } catch (Exception e) {
+      LogChannel.UI.logDebug("Could not read Hop Web theme preference from audit", e);
+    }
+
+    // When no saved preference or user chose "Follow system", use system light/dark
+    // (prefers-color-scheme)
+    if (themeState == null || themeState.extractBoolean(AUDIT_KEY_FOLLOW_SYSTEM, true)) {
+      parent.getDisplay().asyncExec(() -> runSystemThemeRedirectCheck(onDarkPath));
+    }
+
+    // Sync PropsUi dark mode with the theme for this entry point (/ui = light, /ui-dark = dark)
+    try {
+      PropsUi.getInstance().setDarkMode(onDarkPath);
+    } catch (Exception e) {
+      PropsUi.getInstance().setDarkMode(false);
+    }
+
+    // Detect client OS from User-Agent so Const.isOSX() reflects the user's machine
+    RapClientOsProvider.detectAndStoreClientMac();
+    Const.setClientOsProvider(new RapClientOsProvider());
+
+    // Bind RBAC context from servlet Principal (EXTERNAL/Tomcat auth) for this UI session
+    HopSecurityContext securityContext = RapSecurityContextProvider.bindFromCurrentRequest();
+    if (securityContext.isAuthenticated()) {
+      LogChannel.UI.logBasic(
+          "Hop Web security: user ''{0}'' roles={1}",
+          securityContext.getUsername(), securityContext.getRoleIds());
+    } else {
+      HopSecurityConfig.AuthMode mode = resolveAuthMode();
+      if (mode == HopSecurityConfig.AuthMode.NONE) {
+        LogChannel.UI.logDebug("Hop Web security: no authenticated principal (mode NONE)");
+      } else {
+        // A principal-less session in a non-NONE mode is unexpected: log at error level so
+        // EXTERNAL without a container security-constraint is visible instead of failing open.
+        LogChannel.UI.logError(
+            "Hop Web security WARNING: authentication mode is ''{0}'' but this request has no "
+                + "authenticated principal, so the UI is being served unauthenticated. "
+                + "In EXTERNAL mode Hop relies on the servlet container or reverse proxy: add a "
+                + "<security-constraint> covering /* (and a <login-config>) to WEB-INF/web.xml, "
+                + "or switch to BASIC / OAUTH2.",
+            mode.name());
+      }
+    }
+
+    ResourceManager resourceManager = RWT.getResourceManager();
+    JavaScriptLoader jsLoader = RWT.getClient().getService(JavaScriptLoader.class);
+
+    // RAP dims the whole page (the "wait hint") when a request runs longer than 1 s. Response-time
+    // guidance puts the point where feedback is due at about a second, but a grey-out reads as a
+    // freeze, so give ordinary work another half second before the hint comes up; the theme keeps
+    // the hint itself light (SystemMessage-DisplayOverlay in light-mode.css / dark-mode.css).
+    ConnectionMessages connectionMessages = RWT.getClient().getService(ConnectionMessages.class);
+    if (connectionMessages != null) {
+      connectionMessages.setWaitHintTimeout(WAIT_HINT_TIMEOUT_MS);
+    }
+
+    // Load canvas zoom handler and Monaco editor client script
+    String jsLocation = resourceManager.getLocation("js/canvas-zoom.js");
+    jsLoader.require(jsLocation);
+    jsLoader.require(resourceManager.getLocation("js/canvas-svg.js"));
+    jsLoader.require(resourceManager.getLocation("js/context-dialog-svg.js"));
+    jsLoader.require(resourceManager.getLocation("js/log-console.js"));
+    // RAP's GC leaves image onload handlers alive after dispose; see the script.
+    jsLoader.require(resourceManager.getLocation("js/gc-pending-images.js"));
+    // RAP's drag cursor icon would otherwise catch the pointer on a fast move; see the script.
+    jsLoader.require(resourceManager.getLocation("js/dnd-cursor-passthrough.js"));
+    jsLoader.require(resourceManager.getLocation("js/monaco-editor.js"));
+    // Map Mac Command key to Ctrl so RAP ACTIVE_KEYS (CTRL+S etc.) match when user presses Cmd+S
+    String macKeysLocation = resourceManager.getLocation("js/mac-command-keys.js");
+    jsLoader.require(macKeysLocation);
+
+    // Configure keyboard shortcuts for RAP dynamically from annotations
+    // ACTIVE_KEYS tells RAP to send these key combinations to the server
+    // CANCEL_KEYS prevents the browser from handling these shortcuts
+    // Note: CTRL automatically maps to Command key on Mac
+    Display display = parent.getDisplay();
+    String[] activeShortcuts = buildKeyboardShortcuts();
+    display.setData(RWT.ACTIVE_KEYS, activeShortcuts);
+    display.setData(RWT.CANCEL_KEYS, buildCancelledKeyboardShortcuts(activeShortcuts));
+
+    // Transferring Widget Data for client-side canvas drawing instructions
+    WidgetUtil.registerDataKeys("props");
+    WidgetUtil.registerDataKeys("mode");
+    WidgetUtil.registerDataKeys("nodes");
+    WidgetUtil.registerDataKeys("hops");
+    WidgetUtil.registerDataKeys("notes");
+    WidgetUtil.registerDataKeys("startHopNode");
+    WidgetUtil.registerDataKeys("resizeDirection");
+    WidgetUtil.registerDataKeys("sessionUuid");
+    WidgetUtil.registerDataKeys("canvasId");
+    WidgetUtil.registerDataKeys("renderRevision");
+    WidgetUtil.registerDataKeys("areas");
+
+    String sessionUuid = UUID.randomUUID().toString();
+    RWT.getUISession().setAttribute(CanvasGraphRegistry.SESSION_UUID_ATTR, sessionUuid);
+
+    //  The following options are session specific.
+    //
+    StartupParameters serviceParams = RWT.getClient().getService(StartupParameters.class);
+    List<String> args = new ArrayList<>();
+    String[] options = {"user", "pass", "project", "file"};
+    for (String option : options) {
+      if (serviceParams.getParameter(option) != null) {
+        args.add("-" + option + "=" + serviceParams.getParameter(option));
+      }
+    }
+
+    HopGui.getInstance().setCommandLineArguments(args);
+    HopGui.getInstance().setShell(parent.getShell());
+    PropsUi props = PropsUi.getInstance();
+    HopGui.getInstance().setProps(props);
+    props.clearPersistedDialogPositionsOnStartupIfConfigured();
+    // Expose identity on HopGui for window title / status (session-scoped instance)
+    HopGui.getInstance().setSecurityContext(securityContext);
+
+    // When user changes theme in Configuration → GUI options, redirect so the new theme takes
+    // effect. Boolean null = "follow system" (run system redirect, don't use dark flag).
+    HopGui.getInstance()
+        .setWebThemeRedirectCallback(
+            dark -> {
+              try {
+                if (dark == null) {
+                  saveThemePreferenceToAudit(true, null);
+                  runSystemThemeRedirectCheck(PropsUi.getInstance().isDarkMode());
+                } else {
+                  saveThemePreferenceToAudit(false, dark);
+                  redirectToTheme(dark);
+                }
+              } catch (Exception e) {
+                LogChannel.UI.logError("Failed to redirect for theme change", e);
+              }
+            });
+
+    try {
+      ExtensionPointHandler.callExtensionPoint(
+          HopGui.getInstance().getLog(),
+          HopGui.getInstance().getVariables(),
+          HopExtensionPoint.HopGuiInit.id,
+          HopGui.getInstance());
+    } catch (Exception e) {
+      HopGui.getInstance()
+          .getLog()
+          .logError("Error calling extension point plugin(s) for HopGuiInit", e);
+    }
+
+    HopGui.getInstance().open();
+
+    // URL params were only for initial project/file; clear so they don't affect CLI/run.
+    HopGui.getInstance().setCommandLineArguments(new ArrayList<>());
+
+    // Hop Web only delivers background asyncExec updates to the browser while a server
+    // push session is running. Start server push for the session so pipeline/workflow logs,
+    // notifications, and other async UI updates are pushed immediately without stalling.
+    ServerPushSessionFacade.start();
+
+    HopWebUrlHelper.setUrlUpdater(new RapHopWebUrlUpdater());
+    HopWebExplorerFileHelper.setService(new RapExplorerFileService());
+
+    // Persist open tabs when the session ends (browser close, timeout, etc.).
+    // We use the session-cached audit manager so no request is needed.
+    // Skip if the UI is already disposed (beforeDestroy runs during teardown).
+    RWT.getUISession()
+        .addUISessionListener(
+            new UISessionListener() {
+              @Override
+              public void beforeDestroy(UISessionEvent event) {
+                // Stop this session's notification polling and let go of its server push channel.
+                // Both are started per session, and nothing else would ever end them: the threads
+                // and the open push connection would otherwise accumulate for as long as the
+                // server runs. Done first, and on its own, so a disposed widget further down
+                // cannot skip it.
+                try {
+                  NotificationService.getInstance().stop();
+                  ServerPushSessionFacade.stop();
+                } catch (Exception e) {
+                  LogChannel.UI.logError(
+                      "Error stopping notifications and server push on session end", e);
+                }
+                try {
+                  HopGui hopGui = HopGui.getInstance();
+                  if (hopGui == null) {
+                    return;
+                  }
+                  // Let go of this session's VFS namespace: it closes once nothing is using it,
+                  // and the sessions still running keep theirs.
+                  hopGui.releaseVfsNamespace();
+                  if (hopGui.auditDelegate == null) {
+                    return;
+                  }
+                  if (hopGui.getShell() != null && hopGui.getShell().isDisposed()) {
+                    return;
+                  }
+                  hopGui.auditDelegate.writeLastOpenFiles();
+                  DrillDownGuiPlugin.cleanupSession(hopGui.getId());
+                } catch (SWTException e) {
+                  if (e.code != SWT.ERROR_WIDGET_DISPOSED) {
+                    LogChannel.UI.logError("Error persisting open files on session end", e);
+                  }
+                } catch (Exception e) {
+                  LogChannel.UI.logError("Error persisting open files on session end", e);
+                }
+              }
+            });
+  }
+
+  /**
+   * The configured Hop Web authentication mode, or {@code NONE} when the security configuration
+   * cannot be read. Used to decide whether an unauthenticated request is expected (mode {@code
+   * NONE}) or a sign that the container security constraint for {@code EXTERNAL} is missing.
+   */
+  private HopSecurityConfig.AuthMode resolveAuthMode() {
+    try {
+      return HopSecurityConfig.load().getAuthMode();
+    } catch (Exception e) {
+      LogChannel.UI.logDebug("Could not read the Hop Web security configuration", e);
+      return HopSecurityConfig.AuthMode.NONE;
+    }
+  }
+
+  /**
+   * When there is no saved theme preference, run a client script to check prefers-color-scheme and
+   * redirect to /ui or /ui-dark so the UI follows system light/dark mode. Preserves query string
+   * and hash so project/file params and tab state recovery are not lost.
+   */
+  private void runSystemThemeRedirectCheck(boolean onDarkPath) {
+    String script =
+        "var onDark = "
+            + onDarkPath
+            + "; var wantsDark = window.matchMedia('(prefers-color-scheme: dark)').matches;"
+            + " if (wantsDark !== onDark) { var base = window.location.pathname.replace(/\\/ui-dark$|\\/ui$/, '');"
+            + " if (base.length && !base.endsWith('/')) base += '/';"
+            + " var q = window.location.search || ''; var h = window.location.hash || '';"
+            + " window.location.href = (base || '/') + (wantsDark ? 'ui-dark' : 'ui') + q + h; }";
+    try {
+      JavaScriptExecutor executor = RWT.getClient().getService(JavaScriptExecutor.class);
+      executor.execute(script);
+    } catch (Exception e) {
+      LogChannel.UI.logDebug("Could not run system theme redirect check", e);
+    }
+  }
+
+  /**
+   * Redirect the browser to /ui or /ui-dark so the theme takes effect. Preserves the current query
+   * string and hash so project, user, file params (and thus namespace and tab state recovery) are
+   * not lost.
+   */
+  private void redirectToTheme(boolean dark) {
+    String contextPath = "";
+    try {
+      if (RWT.getRequest() != null && RWT.getRequest().getContextPath() != null) {
+        contextPath = RWT.getRequest().getContextPath();
+      }
+    } catch (Exception ignored) {
+      // ignore
+    }
+    if (!contextPath.endsWith("/")) {
+      contextPath += "/";
+    }
+    String path = dark ? "ui-dark" : "ui";
+    String url = contextPath + path;
+    String escaped = url.replace("\\", "\\\\").replace("'", "\\'");
+    // Preserve query string and hash so project/file/user params survive redirect and tab state can
+    // be restored
+    JavaScriptExecutor executor = RWT.getClient().getService(JavaScriptExecutor.class);
+    executor.execute(
+        "var q = window.location.search || ''; var h = window.location.hash || '';"
+            + " window.location.href = '"
+            + escaped
+            + "' + q + h;");
+  }
+
+  /** Save the user's theme preference to the audit folder (per-user when authenticated). */
+  private void saveThemePreferenceToAudit(boolean darkMode) {
+    saveThemePreferenceToAudit(false, Boolean.valueOf(darkMode));
+  }
+
+  /**
+   * Save theme preference to audit. When followSystem is true, darkMode is ignored (can be null).
+   */
+  private void saveThemePreferenceToAudit(boolean followSystem, Boolean darkMode) {
+    Map<String, Object> state = new HashMap<>();
+    state.put(AUDIT_KEY_FOLLOW_SYSTEM, Boolean.valueOf(followSystem));
+    if (darkMode != null) {
+      state.put(AUDIT_KEY_DARK_MODE, darkMode);
+    }
+    AuditManager.storeState(
+        LogChannel.UI, AUDIT_GROUP_HOP_WEB, AUDIT_TYPE_PREFERENCES, AUDIT_NAME_THEME, state);
+  }
+
+  /**
+   * Build keyboard shortcuts for RAP from all @GuiKeyboardShortcut and @GuiOsxKeyboardShortcut
+   * annotations
+   *
+   * @return Array of shortcut strings in RAP format (e.g., "CTRL+C", "ALT+F1")
+   */
+  private String[] buildKeyboardShortcuts() {
+    Set<String> shortcuts = new HashSet<>();
+
+    // Get all keyboard shortcuts from GuiRegistry
+    GuiRegistry registry = GuiRegistry.getInstance();
+    Map<String, List<KeyboardShortcut>> allShortcuts = registry.getAllKeyboardShortcuts();
+
+    if (allShortcuts == null) {
+      return new String[0];
+    }
+
+    // Convert each shortcut to RAP format. Only include shortcuts for the client's OS so macOS
+    // users get Cmd-based shortcuts and others get Ctrl-based.
+    boolean clientIsMac = Const.isOSX();
+    for (Map.Entry<String, List<KeyboardShortcut>> entry : allShortcuts.entrySet()) {
+      List<KeyboardShortcut> shortcutList = entry.getValue();
+      if (shortcutList != null) {
+        for (KeyboardShortcut shortcut : shortcutList) {
+          if (shortcut.isOsx() != clientIsMac) {
+            continue;
+          }
+          String rapShortcut = convertToRapFormat(shortcut);
+          if (rapShortcut != null && !rapShortcut.isEmpty()) {
+            shortcuts.add(rapShortcut);
+          }
+        }
+      }
+    }
+
+    return shortcuts.toArray(new String[0]);
+  }
+
+  static String[] buildCancelledKeyboardShortcuts(String[] activeShortcuts) {
+    return Arrays.stream(activeShortcuts)
+        .filter(shortcut -> !NATIVE_TEXT_EDITING_SHORTCUTS.contains(shortcut))
+        .filter(shortcut -> !NATIVE_TEXT_NAVIGATION_KEYS.contains(shortcut))
+        .distinct()
+        .toArray(String[]::new);
+  }
+
+  /**
+   * Whether this shortcut is a plain character - a letter, a digit, punctuation or space - with no
+   * CTRL, ALT, SHIFT or command held down.
+   */
+  private static boolean isUnmodifiedPrintableCharacter(KeyboardShortcut shortcut, int keyCode) {
+    if (shortcut.isAlt() || shortcut.isControl() || shortcut.isCommand() || shortcut.isShift()) {
+      return false;
+    }
+    // Special keys (F1, arrows, HOME, ...) have bit 24 set and type nothing, so they are fine.
+    return keyCode >= 32 && keyCode < 127;
+  }
+
+  /**
+   * Convert a KeyboardShortcut to RAP format for ACTIVE_KEYS / CANCEL_KEYS. RAP only supports CTRL,
+   * ALT, SHIFT (not META), so we use CTRL+ for all command/control shortcuts; on Mac the browser
+   * typically maps Cmd to CTRL when sending to the server.
+   *
+   * @param shortcut The keyboard shortcut to convert
+   * @return RAP format string (e.g., "CTRL+C", "ALT+SHIFT+F1") or null if invalid
+   */
+  String convertToRapFormat(KeyboardShortcut shortcut) {
+    if (shortcut.getKeyCode() == 0) {
+      return null;
+    }
+
+    int keyCode = shortcut.getKeyCode();
+    // Never register a shortcut that is a printable character with no modifier held. RAP cancels
+    // the browser's own handling of every key it is told about, so registering one takes that
+    // character away from typing everywhere in Hop Web, whatever has the focus: the bare "z" that
+    // opens a referenced object on the pipeline canvas made it impossible to type the letter z
+    // anywhere, and searching the context dialog for "fuzzy match" arrived as "fuy match".
+    //
+    // Nothing is lost that a browser could have delivered: the key handler already refuses to act
+    // on an unmodified printable character while a text widget has the focus, so such a shortcut
+    // could only ever have fired on a canvas - and there is no way to tell the browser to cancel
+    // the key in one place and not in another.
+    if (isUnmodifiedPrintableCharacter(shortcut, keyCode)) {
+      return null;
+    }
+
+    StringBuilder sb = new StringBuilder();
+
+    if (shortcut.isAlt()) {
+      sb.append("ALT+");
+    }
+    if (shortcut.isControl() || shortcut.isCommand()) {
+      sb.append("CTRL+");
+    }
+    if (shortcut.isShift()) {
+      sb.append("SHIFT+");
+    }
+
+    // Convert keyCode to character or special key name
+    // Character keys (a-z, A-Z)
+    if (keyCode >= 65 && keyCode <= 90) {
+      sb.append((char) keyCode);
+    } else if (keyCode >= 97 && keyCode <= 122) {
+      sb.append(Character.toUpperCase((char) keyCode));
+    }
+    // Digit keys (0-9)
+    else if (keyCode >= 48 && keyCode <= 57) {
+      sb.append((char) keyCode);
+    }
+    // Special characters
+    else if (keyCode == '+'
+        || keyCode == '-'
+        || keyCode == '*'
+        || keyCode == '/'
+        || keyCode == '=') {
+      sb.append((char) keyCode);
+    }
+    // SWT special keys (have bit 24 set)
+    else if ((keyCode & (1 << 24)) != 0) {
+      String specialKey = convertSwtKeyToRap(keyCode & 0xFFFF);
+      if (specialKey != null) {
+        sb.append(specialKey);
+      } else {
+        return null; // Unknown special key
+      }
+    }
+    // DEL key
+    else if (keyCode == SWT.DEL || keyCode == 127) {
+      sb.append("DEL");
+    }
+    // ESC key
+    else if (keyCode == SWT.ESC || keyCode == 27) {
+      sb.append("ESC");
+    }
+    // Space
+    else if (keyCode == ' ' || keyCode == 32) {
+      sb.append("SPACE");
+    } else {
+      // Unknown key code, skip it
+      return null;
+    }
+
+    return sb.toString();
+  }
+
+  /**
+   * Convert SWT special key codes to RAP format
+   *
+   * @param swtKey SWT key code (with bit 24 masked off)
+   * @return RAP key name or null if not supported
+   */
+  private String convertSwtKeyToRap(int swtKey) {
+    switch (swtKey) {
+      case 1:
+        return "ARROW_UP";
+      case 2:
+        return "ARROW_DOWN";
+      case 3:
+        return "ARROW_LEFT";
+      case 4:
+        return "ARROW_RIGHT";
+      case 5:
+        return "PAGE_UP";
+      case 6:
+        return "PAGE_DOWN";
+      case 7:
+        return "HOME";
+      case 8:
+        return "END";
+      case 9:
+        return "INSERT";
+      case 10:
+        return "F1";
+      case 11:
+        return "F2";
+      case 12:
+        return "F3";
+      case 13:
+        return "F4";
+      case 14:
+        return "F5";
+      case 15:
+        return "F6";
+      case 16:
+        return "F7";
+      case 17:
+        return "F8";
+      case 18:
+        return "F9";
+      case 19:
+        return "F10";
+      case 20:
+        return "F11";
+      case 21:
+        return "F12";
+      default:
+        return null;
+    }
+  }
+}

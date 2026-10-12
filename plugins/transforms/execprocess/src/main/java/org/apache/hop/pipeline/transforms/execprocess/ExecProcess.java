@@ -1,0 +1,433 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.pipeline.transforms.execprocess;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.row.RowDataUtil;
+import org.apache.hop.i18n.BaseMessages;
+import org.apache.hop.pipeline.Pipeline;
+import org.apache.hop.pipeline.PipelineMeta;
+import org.apache.hop.pipeline.transform.BaseTransform;
+import org.apache.hop.pipeline.transform.TransformMeta;
+
+/** Execute a process * */
+public class ExecProcess extends BaseTransform<ExecProcessMeta, ExecProcessData> {
+
+  private static final Class<?> PKG = ExecProcessMeta.class;
+  public static final String CONST_EXEC_PROCESS_EXCEPTION_COULD_NOT_FIND_FIELD =
+      "ExecProcess.Exception.CouldNotFindField";
+  private boolean killing;
+  private CountDownLatch waitForLatch;
+
+  public ExecProcess(
+      TransformMeta transformMeta,
+      ExecProcessMeta meta,
+      ExecProcessData data,
+      int copyNr,
+      PipelineMeta pipelineMeta,
+      Pipeline pipeline) {
+    super(transformMeta, meta, data, copyNr, pipelineMeta, pipeline);
+  }
+
+  @Override
+  public boolean processRow() throws HopException {
+    // Get row from input rowset & set row busy!
+    Object[] r = getRow();
+    // no more input to be expected...
+    if (r == null) {
+      setOutputDone();
+      return false;
+    }
+
+    if (first) {
+      first = false;
+      initializeAndLookup();
+    }
+
+    Object[] outputRow = RowDataUtil.createResizedCopy(r, data.outputRowMeta.size());
+
+    // get process to execute
+    String processString = getInputRowMeta().getString(r, data.indexOfProcess);
+    if (StringUtils.isEmpty(processString)) {
+      throw new HopException(BaseMessages.getString(PKG, "ExecProcess.ProcessEmpty"));
+    }
+
+    ProcessResult processResult = new ProcessResult();
+
+    try {
+      // execute and return result
+      if (meta.isArgumentsInFields()) {
+        List<String> cmdArray = new ArrayList<>();
+        cmdArray.add(processString);
+
+        for (int argumentIndex : data.argumentIndexes) {
+          // Runtime.exec will fail on null array elements
+          // Convert to an empty string if value is null
+          String argString = getInputRowMeta().getString(r, argumentIndex);
+          cmdArray.add(Const.NVL(argString, ""));
+        }
+
+        execProcess(cmdArray.toArray(new String[0]), processResult);
+      } else {
+        if (isDetailed() && !hasBalancedQuotes(processString)) {
+          logDetailed(
+              BaseMessages.getString(PKG, "ExecProcess.Log.UnbalancedQuotes", processString));
+        }
+        execProcess(tokenizeCommandLine(processString), processResult);
+      }
+
+      if (meta.isFailWhenNotSuccess() && processResult.getExitValue() != 0) {
+        String errorString = processResult.getErrorStream();
+        if (StringUtils.isEmpty(errorString)) {
+          errorString = processResult.getOutputStream();
+        }
+        throw new HopException(errorString);
+      }
+
+      // Add result field to input stream
+      int rowIndex = getInputRowMeta().size();
+      outputRow[rowIndex++] = processResult.getOutputStream();
+
+      // Add result field to input stream
+      outputRow[rowIndex++] = processResult.getErrorStream();
+
+      // Add result field to input stream
+      outputRow[rowIndex] = processResult.getExitValue();
+
+      // add new values to the row. copy row to output rowset(s)
+      putRow(data.outputRowMeta, outputRow);
+
+      if (isRowLevel()) {
+        logRowlevel(
+            BaseMessages.getString(
+                PKG,
+                "ExecProcess.LineNumber",
+                getLinesRead() + " : " + data.outputRowMeta.getString(outputRow)));
+      }
+    } catch (HopException e) {
+      if (getTransformMeta().isDoingErrorHandling()) {
+        putError(
+            getInputRowMeta(), r, 1, e.toString(), meta.getResultFieldName(), "ExecProcess001");
+      } else {
+        logError(
+            BaseMessages.getString(PKG, "ExecProcess.ErrorInTransformRunning") + e.getMessage());
+        setErrors(1);
+        stopAll();
+        setOutputDone(); // signal end to receiver(s)
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private void initializeAndLookup() throws HopException {
+    // Calculate the output row metadata.
+    //
+    data.outputRowMeta = getInputRowMeta().clone();
+    meta.getFields(data.outputRowMeta, getTransformName(), null, null, this, metadataProvider);
+
+    // Check if a process field name is provided
+    //
+    if (StringUtils.isEmpty(meta.getProcessField())) {
+      logError(BaseMessages.getString(PKG, "ExecProcess.Error.ProcessFieldMissing"));
+      throw new HopException(BaseMessages.getString(PKG, "ExecProcess.Error.ProcessFieldMissing"));
+    }
+
+    // cache the position of the field
+    if (data.indexOfProcess < 0) {
+      data.indexOfProcess = getInputRowMeta().indexOfValue(meta.getProcessField());
+      if (data.indexOfProcess < 0) {
+        // The field is unreachable !
+        logError(
+            BaseMessages.getString(PKG, CONST_EXEC_PROCESS_EXCEPTION_COULD_NOT_FIND_FIELD)
+                + "["
+                + meta.getProcessField()
+                + "]");
+        throw new HopException(
+            BaseMessages.getString(
+                PKG, CONST_EXEC_PROCESS_EXCEPTION_COULD_NOT_FIND_FIELD, meta.getProcessField()));
+      }
+    }
+    if (meta.isArgumentsInFields() && data.argumentIndexes == null) {
+      data.argumentIndexes = new ArrayList<>();
+      for (ExecProcessMeta.EPField field : meta.getArgumentFields()) {
+        String fieldName = field.getName();
+        int argumentIndex = getInputRowMeta().indexOfValue(fieldName);
+        if (argumentIndex < 0) {
+          logError(
+              BaseMessages.getString(PKG, CONST_EXEC_PROCESS_EXCEPTION_COULD_NOT_FIND_FIELD)
+                  + "["
+                  + fieldName
+                  + "]");
+          throw new HopException(
+              BaseMessages.getString(
+                  PKG, CONST_EXEC_PROCESS_EXCEPTION_COULD_NOT_FIND_FIELD, fieldName));
+        }
+        data.argumentIndexes.add(argumentIndex);
+      }
+    }
+  }
+
+  @Override
+  public void stopRunning() throws HopException {
+    if (waitForLatch != null) {
+      killing = true;
+      try {
+        waitForLatch.await();
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new HopException("Interrupted exception while kill the process", e);
+      }
+    }
+  }
+
+  private void execProcess(String[] process, ProcessResult processresult) throws HopException {
+    Process p = null;
+    waitForLatch = new CountDownLatch(1);
+    try {
+      String errorMsg = null;
+      // execute process
+      try {
+        p = data.runtime.exec(process);
+      } catch (Exception e) {
+        errorMsg = e.getMessage();
+      }
+      if (p == null) {
+        processresult.setErrorStream(errorMsg);
+      } else {
+        final Process child = p;
+        // Drain stdout/stderr while the process runs. Reading only after onExit() can deadlock:
+        // if the child fills either pipe buffer before exiting, it blocks on write forever.
+        CompletableFuture<String> stdoutFuture =
+            CompletableFuture.supplyAsync(
+                () -> {
+                  try {
+                    return getOutputString(
+                        new BufferedReader(new InputStreamReader(child.getInputStream())));
+                  } catch (IOException e) {
+                    throw new CompletionException(e);
+                  }
+                });
+        CompletableFuture<String> stderrFuture =
+            CompletableFuture.supplyAsync(
+                () -> {
+                  try {
+                    return getOutputString(
+                        new BufferedReader(new InputStreamReader(child.getErrorStream())));
+                  } catch (IOException e) {
+                    throw new CompletionException(e);
+                  }
+                });
+
+        while (true) {
+          try {
+            if (child.waitFor(1, TimeUnit.SECONDS)) {
+              break;
+            }
+          } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new HopException(
+                "Interrupted exception while running the process " + Arrays.toString(process) + "!",
+                ie);
+          }
+          if (killing) {
+            child.children().forEach(ProcessHandle::destroy);
+            if (child.isAlive()) {
+              child.destroy();
+            }
+            try {
+              if (!child.waitFor(30, TimeUnit.SECONDS)) {
+                child.destroyForcibly();
+                child.waitFor();
+              }
+            } catch (InterruptedException ie) {
+              Thread.currentThread().interrupt();
+              throw new HopException(
+                  "Interrupted exception while running the process "
+                      + Arrays.toString(process)
+                      + "!",
+                  ie);
+            }
+            logMinimal(BaseMessages.getString(PKG, "ExecProcess.AbortProcess"));
+            break;
+          }
+        }
+
+        try {
+          processresult.setOutputStream(stdoutFuture.get());
+          processresult.setErrorStream(stderrFuture.get());
+        } catch (ExecutionException e) {
+          Throwable cause = e.getCause();
+          if (cause instanceof IOException ioe) {
+            throw ioe;
+          }
+          if (cause instanceof RuntimeException re) {
+            throw re;
+          }
+          throw new IOException(cause);
+        } catch (InterruptedException ie) {
+          Thread.currentThread().interrupt();
+          throw new HopException(
+              "Interrupted exception while running the process " + Arrays.toString(process) + "!",
+              ie);
+        }
+
+        processresult.setExitValue(child.exitValue());
+      }
+    } catch (IOException ioe) {
+      throw new HopException(
+          "IO exception while running the process " + Arrays.toString(process) + "!", ioe);
+    } catch (Exception e) {
+      throw new HopException(e);
+    } finally {
+      if (killing || waitForLatch.getCount() > 0) {
+        waitForLatch.countDown();
+        killing = false;
+      }
+      if (p != null) {
+        p.destroy();
+      }
+    }
+  }
+
+  /**
+   * Split a command line into the executable and its arguments. Tokens are separated by whitespace,
+   * but a section wrapped in single or double quotes is kept together as one token even when it
+   * contains whitespace, and the quotes themselves are removed - the way a shell would do it.
+   *
+   * <p>Quoting is positional, so quoted and unquoted parts that touch each other end up in the same
+   * token: {@code --path="/my folder"} yields the single argument {@code --path=/my folder}. There
+   * is no backslash escaping: on Windows a backslash is a path separator, so {@code C:\my dir}
+   * keeps its backslashes and needs quotes to survive the space.
+   *
+   * <p>Quotes only take effect when they are balanced, see {@link #hasBalancedQuotes(String)}.
+   */
+  static String[] tokenizeCommandLine(String command) throws HopException {
+    List<String> tokens = tokenize(command, hasBalancedQuotes(command));
+    if (tokens.isEmpty()) {
+      throw new HopException(BaseMessages.getString(PKG, "ExecProcess.ProcessEmpty"));
+    }
+    return tokens.toArray(new String[0]);
+  }
+
+  /**
+   * Whether every single and double quote in the command line is closed again.
+   *
+   * <p>When they are not, we can't tell a mis-typed quote from a quote character that is simply
+   * part of an argument, so the command line is split on whitespace only and the quotes are left in
+   * place - what every Hop version up to 2.18 did with any command line. That keeps a stray
+   * apostrophe ({@code --message=don't}) working instead of turning it into a failing row.
+   */
+  static boolean hasBalancedQuotes(String command) {
+    char quote = 0;
+    for (int i = 0; i < command.length(); i++) {
+      char c = command.charAt(i);
+      if (quote != 0) {
+        if (c == quote) {
+          quote = 0;
+        }
+      } else if (c == '\'' || c == '"') {
+        quote = c;
+      }
+    }
+    return quote == 0;
+  }
+
+  private static List<String> tokenize(String command, boolean respectQuotes) {
+    List<String> tokens = new ArrayList<>();
+    StringBuilder token = new StringBuilder();
+    boolean inToken = false;
+    char quote = 0;
+
+    for (int i = 0; i < command.length(); i++) {
+      char c = command.charAt(i);
+      if (quote != 0) {
+        // Inside quotes everything is literal until the matching quote shows up
+        if (c == quote) {
+          quote = 0;
+        } else {
+          token.append(c);
+        }
+      } else if (respectQuotes && (c == '\'' || c == '"')) {
+        quote = c;
+        inToken = true;
+      } else if (Character.isWhitespace(c)) {
+        if (inToken) {
+          tokens.add(token.toString());
+          token.setLength(0);
+          inToken = false;
+        }
+      } else {
+        token.append(c);
+        inToken = true;
+      }
+    }
+
+    if (inToken) {
+      tokens.add(token.toString());
+    }
+    return tokens;
+  }
+
+  private String getOutputString(BufferedReader b) throws IOException {
+    StringBuilder returnValueBuffer = new StringBuilder();
+    String line;
+    String delim = meta.getOutputLineDelimiter();
+    if (delim == null) {
+      delim = "";
+    } else {
+      delim = resolve(delim);
+    }
+
+    while ((line = b.readLine()) != null) {
+      if (!returnValueBuffer.isEmpty()) {
+        returnValueBuffer.append(delim);
+      }
+      returnValueBuffer.append(line);
+    }
+    return returnValueBuffer.toString();
+  }
+
+  @Override
+  public boolean init() {
+
+    if (super.init()) {
+      if (StringUtils.isEmpty(meta.getResultFieldName())) {
+        logError(BaseMessages.getString(PKG, "ExecProcess.Error.ResultFieldMissing"));
+        return false;
+      }
+      data.runtime = Runtime.getRuntime();
+      return true;
+    }
+    return false;
+  }
+}

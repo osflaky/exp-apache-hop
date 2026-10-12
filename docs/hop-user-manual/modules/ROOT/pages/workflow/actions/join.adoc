@@ -1,0 +1,57 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+:documentationPath: /workflow/actions/
+:language: en_US
+:description: The Join action waits for parallel branches.
+
+== Join Action
+
+=== Description
+
+The *Join* action is used to synchronize parallel branches in a workflow. It acts as a control point that *waits for all preceding parallel branches at the same level* to complete before continuing with the next action(s). 
+
+This eliminates the need to create separate child workflows solely for the purpose of joining and continuing execution after parallel tasks have completed.
+
+=== Usage
+
+Traditionally in Apache Hop, if you wanted to run parts of a workflow in parallel and then continue with a sequential flow, you would isolate those parallel sections in a child workflow. This was necessary to prevent downstream actions from being executed prematurely.
+
+With the new *Join* action, this workaround is no longer needed.
+
+To use the Join action:
+
+. Configure your workflow with multiple outgoing hops from a single action.
+. Enable *parallel execution* on the outgoing hops you want to run in parallel.
+. Add the *Join* action at the point where all parallel branches converge.
+. Connect all parallel branches to the *Join* action with regular (non-parallel) hops.
+. Connect the *Join* action to the next action you want to execute *after all parallel tasks have finished*.
+
+=== Example Workflow Structure
+
+When executed:
+
+image:how-to-guides/parallel-workflows/continue-in-parallel-join.png[Using the join action instead of a child workflow, width="65%"]
+
+* The actions `pipeline-1`, `pipeline-2` and `pipeline-3` run in parallel.
+* The `join` action waits until `pipeline-1`, `pipeline-2` and `pipeline-3` are finished.
+* Once they complete, the workflow continues with final action `check-datasets`.
+
+=== Benefits
+
+* *Simplifies parallel execution:* No need for a separate child workflow just to coordinate branches.
+* *Improves readability:* Your parallel and sequential logic can be maintained in a single workflow.
+* *Increases maintainability:* Fewer components and external dependencies (child workflows) to manage.

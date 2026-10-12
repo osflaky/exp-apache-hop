@@ -1,0 +1,194 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.ui.core;
+
+import org.eclipse.swt.SWT;
+import org.eclipse.swt.layout.FormAttachment;
+import org.eclipse.swt.layout.FormData;
+import org.eclipse.swt.widgets.Control;
+
+/**
+ * Builder class for creating and configuring {@link FormData} instances using a fluent API.
+ *
+ * <p>Example usage:
+ *
+ * <pre>{@code
+ * FormData fd = FormDataBuilder.builder()
+ *     .left()
+ *     .top()
+ *     .fullWidth()
+ *     .build();
+ * }</pre>
+ */
+public class FormDataBuilder implements Cloneable {
+
+  private static final FormAttachment MIN = new FormAttachment(0, 0);
+  private static final FormAttachment MAX = new FormAttachment(100, 0);
+
+  protected FormData fd = new FormData();
+
+  /**
+   * Static factory method for creating a new builder instance.
+   *
+   * @return create FormDataBuilder
+   */
+  public static FormDataBuilder builder() {
+    return new FormDataBuilder();
+  }
+
+  public FormData build() {
+    return fd;
+  }
+
+  public FormDataBuilder width(int width) {
+    fd.width = width;
+    return this;
+  }
+
+  public FormDataBuilder height(int height) {
+    fd.height = height;
+    return this;
+  }
+
+  public FormDataBuilder left(int p1, int p2) {
+    fd.left = new FormAttachment(p1, p2);
+    return this;
+  }
+
+  public FormDataBuilder right(int p1, int p2) {
+    fd.right = new FormAttachment(p1, p2);
+    return this;
+  }
+
+  public FormDataBuilder top(int p1, int p2) {
+    fd.top = new FormAttachment(p1, p2);
+    return this;
+  }
+
+  public FormDataBuilder bottom(int p1, int p2) {
+    fd.bottom = new FormAttachment(p1, p2);
+    return this;
+  }
+
+  public FormDataBuilder left(FormAttachment fa) {
+    fd.left = fa;
+    return this;
+  }
+
+  public FormDataBuilder right(FormAttachment fa) {
+    fd.right = fa;
+    return this;
+  }
+
+  public FormDataBuilder top(FormAttachment fa) {
+    fd.top = fa;
+    return this;
+  }
+
+  public FormDataBuilder bottom(FormAttachment fa) {
+    fd.bottom = fa;
+    return this;
+  }
+
+  public FormDataBuilder left(Control control, int margin) {
+    return left(new FormAttachment(control, margin));
+  }
+
+  public FormDataBuilder top(Control control, int margin) {
+    return top(new FormAttachment(control, margin));
+  }
+
+  public FormDataBuilder left(Control control, int margin, int alignment) {
+    return left(new FormAttachment(control, margin, alignment));
+  }
+
+  public FormDataBuilder right(Control control, int margin, int alignment) {
+    return right(new FormAttachment(control, margin, alignment));
+  }
+
+  public FormDataBuilder top(Control control, int margin, int alignment) {
+    return top(new FormAttachment(control, margin, alignment));
+  }
+
+  public FormDataBuilder bottom(Control control, int margin) {
+    return bottom(new FormAttachment(control, margin));
+  }
+
+  /**
+   * Sets the bottom attachment of this {@code FormDataBuilder} relative to the specified control.
+   *
+   * <p>The bottom edge will be attached to the given {@link Control} with the specified margin and
+   * alignment.
+   *
+   * @param control the reference control to which the bottom edge will be attached; must not be
+   *     {@code null}
+   * @param margin the offset in pixels from the specified control
+   * @param alignment the alignment relative to the control (for example, {@link SWT#TOP}, {@link
+   *     SWT#BOTTOM}, or {@link SWT#CENTER})
+   * @return this {@code FormDataBuilder} instance for method chaining
+   */
+  public FormDataBuilder bottom(Control control, int margin, int alignment) {
+    return bottom(new FormAttachment(control, margin, alignment));
+  }
+
+  public FormDataBuilder right(Control control, int margin) {
+    return right(new FormAttachment(control, margin));
+  }
+
+  public FormDataBuilder left() {
+    return left(MIN);
+  }
+
+  public FormDataBuilder right() {
+    return right(MAX);
+  }
+
+  public FormDataBuilder top() {
+    return top(MIN);
+  }
+
+  public FormDataBuilder bottom() {
+    return bottom(MAX);
+  }
+
+  public FormDataBuilder top(Control control) {
+    return top(control, ConstUi.SMALL_MARGIN);
+  }
+
+  public FormDataBuilder fullWidth() {
+    return percentWidth(100);
+  }
+
+  public FormDataBuilder percentWidth(int width) {
+    return left().right(width, 0);
+  }
+
+  public FormDataBuilder fullSize() {
+    return fullWidth().top().bottom();
+  }
+
+  public FormData result() {
+    return fd;
+  }
+
+  @Override
+  protected FormDataBuilder clone() {
+    FormDataBuilder res = new FormDataBuilder();
+    return res.left(fd.left).right(fd.right).top(fd.top).bottom(fd.bottom);
+  }
+}

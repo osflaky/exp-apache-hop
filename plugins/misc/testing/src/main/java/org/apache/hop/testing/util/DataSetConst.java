@@ -1,0 +1,681 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.testing.util;
+
+import com.google.common.math.DoubleMath;
+import java.math.RoundingMode;
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.exception.HopRuntimeException;
+import org.apache.hop.core.exception.HopValueException;
+import org.apache.hop.core.logging.ILogChannel;
+import org.apache.hop.core.row.IRowMeta;
+import org.apache.hop.core.row.IValueMeta;
+import org.apache.hop.core.row.RowMeta;
+import org.apache.hop.core.variables.IVariables;
+import org.apache.hop.i18n.BaseMessages;
+import org.apache.hop.metadata.api.IHopMetadataProvider;
+import org.apache.hop.pipeline.PipelineMeta;
+import org.apache.hop.pipeline.engine.IPipelineEngine;
+import org.apache.hop.testing.DataSet;
+import org.apache.hop.testing.PipelineTweak;
+import org.apache.hop.testing.PipelineUnitTest;
+import org.apache.hop.testing.PipelineUnitTestFieldMapping;
+import org.apache.hop.testing.PipelineUnitTestSetLocation;
+import org.apache.hop.testing.TestType;
+import org.apache.hop.testing.UnitTestResult;
+import org.apache.hop.testing.xp.RowCollection;
+
+public class DataSetConst {
+  private static final Class<?> PKG = DataSetConst.class;
+
+  public static final String DATABASE_FACTORY_KEY = "DatabaseMetaFactory";
+  public static final String GROUP_FACTORY_KEY = "DataSetGroupFactory";
+  public static final String SET_FACTORY_KEY = "DataSetFactory";
+
+  // Variables during execution to indicate the selected test to run
+  //
+  public static final String VAR_RUN_UNIT_TEST = "__UnitTest_Run__";
+  public static final String VAR_UNIT_TEST_NAME = "__UnitTest_Name__";
+  public static final String VAR_WRITE_TO_DATASET = "__UnitTest_WriteDataSet__";
+  public static final String VAR_DO_NOT_SHOW_UNIT_TEST_ERRORS =
+      "__UnitTest_DontShowUnitTestErrors__";
+
+  public static final String AREA_DRAWN_UNIT_TEST_ICON = "Drawn_UnitTestIcon";
+  public static final String AREA_DRAWN_UNIT_TEST_NAME = "Drawn_UnitTestName";
+  public static final String AREA_DRAWN_INPUT_DATA_SET = "Input_DataSet";
+  public static final String AREA_DRAWN_GOLDEN_DATA_SET = "Golden_DataSet";
+  public static final String AREA_DRAWN_GOLDEN_DATA_RESULT = "Golden_DataSet_Result";
+
+  public static final String ROW_COLLECTION_MAP = "RowCollectionMap";
+  public static final String UNIT_TEST_RESULTS = "UnitTestResults";
+
+  public static final String VARIABLE_HOP_UNIT_TESTS_FOLDER = "HOP_UNIT_TESTS_FOLDER";
+
+  public static final String STATE_KEY_GOLDEN_DATASET_RESULTS = "GoldenDataSetResults";
+  public static final String STATE_KEY_ACTIVE_UNIT_TEST = "ActiveUnitTest";
+
+  /**
+   * Keys of unit-test variables currently applied to the pipeline graph variable space
+   * (design-time). Value type: {@code Set<String>}.
+   */
+  public static final String STATE_KEY_APPLIED_UNIT_TEST_VARIABLES = "AppliedUnitTestVariables";
+
+  /**
+   * In-memory transform renames that have not been saved to the unit test metadata yet. Value type:
+   * {@code List<UnitTestTransformRenames.Rename>}.
+   */
+  public static final String STATE_KEY_PENDING_TRANSFORM_RENAMES =
+      "UnitTestPendingTransformRenames";
+
+  /**
+   * Fallback mask when a Number/BigNumber field has no length/precision. Optional digits so 1 and
+   * 1.0 compare equal, with enough fraction digits to keep values distinguishable.
+   */
+  public static final String NUMERIC_COMPARE_MASK_DEFAULT =
+      "##########.#########;-###########.########";
+
+  /**
+   * Historical tolerance used when a Number/BigNumber field has no declared length/precision.
+   * Matches the previous {@code DoubleMath.fuzzyEquals} epsilon of 1 millionth.
+   */
+  public static final double NUMERIC_COMPARE_EPSILON = 0.000001d;
+
+  private static final String[] tweakDesc =
+      new String[] {
+        BaseMessages.getString(PKG, "DataSetConst.Tweak.NONE.Desc"),
+        BaseMessages.getString(PKG, "DataSetConst.Tweak.BYPASS_TRANSFORM.Desc"),
+        BaseMessages.getString(PKG, "DataSetConst.Tweak.REMOVE_TRANSFORM.Desc"),
+      };
+
+  private static final String[] testTypeDesc =
+      new String[] {
+        BaseMessages.getString(PKG, "DataSetConst.TestType.DEVELOPMENT.Desc"),
+        BaseMessages.getString(PKG, "DataSetConst.TestType.UNIT_TEST.Desc"),
+      };
+
+  /**
+   * Validate the execution results of a pipeline against the golden data sets of a unit test.
+   *
+   * @param pipeline The pipeline after execution
+   * @param unitTest The unit test
+   * @param metadataProvider The MetaStore to use
+   * @param results The results list to add comments to
+   * @return The nr of errors, 0 if no errors found
+   * @throws HopException In case there was an error loading data or metadata.
+   */
+  public static int validateTransformResultAgainstUnitTest(
+      IPipelineEngine<PipelineMeta> pipeline,
+      PipelineUnitTest unitTest,
+      IHopMetadataProvider metadataProvider,
+      IVariables variables,
+      List<UnitTestResult> results)
+      throws HopException {
+    int nrErrors = 0;
+
+    ILogChannel log = pipeline.getLogChannel();
+
+    Map<String, RowCollection> collectionMap =
+        (Map<String, RowCollection>)
+            pipeline.getExtensionDataMap().get(DataSetConst.ROW_COLLECTION_MAP);
+    if (collectionMap == null) {
+
+      String comment = "No transform output result data found to validate against";
+      results.add(
+          new UnitTestResult(
+              pipeline.getPipelineMeta().getName(),
+              unitTest.getName(),
+              null,
+              null,
+              false,
+              comment));
+      return nrErrors;
+    }
+
+    for (PipelineUnitTestSetLocation location : unitTest.getGoldenDataSets()) {
+
+      // Sometimes we deleted a transform and it's still in the list:
+      // Simply skip that one
+      //
+      if (pipeline.getPipelineMeta().findTransform(location.getTransformName()) == null) {
+        continue;
+      }
+
+      int nrLocationErrors = 0;
+      RowCollection resultCollection = collectionMap.get(location.getTransformName());
+      if (resultCollection == null
+          || resultCollection.getRows() == null
+          || resultCollection.getRowMeta() == null) {
+        // error occurred somewhere, we don't have results, provide dummy values to avoid
+        // exceptions, flag error
+        //
+        resultCollection = new RowCollection();
+        resultCollection.setRowMeta(new RowMeta());
+        resultCollection.setRows(new ArrayList<>());
+
+        String comment =
+            "WARNING: no test results found for transform '"
+                + location.getTransformName()
+                + "' : check disabled hops, input and so on.";
+        results.add(
+            new UnitTestResult(
+                pipeline.getPipelineMeta().getName(),
+                unitTest.getName(),
+                location.getDataSetName(),
+                location.getTransformName(),
+                false,
+                comment));
+      }
+      final IRowMeta resultRowMeta = resultCollection.getRowMeta();
+
+      log.logDetailed(
+          "Found "
+              + resultCollection.getRows().size()
+              + " results for data comparing in transform '"
+              + location.getTransformName()
+              + "', fields: "
+              + resultRowMeta.toString());
+
+      DataSet goldenDataSet = unitTest.getGoldenDataSet(log, metadataProvider, variables, location);
+      List<Object[]> goldenRows = goldenDataSet.getAllRows(pipeline, log, location);
+      IRowMeta goldenRowMeta = goldenDataSet.getMappedDataSetFieldsRowMeta(location);
+
+      log.logDetailed(
+          "Found "
+              + goldenRows.size()
+              + " golden rows '"
+              + location.getTransformName()
+              + "', fields: "
+              + goldenRowMeta);
+
+      List<Object[]> resultRows = resultCollection.getRows();
+
+      if (resultRows.size() != goldenRows.size()) {
+        String comment =
+            "Incorrect number of rows received from transform, golden data set '"
+                + location.getDataSetName()
+                + "' has "
+                + goldenRows.size()
+                + " rows in it and we received "
+                + resultRows.size();
+        results.add(
+            new UnitTestResult(
+                pipeline.getPipelineMeta().getName(),
+                unitTest.getName(),
+                location.getDataSetName(),
+                location.getTransformName(),
+                true,
+                comment));
+        nrLocationErrors++;
+      } else {
+        // To compare the 2 data sets they need to be explicitly sorted on the same keys
+        // The added problem is that the user provided a field mapping.
+        // So for every "location field order" we need to find the transform source field
+        //
+        // Sort transform result rows
+        //
+        boolean hasSortOrder =
+            !location.getFieldOrder().isEmpty()
+                && StringUtils.isNotEmpty(location.getFieldOrder().getFirst());
+        if (hasSortOrder) {
+          final int[] resultFieldIndexes = new int[location.getFieldOrder().size()];
+          for (int i = 0; i < resultFieldIndexes.length; i++) {
+            String dataSetOrderField = location.getFieldOrder().get(i);
+            String transformOrderField = location.findTransformField(dataSetOrderField);
+            if (transformOrderField == null) {
+              throw new HopException(
+                  "There is no transform field provided in the mappings so I don't know which field to use to sort '"
+                      + dataSetOrderField
+                      + "'");
+            }
+            resultFieldIndexes[i] = resultRowMeta.indexOfValue(transformOrderField);
+            if (resultFieldIndexes[i] < 0) {
+              throw new HopException(
+                  "Unable to find sort field '"
+                      + transformOrderField
+                      + "' in transform results : "
+                      + Arrays.toString(resultRowMeta.getFieldNames()));
+            }
+          }
+          try {
+            log.logDetailed(
+                "Sorting result rows collection on fields: " + location.getFieldOrder());
+            resultCollection
+                .getRows()
+                .sort(
+                    (row1, row2) -> {
+                      try {
+                        return resultRowMeta.compare(row1, row2, resultFieldIndexes);
+                      } catch (HopValueException e) {
+                        throw new HopRuntimeException("Error comparing golden data result rows", e);
+                      }
+                    });
+          } catch (HopRuntimeException e) {
+            throw new HopException(
+                "Error sorting result rows for golden data set '" + location.getDataSetName() + "'",
+                e);
+          }
+
+          // Print the first 10 result rows
+          //
+          if (log.isDebug()) {
+            for (int i = 0; i < 10 && i < resultCollection.getRows().size(); i++) {
+              log.logDetailed(
+                  "Result row #"
+                      + (i + 1)
+                      + " : "
+                      + resultRowMeta.getString(resultCollection.getRows().get(i)));
+            }
+          }
+
+          // Golden rows
+          //
+          final int[] goldenFieldIndexes = new int[location.getFieldOrder().size()];
+          for (int i = 0; i < goldenFieldIndexes.length; i++) {
+            goldenFieldIndexes[i] = goldenRowMeta.indexOfValue(location.getFieldOrder().get(i));
+            if (goldenFieldIndexes[i] < 0) {
+              throw new HopException(
+                  "Unable to find sort field '"
+                      + location.getFieldOrder().get(i)
+                      + "' in golden rows : "
+                      + Arrays.toString(goldenRowMeta.getFieldNames()));
+            }
+          }
+          try {
+            log.logDetailed(
+                "Sorting golden rows collection on fields: " + location.getFieldOrder());
+
+            goldenRows.sort(
+                (row1, row2) -> {
+                  try {
+                    return goldenRowMeta.compare(row1, row2, goldenFieldIndexes);
+                  } catch (HopValueException e) {
+                    throw new HopRuntimeException("Error comparing golden data set rows", e);
+                  }
+                });
+          } catch (HopRuntimeException e) {
+            throw new HopException(
+                "Error sorting golden data rows for golden data set '"
+                    + location.getDataSetName()
+                    + "'",
+                e);
+          }
+        }
+
+        // Print the first 10 golden rows
+        //
+        if (log.isDebug()) {
+          for (int i = 0; i < 10 && i < goldenRows.size(); i++) {
+            log.logDetailed(
+                "Golden row #" + (i + 1) + " : " + goldenRowMeta.getString(goldenRows.get(i)));
+          }
+        }
+
+        final int[] transformFieldIndices = new int[location.getFieldMappings().size()];
+        final int[] goldenIndices = new int[location.getFieldMappings().size()];
+        for (int i = 0; i < location.getFieldMappings().size(); i++) {
+          PipelineUnitTestFieldMapping fieldMapping = location.getFieldMappings().get(i);
+
+          transformFieldIndices[i] =
+              resultRowMeta.indexOfValue(fieldMapping.getTransformFieldName());
+          if (transformFieldIndices[i] < 0) {
+            throw new HopException(
+                "Unable to find output field '"
+                    + fieldMapping.getTransformFieldName()
+                    + "' while testing output of transform '"
+                    + location.getTransformName()
+                    + "'");
+          }
+          goldenIndices[i] = goldenRowMeta.indexOfValue(fieldMapping.getDataSetFieldName());
+          if (goldenIndices[i] < 0) {
+            throw new HopException(
+                "Unable to find golden data set field '"
+                    + fieldMapping.getDataSetFieldName()
+                    + "' while testing output of transform '"
+                    + location.getTransformName()
+                    + "'");
+          }
+          log.logDetailed(
+              "Field to compare #"
+                  + i
+                  + " found on transform index : "
+                  + transformFieldIndices[i]
+                  + ", golden index : "
+                  + goldenIndices[i]);
+        }
+
+        for (int rowNumber = 0; rowNumber < resultRows.size(); rowNumber++) {
+          Object[] resultRow = resultRows.get(rowNumber);
+          Object[] goldenRow = goldenRows.get(rowNumber);
+
+          // Now compare the input to the golden row
+          //
+          for (int i = 0; i < location.getFieldMappings().size(); i++) {
+            IValueMeta transformValueMeta =
+                resultCollection.getRowMeta().getValueMeta(transformFieldIndices[i]);
+            Object transformValue = resultRow[transformFieldIndices[i]];
+
+            IValueMeta goldenValueMeta = goldenRowMeta.getValueMeta(goldenIndices[i]);
+            Object goldenValue = goldenRow[goldenIndices[i]];
+
+            if (log.isDetailed()) {
+              log.logDebug(
+                  "Comparing Meta '"
+                      + transformValueMeta.toString()
+                      + "' with '"
+                      + goldenValueMeta.toString()
+                      + "'");
+              log.logDebug("Comparing Value '" + transformValue + "' with '" + goldenValue + "'");
+            }
+
+            Object goldenValueConverted;
+
+            // sometimes there are data conversion issues because of the the database...
+            //
+            if (goldenValueMeta.getType() == transformValueMeta.getType()) {
+              goldenValueConverted = goldenValue;
+            } else {
+              goldenValueConverted = transformValueMeta.convertData(goldenValueMeta, goldenValue);
+            }
+
+            try {
+              int cmp =
+                  transformValueMeta.compare(transformValue, goldenValueMeta, goldenValueConverted);
+              if (cmp != 0
+                  && (transformValueMeta.isNumber() || transformValueMeta.isBigNumber())
+                  && !transformValueMeta.isNull(transformValue)
+                  && !transformValueMeta.isNull(goldenValueConverted)
+                  && numericValuesEqualForUnitTest(
+                      transformValueMeta, transformValue, goldenValueMeta, goldenValueConverted)) {
+                cmp = 0;
+              }
+              if (cmp != 0) {
+                if (log.isDebug()) {
+                  log.logDebug(
+                      "Unit test failure: '" + transformValue + "' <> '" + goldenValue + "'");
+                }
+                String comment =
+                    "Validation against golden data failed for row number "
+                        + (rowNumber + 1)
+                        + ", field "
+                        + transformValueMeta.getName()
+                        + " : transform value ["
+                        + transformValueMeta.getString(transformValue)
+                        + "] does not correspond to data set value ["
+                        + goldenValueMeta.getString(goldenValue)
+                        + "]";
+                results.add(
+                    new UnitTestResult(
+                        pipeline.getPipelineMeta().getName(),
+                        unitTest.getName(),
+                        location.getDataSetName(),
+                        location.getTransformName(),
+                        true,
+                        comment));
+                nrLocationErrors++;
+              }
+            } catch (HopValueException e) {
+              throw new HopException(
+                  "Unable to compare transform data against golden data set '"
+                      + location.getDataSetName()
+                      + "'",
+                  e);
+            }
+          }
+        }
+      }
+
+      if (nrLocationErrors == 0) {
+        String comment = "Test passed successfully against golden data set";
+        results.add(
+            new UnitTestResult(
+                pipeline.getPipelineMeta().getName(),
+                unitTest.getName(),
+                location.getDataSetName(),
+                location.getTransformName(),
+                false,
+                comment));
+      } else {
+        nrErrors += nrLocationErrors;
+      }
+    }
+
+    if (nrErrors == 0) {
+      String comment = "Unit test was successfully executed.";
+      results.add(
+          new UnitTestResult(
+              pipeline.getPipelineMeta().getName(),
+              unitTest.getName(),
+              null,
+              null,
+              false,
+              comment));
+    }
+    return nrErrors;
+  }
+
+  /**
+   * Build a DecimalFormat pattern from field length and precision so two floating-point values can
+   * be compared as strings with no leftover binary precision.
+   *
+   * <p>For length 7 and precision 2 this is {@code 00000.00;-0000.00}: {@code length - precision}
+   * integer digits on the positive side, one fewer on the negative side to make room for the minus
+   * sign. When length is missing or precision is negative, {@link #NUMERIC_COMPARE_MASK_DEFAULT} is
+   * used.
+   *
+   * @param length total digit count (integer + fraction), or &lt; 1 when unspecified
+   * @param precision number of fraction digits, or &lt; 0 when unspecified
+   * @return a positive;negative DecimalFormat pattern
+   */
+  public static String buildNumericCompareMask(int length, int precision) {
+    if (length < 1 || precision < 0) {
+      return NUMERIC_COMPARE_MASK_DEFAULT;
+    }
+    int integerDigits = length - precision;
+    if (integerDigits < 1) {
+      integerDigits = 1;
+    }
+    StringBuilder positive = new StringBuilder(integerDigits + precision + 1);
+    positive.append("0".repeat(integerDigits));
+    if (precision > 0) {
+      positive.append('.').append("0".repeat(precision));
+    }
+    int negativeIntegerDigits = Math.max(integerDigits - 1, 1);
+    StringBuilder negative = new StringBuilder(negativeIntegerDigits + precision + 2);
+    negative.append('-').append("0".repeat(negativeIntegerDigits));
+    if (precision > 0) {
+      negative.append('.').append("0".repeat(precision));
+    }
+    return positive.append(';').append(negative).toString();
+  }
+
+  /**
+   * Create a locale-independent formatter for {@link #buildNumericCompareMask(int, int)} patterns.
+   * Always uses {@code '.'} as decimal separator and half-up rounding.
+   */
+  public static DecimalFormat createNumericCompareFormat(String mask) {
+    DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance(Locale.US);
+    symbols.setDecimalSeparator('.');
+    DecimalFormat format = new DecimalFormat(mask, symbols);
+    format.setGroupingUsed(false);
+    format.setRoundingMode(RoundingMode.HALF_UP);
+    return format;
+  }
+
+  /**
+   * Compare two numeric values for a unit test. When length and precision are declared, both sides
+   * are formatted with {@link #buildNumericCompareMask(int, int)}. Otherwise the historical 1e-6
+   * fuzzy equals is used so existing tests without field precision keep passing.
+   */
+  static boolean numericValuesEqualForUnitTest(
+      IValueMeta transformMeta, Object transformValue, IValueMeta goldenMeta, Object goldenValue)
+      throws HopValueException {
+    IValueMeta spec = goldenMeta.getLength() > 0 ? goldenMeta : transformMeta;
+    if (hasDeclaredNumericPrecision(spec)) {
+      DecimalFormat format =
+          createNumericCompareFormat(
+              buildNumericCompareMask(spec.getLength(), spec.getPrecision()));
+      return formattedNumericValuesEqual(format, transformMeta, transformValue, goldenValue);
+    }
+    Double d1 = transformMeta.getNumber(transformValue);
+    Double d2 = transformMeta.getNumber(goldenValue);
+    return DoubleMath.fuzzyEquals(d1, d2, NUMERIC_COMPARE_EPSILON);
+  }
+
+  static boolean hasDeclaredNumericPrecision(IValueMeta meta) {
+    return meta != null && meta.getLength() > 0 && meta.getPrecision() >= 0;
+  }
+
+  /**
+   * @return true when both non-null numeric values format to the same string with {@code format}
+   */
+  static boolean formattedNumericValuesEqual(
+      DecimalFormat format, IValueMeta valueMeta, Object left, Object right)
+      throws HopValueException {
+    return format
+        .format(toComparableNumber(valueMeta, left))
+        .equals(format.format(toComparableNumber(valueMeta, right)));
+  }
+
+  static Number toComparableNumber(IValueMeta valueMeta, Object value) throws HopValueException {
+    if (valueMeta.isBigNumber()) {
+      return valueMeta.getBigNumber(value);
+    }
+    return valueMeta.getNumber(value);
+  }
+
+  public static String getDirectoryFromPath(String path) {
+    int lastSlashIndex = path.lastIndexOf('/');
+    if (lastSlashIndex >= 0) {
+      return path.substring(0, lastSlashIndex);
+    } else {
+      return "/";
+    }
+  }
+
+  public static IRowMeta getTransformOutputFields(
+      DataSet dataSet, PipelineUnitTestSetLocation inputLocation) throws HopException {
+    IRowMeta dataSetRowMeta = dataSet.getSetRowMeta();
+    IRowMeta outputRowMeta = new RowMeta();
+
+    for (int i = 0; i < inputLocation.getFieldMappings().size(); i++) {
+      PipelineUnitTestFieldMapping fieldMapping = inputLocation.getFieldMappings().get(i);
+      IValueMeta injectValueMeta =
+          dataSetRowMeta.searchValueMeta(fieldMapping.getDataSetFieldName());
+      if (injectValueMeta == null) {
+        throw new HopException(
+            "Unable to find mapped field '"
+                + fieldMapping.getDataSetFieldName()
+                + "' in data set '"
+                + dataSet.getName()
+                + "'");
+      }
+      // Rename to the transform output names though...
+      //
+      injectValueMeta.setName(fieldMapping.getTransformFieldName());
+      outputRowMeta.addValueMeta(injectValueMeta);
+    }
+
+    return outputRowMeta;
+  }
+
+  public static String getTestTypeDescription(TestType testType) {
+    int index = 0; // DEVELOPMENT
+    if (testType != null) {
+      TestType[] testTypes = TestType.values();
+      for (int i = 0; i < testTypes.length; i++) {
+        if (testTypes[i] == testType) {
+          index = i;
+          break;
+        }
+      }
+    }
+
+    return testTypeDesc[index];
+  }
+
+  /**
+   * Get the TestType for a tweak description (from the dialog)
+   *
+   * @param testTypeDescription The description to look for
+   * @return the test type or NONE if nothing matched
+   */
+  public static TestType getTestTypeForDescription(String testTypeDescription) {
+    if (StringUtils.isEmpty(testTypeDescription)) {
+      return TestType.DEVELOPMENT;
+    }
+    int index = Const.indexOfString(testTypeDescription, testTypeDesc);
+    if (index < 0) {
+      return TestType.DEVELOPMENT;
+    }
+    return TestType.values()[index];
+  }
+
+  public static String[] getTestTypeDescriptions() {
+    return testTypeDesc;
+  }
+
+  /**
+   * Get the localized description for a pipeline unit-test tweak.
+   *
+   * @param tweak the tweak type
+   * @return description for dialogs/editors
+   */
+  public static String getTweakDescription(PipelineTweak tweak) {
+    int index = 0; // NONE
+    if (tweak != null) {
+      PipelineTweak[] tweaks = PipelineTweak.values();
+      for (int i = 0; i < tweaks.length; i++) {
+        if (tweaks[i] == tweak) {
+          index = i;
+          break;
+        }
+      }
+    }
+    return tweakDesc[index];
+  }
+
+  /**
+   * Get the PipelineTweak for a description (from the dialog).
+   *
+   * @param tweakDescription the description to look for
+   * @return the tweak type or NONE if nothing matched
+   */
+  public static PipelineTweak getTweakForDescription(String tweakDescription) {
+    if (StringUtils.isEmpty(tweakDescription)) {
+      return PipelineTweak.NONE;
+    }
+    int index = Const.indexOfString(tweakDescription, tweakDesc);
+    if (index < 0) {
+      return PipelineTweak.NONE;
+    }
+    return PipelineTweak.values()[index];
+  }
+
+  public static String[] getTweakDescriptions() {
+    return tweakDesc;
+  }
+}

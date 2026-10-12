@@ -1,0 +1,787 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+[[HopServer]]
+:imagesdir: ../../assets/images
+:description: Hop Server is a lightweight server to run workflows and pipelines with remote run configuration as well as through a number of REST services.
+
+= Hop Server
+
+Hop Server is a lightweight server to run workflows and pipelines with the xref:pipeline/pipeline-run-configurations/native-remote-pipeline-engine.adoc[Remote pipeline], xref:workflow/workflow-run-configurations/native-remote-workflow-engine.adoc[Remote workflow], or xref:pipeline/pipeline-run-configurations/native-load-balancing-pipeline-engine.adoc[load-balancing] run configurations.
+
+How you get a project onto a Hop Server is covered in xref:hop-server/deploying.adoc[Deploying Hop Server].
+
+== Starting and Stopping Hop Server
+
+=== General Use
+
+Hop Server is available as a script in your Hop installation directory.
+
+Run Hop Server without any parameters to display its usage options.
+On Windows, this is `hop-server.bat`, on Mac and Linux, run `./hop-server.sh`.
+
+&nbsp; +
+
+.Usage
+[%collapsible]
+=====
+
+[source,bash]
+----
+Usage: <main class> [-ahV] [-gs] [-e=<environmentOption>] [-id=<id>]
+                    [-j=<projectOption>] [-l=<level>] [-n=<serverName>]
+                    [-p=<password>] [-ps=<pipelineName>] [-u=<username>]
+                    [-ws=<workflowName>] [-s=<systemProperties>[,
+                    <systemProperties>...]]... [<parameters>...]
+Run a Hop server
+      [<parameters>...]   One XML configuration file or a hostname and port
+  -a, --auth              Does the Hop web server have authentication enabled
+  -e, --environment=<environmentOption>
+                          The name of the lifecycle environment to use
+  -gs, --general-status
+                          List the general status of the server
+  -h, --help              Show this help message and exit.
+      -id=<id>            Specify the ID of the pipeline or workflow to query
+  -j, --project=<projectOption>
+                          The name of the project to use
+  -l, --level=<level>     The debug level, one of NOTHING, ERROR, MINIMAL,
+                            BASIC, DETAILED, DEBUG, ROWLEVEL
+  -n, --server-name=<serverName>
+                          The name of the server to start as defined in the
+                            metadata.
+  -p, --password=<password>
+                          The server password.  Required for administrative
+                            operations only, not for starting the server.
+  -ps, --pipeline-status=<pipelineName>
+                          List the status of the pipeline with this name (also
+                            specify the -id option)
+  -s, --system-properties=<systemProperties>[,<systemProperties>...]
+                          A comma separated list of KEY=VALUE pairs
+  -u, --userName=<username>
+                          The server user name.  Required for administrative
+                            operations only, not for starting the server.
+  -V, --version           Print version information and exit.
+  -ws, --workflow-status=<workflowName>
+                          List the status of the workflow with this name (also
+                            specify the -id option)
+      -xs, --cross-site-policy=<crossSitePolicy>
+                          Which browser requests this server accepts, based on
+                            the Sec-Fetch-Site header: 'same-site' (the
+                            default) rejects cross-site requests, 'same-origin'
+                            also rejects same-site ones, and 'off' disables the
+                            check. Clients that send no Sec-Fetch-* headers,
+                            such as hop-run or the Hop GUI, are never affected.
+----
+
+The available Hop Server options are:
+
+[options="header"]
+|===
+
+|Short|Extended|Description
+
+|-h
+|--help
+|This help text
+
+|-a
+|--auth
+|Default: true +
+Allows you to disable the authentication needed to access the server
+
+|-p
+|--password
+|The server password.
+Required for administrative operations only, not for starting the server.
+
+|-u
+|--userName
+|The server password.
+Required for administrative operations only, not for starting the server.
+
+|-s
+|--system-properties
+|Manually set system environment variables.
+Specify a comma separated list of KEY=VALUE pairs.
+
+|-e
+|--environment
+|The name of the project lifecycle environment to enable before startup.
+The project name is taken from that environment, so you do not need `-j` as well.
+This is provided for by the 'projects' plugin.
+
+|-n
+|--server-name
+|Name of the server metadata object to start, has to be used in combination with -e to know which environment to load it from
+
+|-j
+|--project
+|The name of the project to enable before startup.
+Not needed when `-e` is set.
+This is provided for by the 'projects' plugin.
+
+|-gs
+|--general-status
+|List the general status of the server.
+
+|-ps
+|--pipeline-status
+|List the status of the pipeline with this name (also specify the -id option)
+
+|-ws
+|--workflow-status
+|List the status of the workflow with this name (also specify the -id option)
+
+|-id
+|
+|Specify the ID of the pipeline or workflow to query
+
+|-swt
+|--shutdown-timeout
+|Default: 0 +
+The maximum number of seconds to wait for running pipelines and workflows to finish when the server shuts down (0 shuts down immediately). Can also be set with the `HOP_SERVER_SHUTDOWN_TIMEOUT` environment variable.
+
+|-xs
+|--cross-site-policy
+|Default: same-site +
+Which browser requests the server accepts: `same-site`, `same-origin` or `off`. Can also be set with the `HOP_SERVER_CROSS_SITE_POLICY` environment variable. See <<Cross-site requests>>.
+
+|===
+
+=====
+
+&nbsp; +
+
+=== Start Hop Server with command line parameters
+
+Hop Server can be started with hostname or ip address and port number as unnamed arguments:
+
+Example: `./hop-server.sh 0.0.0.0 8080`
+
+Example: `hop-server.bat 192.168.1.221 8081`
+
+Example: `./hop-server.sh -e aura-gcp gs://apachehop/hop-server-config.xml`
+
+Example: `hop-server.bat 127.0.0.1 8080 --userName cluster --password cluster`
+
+[source,shell]
+hop-server <Interface address> <Port> [-h] [-p <arg>] [-s] [-u <arg>]
+
+Example startup commands are:
+
+&nbsp; +
+
+[tabs]
+====
+Windows::
++
+--
+[source,shell]
+hop-server.bat 127.0.0.1 8080
+
+[source,shell]
+hop-server.bat 192.168.1.221 8081
+
+--
+
+Linux, macOS::
++
+--
+[source,shell]
+ ./hop-server.sh 127.0.0.1 8080
+
+[source,shell]
+ ./hop-server.sh 192.168.1.221 8081
+
+Listen to all interfaces on the server:
+
+[source,shell]
+ ./hop-server.sh 0.0.0.0 8080--
+--
+====
+
+
+=== Start Hop Server with a configuration file
+
+Specify the xml configuration file as the only argument:
+
+[source,shell]
+hop-server <Configuration File>
+
+The syntax of this configuration file is straightforward. Hostname and port are required, other configuration options are optional.
+
+[source,xml]
+----
+<hop-server-config>
+
+  <hop-server>
+    <name>server-8181</name>
+    <hostname>localhost</hostname>
+    <port>8181</port>
+    <webAppName></webAppName>
+    <username></username>
+    <password></password>
+
+    <!-- Proxy settings -->
+    <proxy_hostname></proxy_hostname>
+    <proxy_port></proxy_port>
+    <non_proxy_hosts></non_proxy_hosts>
+    <get_properties_from_master></get_properties_from_master>
+    <override_existing_properties></override_existing_properties>
+
+    <!-- Add the following line to support querying over https -->
+    <sslMode>Y</sslMode>
+    <!-- Configure SSL if enabled -->
+    <sslConfig>
+      <keyStore>/path/to/keystore</keyStore>
+      <keyStorePassword>password</keyStorePassword>
+      <keyPassword>keyPassword</keyPassword>
+    </sslConfig>
+
+    <!-- the network interface to use and then override the host name -->
+    <network_interface></network_interface>
+  </hop-server>
+
+  <!-- Join the web server thread and wait until it's finished.
+       The default is true
+  -->
+  <joining>true</joining>
+
+  <!-- The maximum number of log lines kept in memory by the server.
+       Leave this at 0 or leave the element out to use the HOP_MAX_LOG_SIZE_IN_LINES variable,
+       which keeps all log lines by default.
+   -->
+  <max_log_lines>0</max_log_lines>
+
+  <!-- The time (in minutes) it takes for a log line to be cleaned up in memory.
+       Leave this at 0 or leave the element out to use the HOP_MAX_LOG_TIMEOUT_IN_MINUTES variable,
+       which cleans up log lines after 1440 minutes (one day) by default.
+  -->
+  <max_log_timeout_minutes>1440</max_log_timeout_minutes>
+
+  <!-- The time (in minutes) it takes for a finished or stopped pipeline or workflow execution to be
+       removed from the server status.
+       Leave this at 0 or leave the element out to use the HOP_SERVER_OBJECT_TIMEOUT_MINUTES
+       variable, which removes executions after 1440 minutes (one day) by default.
+  -->
+  <object_timeout_minutes>1440</object_timeout_minutes>
+
+  <!-- The folder to read metadata objects from so that web services and database connections for sequences can be found.
+       The default is that no metadata is configured: remotely executed pipelines and workflows will have their own metadata.
+  -->
+  <metadata_folder></metadata_folder>
+
+  <!-- Configure the Jetty server that powers Hop Server.
+       Check the Jetty docs for more information: https://jetty.org/docs/jetty/12/programming-guide/server/http.html#connector
+  -->
+  <jetty_options>
+     <!-- The number of thread dedicated to accepting incoming connections. The number of acceptors should be below or equal to the number of CPUs. -->
+     <acceptors></acceptors>
+
+     <!-- Number of connection requests that can be queued up before the operating system starts to send rejections. -->
+     <acceptQueuSize></acceptQueuSize>
+
+     <!-- This allows the server to rapidly close idle connections in order to gracefully handle high load situations. -->
+     <lowResourcesMaxIdleTime></lowResourcesMaxIdleTime>
+  </jetty_options>
+
+</hop-server-config>
+----
+
+==== Cleanup settings and where they come from
+
+`max_log_lines`, `max_log_timeout_minutes` and `object_timeout_minutes` keep the memory use of a
+long running server in check. Each of them is resolved separately, and the first of these that
+supplies a value wins:
+
+. the configuration file, when the element is set to a value larger than 0
+. the matching Java system property, for example `-DHOP_SERVER_OBJECT_TIMEOUT_MINUTES=60`
+. the variable in `hop-config.json`
+. the built-in default
+
+[cols="1,1,1", options="header"]
+|===
+|Configuration element |Variable |Default
+
+|`max_log_lines`
+|`HOP_MAX_LOG_SIZE_IN_LINES`
+|`0`: every log line is kept
+
+|`max_log_timeout_minutes`
+|`HOP_MAX_LOG_TIMEOUT_IN_MINUTES`
+|`1440`: log lines are cleaned up after one day
+
+|`object_timeout_minutes`
+|`HOP_SERVER_OBJECT_TIMEOUT_MINUTES`
+|`1440`: finished and stopped executions are removed from the server status after one day
+|===
+
+A server that is started without a configuration file, or without these elements, therefore keeps
+all of its log lines, cleans them up after a day, and removes finished executions from its status
+after a day. The `Configuration details` section of the status page reports the values the server
+is actually running with.
+
+WARNING: The default keeps *every* log line of *every* execution for a day. A server that runs a lot
+of short executions can run out of memory that way. Set `max_log_lines` to limit this.
+
+[NOTE]
+====
+These three settings are read from Java system properties, not from the environment of the process.
+Setting an environment variable on a container, for example `-e HOP_MAX_LOG_SIZE_IN_LINES=5000`,
+therefore has no effect: the value from `hop-config.json` is used instead. To override them in a
+container, pass them as system properties through `HOP_OPTIONS`:
+
+[source,shell]
+docker run -e HOP_OPTIONS="-Xmx2048m -DHOP_MAX_LOG_SIZE_IN_LINES=5000" ...
+
+Mind that `HOP_OPTIONS` replaces the default `-Xmx2048m`, so repeat the memory settings you need.
+Alternatively, set the elements in the server configuration file, which takes precedence over both.
+====
+
+Example startup commands with a configuration file are: +
+
+[tabs]
+====
+Windows::
++
+--
+[source,shell]
+hop-server.bat C:\<YOUR_PATH>\hop-server-config.xml
+
+Or with a remote configuration file:
+
+[source,shell]
+hop-server.bat http://www.example.com/hop-server-config.xml
+
+You can also enable a project lifecyfle environment for the Hop server:
+
+[source,shell]
+hop-server.bat -e graph-aws hop-server.xml
+
+--
+
+Linux, macOS::
++
+--
+[source,shell]
+ ./hop-server.sh /foo/bar/hop-server-config.xml
+
+Or with a remote configuration file:
+
+[source,shell]
+ ./hop-server.sh http://www.example.com/hop-server-config.xml
+
+You can also enable a project lifecyfle environment for the Hop server:
+
+[source,shell]
+ ./hop-server.sh -e graph-aws hop-server.xml
+
+--
+====
+
+In the sample above the environment contains configuration files with variables which are loaded.
+With the environment the server also knows the project home folder.
+The server configuration file is found in the home folder automatically with the implicit relative path.
+
+=== SSL configuration
+
+To protect traffic between a Hop Server and its clients (xref:hop-run/index.adoc[Hop Run], xref:hop-gui/index.adoc[Hop GUI], a browser, xref:hop-server/index.adoc#_query_a_server_from_the_command_line[Hop Server command line querying], ...) it's possible to use encrypt data using a secure socket layer (SSL) connection on top of the regular web traffic with a hyper treading transfer protocol (HTTP).
+The combination of both is called HTTPS.
+To run a Hop server using this `https://` protocol you can add an `sslConfig` section in the `hop-server-config/hop-server` path.
+
+The 3 main options are:
+
+* `keyStore` : the path to the java keystore file, created with `keytool`
+* `keyStorePassword` : the password to the keystore file
+* `keyPassword` : the key password.
+If this is the same as the keystore password you can omit this option.
+
+The HTTP protocol used is version 1.1 or `HTTP/1.1`.
+The type of keystore read is a Java Keystore or type: `JKS`.
+Let's take a look at how we can generate a sample keystore:
+
+[source,bash]
+----
+# Generate a new key
+#
+openssl genrsa -des3 -out hop.key
+
+# Make a new certificate
+#
+openssl req -new -x509 -key hop.key -out hop.crt
+
+# Create a PKCS12 keystore and import it into a JKS keystore
+# The resulting file is: keystore
+#
+keytool -keystore keystore -import -alias hop -file hop.crt -trustcacerts
+openssl req -new -key hop.key -out hop.csr
+openssl pkcs12 -inkey hop.key -in hop.crt -export -out hop.pkcs12
+keytool -importkeystore -srckeystore hop.pkcs12 -srcstoretype PKCS12 -destkeystore keystore
+----
+
+Here is an example of the information to include in your server XML:
+
+[source,xml]
+----
+<hop-server-config>
+<hop-server>
+...
+
+    <sslConfig>
+      <keyStore>/path/to/keystore</keyStore>
+      <keyStorePassword>password</keyStorePassword>
+      <keyPassword>keyPassword</keyPassword>
+    </sslConfig>
+
+    <!-- Add the following line to support querying over https -->
+    <sslMode>Y</sslMode>
+  </hop-server>
+  ...
+</hop-server-config>
+----
+
+=== Enable detailed server logging
+
+Hop Server provides the `-l` or `--level` option to set a logging level for workflows and pipelines that run on the server.
+
+There are scenarios where you may want to see more detailed logging about the server itself.
+Since Hop Server runs on a Jetty server, you can increase the Jetty server logging by extending the `HOP_OPTIONS` variable near the end of `hop-server.sh` or `hop-server.bat`.
+
+Original:
+[source,bash]
+
+----
+"$_HOP_JAVA" ${HOP_OPTIONS} -Djava.library.path=$LIBPATH -classpath "${CLASSPATH}" org.apache.hop.www.HopServer "$@"
+EXITCODE=$?
+----
+
+With DEBUG logging:
+[source,bash]
+
+----
+"$_HOP_JAVA" ${HOP_OPTIONS} -Dorg.eclipse.jetty.util.log.class=org.eclipse.jetty.util.log.StdErrLog -Dorg.eclipse.jetty.LEVEL=DEBUG -Djava.library.path=$LIBPATH -classpath "${CLASSPATH}" org.apache.hop.www.HopServer "$@"
+EXITCODE=$?
+----
+
+If applied correctly, your Hop Server starts producing _a lot_ of logging information similar to the lines below:
+
+[source,text]
+----
+2022/07/15 14:18:00 - HopServer - Installing timer to purge stale objects after 1440 minutes.
+2022-07-15 14:18:00.267:INFO::main: Logging initialized @3732ms to org.eclipse.jetty.util.log.StdErrLog
+2022-07-15 14:18:00.276:DBUG:oejuc.ContainerLifeCycle:main: Server@3749c6ac{STOPPED}[9.4.35.v20201120] added {QueuedThreadPool[qtp1195781551]@47462daf{STOPPED,8<=0<=200,i=0,r=-1,q=0}[NO_TRY],AUTO}
+2022-07-15 14:18:00.283:DBUG:oejuc.ContainerLifeCycle:main: ConstraintSecurityHandler@3f473daf{STOPPED} added {org.eclipse.jetty.util.component.DumpableCollection@390e814c,POJO}
+2022-07-15 14:18:00.286:DBUG:oejuc.ContainerLifeCycle:main: HashLoginService@7bfedfb7[null] added {org.eclipse.jetty.security.DefaultIdentityService@6d3194ff,POJO}
+2022-07-15 14:18:00.290:DBUG:oejuc.ContainerLifeCycle:main: HashLoginService@7bfedfb7[Hop] added {PropertyUserStore@213c812a[users.count=0,identityService=org.eclipse.jetty.security.DefaultIdentityService@25814d3c],AUTO}
+2022-07-15 14:18:00.290:DBUG:oejuc.ContainerLifeCycle:main: ConstraintSecurityHandler@3f473daf{STOPPED} added {HashLoginService@7bfedfb7[Hop],AUTO}
+2022-07-15 14:18:00.302:DBUG:oejsh.ContextHandlerCollection:main: ->[{o.e.j.s.ServletContextHandler@1a6df932{/,null,STOPPED},[o.e.j.s.ServletContextHandler@1a6df932{/,null,STOPPED}]}]
+2022-07-15 14:18:00.303:DBUG:oejuc.ContainerLifeCycle:main: ContextHandlerCollection@74120029{STOPPED} added {o.e.j.s.ServletContextHandler@1a6df932{/,null,STOPPED},AUTO}
+2022-07-15 14:18:00.304:DBUG:oeju.DecoratedObjectFactory:main: Adding Decorator: org.eclipse.jetty.util.DeprecationWarning@48cbb4c5
+----
+
+=== Start Hop Server with docker
+
+It's often very convenient to run a Hop docker container since it has all the required software automatically delivered.
+For a complete description of the standard Hop docker container see the xref:docker-container.adoc[Hop in Docker] page.
+Here is an example of how you would start a "long-lived" docker container:
+
+[source,bash]
+----
+docker run \
+  -p 8080:8080 \
+  -e HOP_SERVER_PORT=8080 \
+  -e HOP_SERVER_USER=username \
+  -e HOP_SERVER_PASS=password \
+  apache/hop
+----
+
+=== Stopping Hop Server
+
+When Hop Server is started from a terminal, the process can be terminated through `CTRL-C`.
+
+Hop Server registers a JVM shutdown hook, so it also shuts down gracefully when the process receives a `SIGTERM`, for example through `kill <pid>`, `docker stop` or a `systemd` stop.
+
+In headless environments, Hop Server exposes a shutdown servlet on the `/shutdown` path.
+An authenticated `GET` request to that path triggers a graceful shutdown of the server:
+
+[tabs]
+====
+Windows::
++
+--
+[source,shell]
+curl -u cluster:cluster http://127.0.0.1:8080/shutdown
+--
+
+Linux, macOS::
++
+--
+[source,shell]
+ curl -u cluster:cluster http://127.0.0.1:8080/shutdown
+--
+====
+
+==== Graceful shutdown
+
+Whichever way a shutdown is triggered (`CTRL-C`, `SIGTERM` or the `/shutdown` servlet), Hop Server shuts down gracefully:
+
+* it immediately stops accepting new work: requests that add or start pipelines, workflows or packages are refused with an HTTP `503 Service Unavailable`, while status requests keep working,
+* the server status reports `Shutting down` (the status XML/JSON contains `shutting_down=Y`), which is useful as a Kubernetes readiness signal,
+* it waits for the running pipelines and workflows to finish before the process exits.
+
+By default the server waits `0` seconds, i.e. it shuts down immediately.
+Use the `--shutdown-timeout` option (or the `HOP_SERVER_SHUTDOWN_TIMEOUT` environment variable) to allow running executions to finish within a maximum number of seconds.
+When the timeout elapses while executions are still running, the server shuts down anyway.
+
+[tabs]
+====
+Windows::
++
+--
+[source,shell]
+hop-server.bat 127.0.0.1 8080 --shutdown-timeout 120
+--
+
+Linux, macOS::
++
+--
+[source,shell]
+ ./hop-server.sh 127.0.0.1 8080 --shutdown-timeout 120
+--
+====
+
+== Cross-site requests
+
+The Hop Server servlets answer state-changing operations on `GET`: a single URL starts a pipeline, stops a workflow or removes one from the server.
+That is convenient for automation, but it also means a web page an operator happens to be visiting can drive the server simply by pointing an image, a form or a link at it, using the operator's browser and their credentials.
+
+To close that path, Hop Server rejects requests whose https://developer.mozilla.org/docs/Web/HTTP/Headers/Sec-Fetch-Site[`Sec-Fetch-Site`] header says they were started by another site, answering them with an HTTP `403 Forbidden` before authentication or any servlet runs.
+
+Only browsers send `Sec-Fetch-*` headers.
+hop-run, the Hop GUI, `curl` and your own automation send none at all, and requests without the header are always accepted, so **existing integrations are not affected**.
+
+The `--cross-site-policy` option (or the `HOP_SERVER_CROSS_SITE_POLICY` environment variable) picks how strict the server is:
+
+[options="header"]
+|===
+
+|Value|Behaviour
+
+|`same-site`
+|The default.
+Rejects requests started by a site on a different registrable domain.
+A link or a form on another host of the same domain — a second Hop server, an intranet portal, the same host on another port — is still accepted.
+
+|`same-origin`
+|Also rejects requests started by another host of the same domain, so only the server's own pages may drive it.
+
+|`off`
+|Does not look at `Sec-Fetch-Site` at all.
+An escape hatch for a deployment that turns out to need cross-site browser access; it leaves the server open to the requests described above.
+
+|===
+
+[source,shell]
+ ./hop-server.sh 127.0.0.1 8080 --cross-site-policy same-origin
+
+Two consequences worth knowing about:
+
+* Following a link to the server **from another site** lands on a `403`, including a plain click-through to the status page.
+Typing the address or using a bookmark sends `Sec-Fetch-Site: none` and keeps working, as does every link on the server's own pages.
+* A `Sec-Fetch-Site` value the server does not recognise, or more than one of them on the same request, is rejected as well.
+A client that cannot send the header correctly can always send nothing at all.
+
+This is a defence against one specific attack, not a substitute for the basics: keep authentication enabled, change the default `cluster`/`cluster` credentials and do not expose the server to an untrusted network.
+
+Hop Web applies the same policy to the Hop Server API it co-deploys on `/hop/*`, configured in its own security settings — see xref:hop-gui/hop-web.adoc[Hop Web].
+
+== Verify startup
+
+Starting a Hop Server on the local machine e.g. on port 8081 will only take 1 or 2 seconds.
+
+The console output will look similar to what is listed below:
+
+[source,shell]
+2020/06/20 18:35:12 - HopServer - Installing timer to purge stale objects after 1440 minutes.
+2020/06/20 18:35:12 - HopServer - Created listener for webserver @ address : localhost:8081
+
+== Query a server from the command line
+
+You can query the new server with another hop-server command:
+
+&nbsp; +
+
+[tabs]
+====
+Windows::
++
+--
+[source,shell]
+----
+hop-server.bat -gs -u cluster -p cluster 127.0.0.1 8080
+----
+
+Expected output:
+
+[source,shell]
+----
+C:\<YOUR_PATH>\hop>echo off                                                          ===[Environment Settings - hop-server.bat]====================================
+Java identified as "C:\Program Files\Microsoft\jdk-11.0.17.8-hotspot\\bin\java"
+HOP_OPTIONS=-Xmx2048m -DHOP_AUDIT_FOLDER=.\audit -DHOP_PLATFORM_OS=Windows -DHOP_PLATFORM_RUNTIME=GUI
+-DHOP_AUTO_CREATE_CONFIG=Y
+Command to start Hop will be:
+"C:\Program Files\Microsoft\jdk-11.0.17.8-hotspot\\bin\java" -classpath lib\core\*;lib\beam\*;lib\swt\win64\*
+-Djava.library.path=lib\core;lib\beam -Xmx2048m -DHOP_AUDIT_FOLDER=.\audit -DHOP_PLATFORM_OS=Windows
+-DHOP_PLATFORM_RUNTIME=GUI -DHOP_AUTO_CREATE_CONFIG=Y org.apache.hop.www.HopServer  -gs -u cluster -p cluster localhost 8181
+===[Starting HopServer]=========================================================
+2022/12/16 14:02:13 - HopServer - Enabling project 'default'
+Pipelines: 0 found.
+
+Workflows: 0 found.
+----
+--
+
+Linux, macOS::
++
+--
+[source,shell]
+----
+./hop-server.sh -gs -u cluster -p cluster 127.0.0.1 8080
+----
+
+Expected output:
+
+[source,shell]
+----
+Pipelines: 0 found.
+
+Workflows: 0 found.
+----
+--
+====
+
+
+
+== Query a pipeline from the command line
+
+[source,log]
+----
+sh hop-server.sh -id 375c9113-b538-4559-8e98-ee02a435fbb9 -u cluster -p cluster -ps service-example -j my-project hop-server.xml
+2021/10/01 13:27:04 - HopServer - Enabling project 'my-project'
+  ID: 375c9113-b538-4559-8e98-ee02a435fbb9
+      Name:     service-example
+      Status:   Finished
+      Start:    2021/10/01 13:26:45.128
+      End:      2021/10/01 13:26:45.220
+      Log date: 2021/10/01 13:27:04.363
+      Errors:   0
+      Transforms: 4 found.
+        1
+          Name:      a,b
+          Copy:      0
+          Status:    Finished
+          Input:     0
+          Output:    0
+          Read:      1
+          Written:   1
+          Rejected:  0
+          Updated:   0
+          Errors:    0
+        2
+...
+        3
+...
+        4
+...
+      Logging:
+          2021/10/01 13:26:45 - service-example - Executing this pipeline using the Local Pipeline Engine with run configuration 'local'
+          2021/10/01 13:26:45 - service-example - Execution started for pipeline [service-example]
+          2021/10/01 13:26:45 - a,b.0 - Finished processing (I=0, O=0, R=1, W=1, U=0, E=0)
+          2021/10/01 13:26:45 - c,d.0 - Finished processing (I=0, O=0, R=1, W=1, U=0, E=0)
+          2021/10/01 13:26:45 - build JSON.0 - Finished processing (I=0, O=1, R=1, W=1, U=0, E=0)
+          2021/10/01 13:26:45 - OUTPUT.0 - Finished processing (I=0, O=0, R=1, W=1, U=0, E=0)
+          2021/10/01 13:26:45 - service-example - Pipeline duration : 0.092 seconds [  0.092" ]
+          2021/10/01 13:26:45 - service-example - Execution finished on a local pipeline engine with run configuration 'local'
+----
+
+== Query a workflow from the command line
+
+[source,log]
+----
+sh hop-server.sh -ws test-workflow -id e24b4549-edf0-4d77-987e-f103b630b4cc -u cluster -p cluster localhost 8181
+  ID: e24b4549-edf0-4d77-987e-f103b630b4cc
+      Name:     test-workflow
+      Status:   Finished
+      Log date: 2021/10/01 14:27:45.891
+      Result:   true
+      Errors:   0
+      Logging:
+          2021/10/01 14:27:45 - test-workflow - Start of workflow execution
+          2021/10/01 14:27:46 - test-workflow - Starting action [sample]
+          2021/10/01 14:27:46 - sample - Using run configuration [remote-8181]
+          2021/10/01 14:27:46 - sample - Executing this pipeline using the Remote Pipeline Engine with run configuration 'remote-8181'
+          2021/10/01 14:27:46 - sample - 2021/10/01 14:27:46 - sample - Executing this pipeline using the Local Pipeline Engine with run configuration 'local'
+          2021/10/01 14:27:46 - sample - 2021/10/01 14:27:46 - sample - Execution started for pipeline [sample]
+          2021/10/01 14:27:47 - sample - 2021/10/01 14:27:47 - 1M.0 - Finished processing (I=0, O=0, R=0, W=1000000, U=0, E=0)
+          2021/10/01 14:27:47 - sample - 2021/10/01 14:27:47 - someString,someInt.0 - Finished processing (I=0, O=0, R=1000000, W=1000000, U=0, E=0)
+          2021/10/01 14:27:47 - sample - 2021/10/01 14:27:47 - id.0 - Finished processing (I=0, O=0, R=1000000, W=1000000, U=0, E=0)
+          2021/10/01 14:27:47 - sample - 2021/10/01 14:27:47 - sample - Pipeline duration : 0.977 seconds [  0.977" ]
+          2021/10/01 14:27:47 - sample - 2021/10/01 14:27:47 - sample - Execution finished on a local pipeline engine with run configuration 'local'
+          2021/10/01 14:27:47 - sample - Execution finished on a remote pipeline engine with run configuration 'remote-8181'
+          2021/10/01 14:27:48 - test-workflow - Starting action [true]
+          2021/10/01 14:27:48 - test-workflow - Starting action [false]
+          2021/10/01 14:27:48 - test-workflow - Starting action [log-something]
+          2021/10/01 14:27:48 - Subject - Message
+          2021/10/01 14:27:48 - test-workflow - Starting action [Success]
+          2021/10/01 14:27:48 - test-workflow - Finished action [Success] (result=[true])
+          2021/10/01 14:27:48 - test-workflow - Finished action [log-something] (result=[true])
+          2021/10/01 14:27:48 - test-workflow - Finished action [false] (result=[true])
+          2021/10/01 14:27:48 - test-workflow - Finished action [true] (result=[true])
+          2021/10/01 14:27:48 - test-workflow - Finished action [sample] (result=[true])
+          2021/10/01 14:27:48 - test-workflow - Workflow execution finished
+          2021/10/01 14:27:48 - test-workflow - Workflow duration : 2.715 seconds [  2.714" ]
+----
+
+== Connect to the Hop Server UI
+
+To connect to the previously started server, point your browser to `http://localhost:8081`.
+
+You'll be prompted for your username and password.
+The default is `cluster` for both the username and password.
+The defaults obviously should be changed in any environment that goes beyond a simple local developer setup.
+
+TIP: on startup, the pipeline and workflow lists shown below will be empty.
+Run a workflow or pipeline through the xref:pipeline/pipeline-run-configurations/native-remote-pipeline-engine.adoc[Hop Remote pipeline engine] run configuration or through the xref:hop-server/web-service.adoc[REST api].
+When pipelines or workflows are executed on the server, you'll be able to follow the logging output either from the terminal or a log file (e.g. piped from the startup command).
+
+image::hop-server/hop-server-status.png[Hop Server Status,width="65%"]
+
+For each of the options in the pipeline and workflow dialogs described below, select a pipeline and workflow from the list and select the desired option.
+
+The header bar for workflows and pipelines is almost identical (from left to right).
+
+[options="header"]
+|===
+|Run|
+|Stop the running pipeline/workflow|
+|Cleanup pipeline|Cleanup a pipeline: close remote sockets etc
+|View pipeline/workflow details|
+|Remove pipeline/workflow from list|
+|===
+
+== Hop Server web Services
+
+A Hop Server can also be accessed directly through a number of web services and in combination with the xref:hop-server/web-service.adoc[Web Service] and xref:hop-server/async-web-service.adoc[Asynchronous Web Service] metadata types.

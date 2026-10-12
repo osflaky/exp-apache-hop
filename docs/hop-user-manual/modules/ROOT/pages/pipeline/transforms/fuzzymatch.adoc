@@ -1,0 +1,134 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+:documentationPath: /pipeline/transforms/
+:language: en_US
+:description: The Fuzzy Match transform finds strings that potentially match using duplicate-detecting algorithms that calculate the similarity of two streams of data.
+:page-engines: Hop Engine=yes, Single Threaded=yes, Native Spark=yes, Beam Spark=maybe, Beam Flink=maybe, Beam Dataflow=maybe
+
+= image:transforms/icons/fuzzymatch.svg[Fuzzy match transform Icon, role="image-doc-icon"] Fuzzy match
+
+== Description
+
+The Fuzzy Match transform finds strings that potentially match using duplicate-detecting algorithms that calculate the similarity of two streams of data.
+
+For each row on the main stream, the transform compares the main stream field against values from the lookup stream and returns matches within the configured score range.
+Depending on the selected match mode, it can return the single best match, multiple matches as separate output rows (Top-K), or multiple matches as a concatenated list.
+
+== Options
+
+=== General tab
+
+[options="header"]
+|===
+|Option|Description
+|Transform name|Name of this transform as it appears in the pipeline workspace
+|Lookup transform|Identifies the transform that contains the fields to match
+|Lookup field|Identifies the field to match
+|Main stream field|Identifies the primary stream to match the Lookup field with
+|Algorithm|Identifies which string-matching algorithm to use---options include Levenshtein, Damerau-Levenshtein, Needleman Wunsch, Jaro, Jaro Winkler, Pair letters similarity, Metaphone, Double Metaphone, SoundEx, or Refined SoundEx
+|Case sensitive|Identifies if streams can or cannot differ based on the use of uppercase and lowercase letters---only for use with the Levenshtein algorithms
+|Match mode|Controls how matches are returned (see <<match-mode>> below)
+|Minimum value|Identifies the lowest possible similarity score or distance that is accepted as a match
+|Maximal value|Identifies the highest possible similarity score or distance that is accepted as a match
+|Max matches|Top-K limit for multi-match modes.
+Only the best matches (by distance or similarity) are kept.
+The default is `10`.
+Values are hard-capped at `100` to avoid runaway memory and row explosion.
+Only available when Match mode is *All matches (separate rows)* or *All matches (concatenated)*.
+|Values separator|Identifies the string that separates matches (and measure values) when Match mode is *All matches (concatenated)*.
+|===
+
+[[match-mode]]
+*Match mode*
+
+|===
+|Mode|Description
+|Closest match|Returns a single result: the best match for the current main stream value.
+For distance algorithms (Levenshtein, Damerau-Levenshtein, Needleman Wunsch), the best match has the *smallest* distance.
+For similarity algorithms (Jaro, Jaro Winkler, Pair letters similarity), the best match has the *highest* similarity.
+|All matches (separate rows)|Returns one output row per match, each with its own match value and measure value.
+Matches are ranked (best first) and limited by *Max matches* (Top-K).
+This is the recommended way to retrieve multiple matches together with their distances or similarity scores.
+|All matches (concatenated)|Returns a single output row where all matches are joined with the *Values separator*.
+When a Value field is configured, the corresponding measure values are joined in the same order with the same separator (for example `A,B,C` with measures `1,2,3`).
+Results are also limited by *Max matches* (Top-K).
+|===
+
+TIP: Existing pipelines that used the former *Get closer value* checkbox map as follows: checked → *Closest match*; unchecked → *All matches (concatenated)*.
+
+*Algorithm Definitions*
+
+Within the Algorithm field, there are several options available to compare and match strings.
+
+* https://en.wikipedia.org/wiki/Levenshtein_distance[Levenshtein^] and https://en.wikipedia.org/wiki/Damerau%E2%80%93Levenshtein_distance[Damerau-Levenshtein^]: calculate the distance between two strings by looking at how many edit transforms are needed to get from one string to another.
+The former only looks at inserts, deletes, and replacements.
+The latter adds transposition.
+The score indicates the minimum number of changes needed.
+For instance, the difference between John and Jan would be two; to turn the name John into Jan you need one transform to replace the O with an A, and another transform to delete the H.
+* https://en.wikipedia.org/wiki/Needleman%E2%80%93Wunsch_algorithm[Needleman Wunsch^]: calculates the similarity of two sequences and is mainly used in bioinformatics.
+The algorithm calculates a gap penalty.
+The aforementioned example would have a score of negative two.
+* https://en.wikipedia.org/wiki/Jaro%E2%80%93Winkler_distance[Jaro and Jaro Winkler^]: calculate a similarity index between two strings.
+The result is a fraction between zero, indicating no similarity, and one, indicating an identical match.
+* Pair letters similarity: dissects the two strings in pairs and calculates the similarity of the two strings by dividing the number of common pairs by the sum of the pairs from both strings.
+* Metaphone, Double Metaphone, SoundEx, and Refined SoundEx: are https://en.wikipedia.org/wiki/Phonetic_algorithm#:~:text=A%20phonetic%20algorithm%20is%20an,indexing%20words%20in%20other%20languages.[phonetic algorithms], which try to match strings based on how they would sound.
+Each is based on the English language and would not be useful to compare other languages.
+** The https://en.wikipedia.org/wiki/Metaphone[Metaphone algorithm^] returns an encoded value based on the English pronunciation of a given word.
+The encoded value of the names John and Jan would return the value JN for both names.
+** The https://en.wikipedia.org/wiki/Metaphone#Double_Metaphone[Double Metaphone^] algorithm has fundamental design improvements over its predecessor and uses a more complex ruleset for coding.
+It can return a primary and a secondary encoded value for a string.
+The names John and Jan each return metaphone key values of JN and AN.
+** The https://en.wikipedia.org/wiki/Soundex[Soundex algorithm^] returns a single encoded value for a name that consists of a letter followed by three numerical digits.
+The letter is the first letter of the name, and the digits encode the remaining consonants.
+** The Refined SoundEx algorithm is an improvement over its predecessor.
+Encoded values for this algorithm are six digits long, the initial character is encoded, and multiple possible encodings can be returned for a single name.
+Using this algorithm, the name John returns the values 160000 and 460000, as does the name Jan.
+
+=== Fields tab
+
+The Fields tab enables you to define how to return the results of a comparison.
+
+[options="header"]
+|===
+|Option|Description
+|Match field|Defines the name of the column that contains the comparison value (the matched lookup string).
+In *All matches (concatenated)* mode this can contain multiple values joined by the values separator.
+|Value field|Defines the name of the column that contains the measure for the match.
+The measure type depends on the algorithm and match mode:
+
+* Distance algorithms (Levenshtein, Damerau-Levenshtein, Needleman Wunsch): integer distance for *Closest match* and *All matches (separate rows)*; a separator-joined string of distances for *All matches (concatenated)*.
+* Similarity algorithms (Jaro, Jaro Winkler, Pair letters similarity): numeric similarity for *Closest match* and *All matches (separate rows)*; a separator-joined string of scores for *All matches (concatenated)*.
+* Phonetic algorithms: the encoded phonetic value as a string.
+|===
+
+You can also specify the list of additional fields to retrieve from the lookup stream.
+
+* Additional fields are available for *Closest match* and *All matches (separate rows)* (one lookup field value per output row).
+* They are also available for phonetic algorithms.
+* They are not returned in *All matches (concatenated)* mode for distance and similarity algorithms, because multiple matches are collapsed into a single string cell.
+
+== Output behavior
+
+[options="header"]
+|===
+|Match mode|Output shape|Measure (Value field)
+|Closest match|One output row per main stream row|Single typed measure (integer / number / string)
+|All matches (separate rows)|Up to *Max matches* output rows per main stream row (one per match), ranked best-first|One typed measure per output row
+|All matches (concatenated)|One output row per main stream row|Separator-joined string of measures, aligned with the match list
+|===
+
+If no lookup value falls within the configured minimum and maximal range, the transform still forwards the main stream row with empty match and measure fields.

@@ -1,0 +1,169 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+[[HopTools]]
+:imagesdir: ../../assets/images
+:page-pagination:
+:description: Getting Started (8/9): Hop ships a set of command line tools next to Hop Gui, for running, configuring, searching, importing and serving your projects.
+
+= The Hop toolbox
+
+You'll spend most of your time in Hop Gui, but a project that only runs from a desktop GUI is not much use in production.
+
+The split is roughly this: **designing** pipelines and workflows and **creating** metadata is what Hop Gui is for.
+**Configuring** and **running** them is where the command line takes over, and that is the half a scheduler, a container or a CI/CD pipeline needs.
+
+== One command to start them all
+
+Since Hop 2.x there is a single `hop` launcher in the installation folder.
+It replaces the individual `hop-run`, `hop-conf`, `hop-gui`, ... scripts, and plugins can add their own commands to it.
+
+[tabs]
+====
+Windows::
++
+--
+[source,shell]
+----
+hop.bat help
+----
+--
+
+Linux, macOS::
++
+--
+[source,shell]
+----
+./hop help
+----
+--
+====
+
+`help` lists the commands available in *your* installation, which depends on the plugins you have installed:
+
+[source,shell]
+----
+Commands:
+  help     Display help information about the specified command.
+  conf     Configure Hop
+  encrypt  Encrypt secrets
+  gui      The Hop GUI
+  import   Import metadata
+  run      Run a pipeline or workflow
+  search   Search in Hop metadata
+  server   Run a Hop server
+  setup    Configure Hop environment variables
+----
+
+Two options are worth knowing before anything else, because nearly every command takes them:
+
+[options="header"]
+|===
+|Option|What it does
+|`-j`, `--project`|enable a project before the command runs
+|`-e`, `--environment`|enable an environment before the command runs
+|===
+
+So running your workflow from the xref:getting-started/hop-projects.adoc[previous chapter] looks like this:
+
+[source,shell]
+----
+./hop run -j getting-started -r local -f '${PROJECT_HOME}/first-workflow.hwf'
+----
+
+NOTE: the older `hop-run.sh`, `hop-conf.sh` and friends still ship and still work. New examples in this manual use `hop <command>`.
+
+== The tools
+
+[options="header",cols="20%,50%,30%"]
+|===
+|Tool|What you use it for|Read more
+
+|`hop gui`
+|The visual development environment: build, preview, run and debug pipelines and workflows.
+|xref:hop-tools/hop-gui.adoc[Hop Gui]
+
+|`hop run`
+|Run a pipeline or workflow. This is what a scheduler, a CI job or a container calls.
+|xref:hop-run/index.adoc[Hop Run]
+
+|`hop conf`
+|Manage projects, environments and cloud configuration from a script.
+|xref:hop-tools/hop-conf/hop-conf.adoc[Hop Conf]
+
+|`hop setup`
+|Point Hop at a user-level config folder so your projects and settings survive an upgrade.
+|xref:hop-tools/hop-setup.adoc[Hop Setup]
+
+|`hop server`
+|Run a Hop Server to execute pipelines and workflows remotely, over REST.
+|xref:hop-server/index.adoc[Hop Server]
+
+|`hop search`
+|Search across all the metadata in a project: which pipeline uses this connection, where is this field set.
+|xref:hop-tools/hop-search.adoc[Hop Search]
+
+|`hop encrypt`
+|Obfuscate a password so it isn't stored in clear text in a configuration file.
+|xref:hop-tools/hop-encrypt.adoc[Hop Encrypt]
+
+|`hop import`
+|Convert a Kettle/PDI repository into a Hop project.
+|xref:hop-vs-kettle/import-kettle-projects.adoc[Import Kettle projects]
+
+|`hop doc`
+|Generate documentation for your own Hop project, in Markdown or HTML.
+|xref:hop-tools/hop-doc.adoc[Hop Doc]
+|===
+
+Some tools are optional plugins rather than part of the standard client:
+
+[options="header",cols="20%,50%,30%"]
+|===
+|Tool|What you use it for|Read more
+
+|Marketplace
+|Install optional plugins into a running Hop client from a Maven repository.
+|xref:hop-tools/hop-marketplace.adoc[Hop Marketplace]
+
+|`hop lint`
+|Static analysis over a project: check pipelines, workflows and metadata without running them. Useful as a build step.
+|xref:hop-tools/hop-lint.adoc[Hop Lint]
+
+|PyHop
+|Drive Hop from Python.
+|xref:hop-tools/hop-python/hop-python.adoc[Hop Python]
+
+|Hop Arrow
+|Expose pipeline output over an Apache Arrow Flight server.
+|xref:hop-tools/hop-arrow-command.adoc[Hop Arrow]
+|===
+
+TIP: Hop Gui also runs in a browser. See xref:hop-gui/hop-web.adoc[Hop Web] and xref:hop-web-docker.adoc[Hop Web in Docker].
+
+== Try one
+
+The quickest way to see the command line in action is to run something you already built:
+
+[source,shell]
+----
+./hop run -j getting-started -r local -f '${PROJECT_HOME}/first-pipeline.hpl'
+----
+
+You get the same log you saw in the *Logging* tab of Hop Gui, on stdout.
+That is the whole deployment story for a lot of Hop projects: the same file, the same run configuration, started by cron, a Kubernetes CronJob or Airflow instead of by you.
+
+See xref:how-to-guides/scheduling-workflows-and-pipelines.adoc[Scheduling workflows and pipelines] for the details.

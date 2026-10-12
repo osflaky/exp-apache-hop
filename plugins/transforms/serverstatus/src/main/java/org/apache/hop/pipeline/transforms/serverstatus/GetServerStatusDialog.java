@@ -1,0 +1,472 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.pipeline.transforms.serverstatus;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.variables.IVariables;
+import org.apache.hop.i18n.BaseMessages;
+import org.apache.hop.pipeline.PipelineMeta;
+import org.apache.hop.ui.core.PropsUi;
+import org.apache.hop.ui.core.dialog.BaseDialog;
+import org.apache.hop.ui.pipeline.transform.BaseTransformDialog;
+import org.eclipse.swt.SWT;
+import org.eclipse.swt.custom.ScrolledComposite;
+import org.eclipse.swt.graphics.Rectangle;
+import org.eclipse.swt.layout.FillLayout;
+import org.eclipse.swt.layout.FormAttachment;
+import org.eclipse.swt.layout.FormData;
+import org.eclipse.swt.layout.FormLayout;
+import org.eclipse.swt.widgets.Combo;
+import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Control;
+import org.eclipse.swt.widgets.Label;
+import org.eclipse.swt.widgets.Shell;
+import org.eclipse.swt.widgets.Text;
+
+public class GetServerStatusDialog extends BaseTransformDialog {
+  private static final Class<?> PKG = GetServerStatusDialog.class;
+  private final GetServerStatusMeta input;
+
+  private boolean getPreviousFields = false;
+
+  private Combo wServerField;
+  private Text wErrorMessage;
+  private Text wStatusDescription;
+  private Text wServerLoad;
+  private Text wMemoryFree;
+  private Text wMemoryTotal;
+  private Text wCpuCores;
+  private Text wCpuProcessTime;
+  private Text wOsName;
+  private Text wOsVersion;
+  private Text wOsArchitecture;
+  private Text wActivePipelines;
+  private Text wFinishedPipelines;
+  private Text wActiveWorkflows;
+  private Text wFinishedWorkflows;
+  private Text wAvailable;
+  private Text wResponseNs;
+
+  public GetServerStatusDialog(
+      Shell parent,
+      IVariables variables,
+      GetServerStatusMeta transformMeta,
+      PipelineMeta pipelineMeta) {
+    super(parent, variables, transformMeta, pipelineMeta);
+    input = transformMeta;
+  }
+
+  @Override
+  public String open() {
+    createShell(BaseMessages.getString(PKG, "GetServerStatus.Transform.Name"));
+
+    buildButtonBar().ok(e -> ok()).cancel(e -> cancel()).build();
+
+    ScrolledComposite sc = new ScrolledComposite(shell, SWT.V_SCROLL | SWT.H_SCROLL);
+    PropsUi.setLook(sc);
+    FormData fdSc = new FormData();
+    fdSc.left = new FormAttachment(0, 0);
+    fdSc.top = new FormAttachment(wSpacer, 0);
+    fdSc.right = new FormAttachment(100, 0);
+    fdSc.bottom = new FormAttachment(wOk, -margin);
+    sc.setLayoutData(fdSc);
+    sc.setLayout(new FillLayout());
+
+    Composite wContent = new Composite(sc, SWT.NONE);
+    PropsUi.setLook(wContent);
+    FormLayout contentLayout = new FormLayout();
+    contentLayout.marginWidth = PropsUi.getFormMargin();
+    contentLayout.marginHeight = PropsUi.getFormMargin();
+    wContent.setLayout(contentLayout);
+
+    Label wlServerField = new Label(wContent, SWT.RIGHT);
+    wlServerField.setText(BaseMessages.getString(PKG, "GetServerStatusDialog.ServerField"));
+    PropsUi.setLook(wlServerField);
+    FormData fdlServerField = new FormData();
+    fdlServerField.left = new FormAttachment(0, 0);
+    fdlServerField.top = new FormAttachment(0, margin);
+    fdlServerField.right = new FormAttachment(middle, -margin);
+    wlServerField.setLayoutData(fdlServerField);
+    wServerField = new Combo(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wServerField);
+    FormData fdServerField = new FormData();
+    fdServerField.left = new FormAttachment(middle, 0);
+    fdServerField.top = new FormAttachment(wlServerField, 0, SWT.CENTER);
+    fdServerField.right = new FormAttachment(100, 0);
+    wServerField.setLayoutData(fdServerField);
+    Control lastControl = wServerField;
+
+    Label wlErrorMessage = new Label(wContent, SWT.RIGHT);
+    wlErrorMessage.setText(BaseMessages.getString(PKG, "GetServerStatusDialog.ErrorMessage"));
+    PropsUi.setLook(wlErrorMessage);
+    FormData fdlErrorMessage = new FormData();
+    fdlErrorMessage.left = new FormAttachment(0, 0);
+    fdlErrorMessage.top = new FormAttachment(lastControl, margin);
+    fdlErrorMessage.right = new FormAttachment(middle, -margin);
+    wlErrorMessage.setLayoutData(fdlErrorMessage);
+    wErrorMessage = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wErrorMessage);
+    FormData fdErrorMessage = new FormData();
+    fdErrorMessage.left = new FormAttachment(middle, 0);
+    fdErrorMessage.top = new FormAttachment(wlErrorMessage, 0, SWT.CENTER);
+    fdErrorMessage.right = new FormAttachment(100, 0);
+    wErrorMessage.setLayoutData(fdErrorMessage);
+    lastControl = wErrorMessage;
+
+    Label wlStatusDescription = new Label(wContent, SWT.RIGHT);
+    wlStatusDescription.setText(
+        BaseMessages.getString(PKG, "GetServerStatusDialog.StatusDescription"));
+    PropsUi.setLook(wlStatusDescription);
+    FormData fdlStatusDescription = new FormData();
+    fdlStatusDescription.left = new FormAttachment(0, 0);
+    fdlStatusDescription.top = new FormAttachment(lastControl, margin);
+    fdlStatusDescription.right = new FormAttachment(middle, -margin);
+    wlStatusDescription.setLayoutData(fdlStatusDescription);
+    wStatusDescription = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wStatusDescription);
+    FormData fdStatusDescription = new FormData();
+    fdStatusDescription.left = new FormAttachment(middle, 0);
+    fdStatusDescription.top = new FormAttachment(wlStatusDescription, 0, SWT.CENTER);
+    fdStatusDescription.right = new FormAttachment(100, 0);
+    wStatusDescription.setLayoutData(fdStatusDescription);
+    lastControl = wStatusDescription;
+
+    Label wlServerLoad = new Label(wContent, SWT.RIGHT);
+    wlServerLoad.setText(BaseMessages.getString(PKG, "GetServerStatusDialog.ServerLoad"));
+    PropsUi.setLook(wlServerLoad);
+    FormData fdlServerLoad = new FormData();
+    fdlServerLoad.left = new FormAttachment(0, 0);
+    fdlServerLoad.top = new FormAttachment(lastControl, margin);
+    fdlServerLoad.right = new FormAttachment(middle, -margin);
+    wlServerLoad.setLayoutData(fdlServerLoad);
+    wServerLoad = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wServerLoad);
+    FormData fdServerLoad = new FormData();
+    fdServerLoad.left = new FormAttachment(middle, 0);
+    fdServerLoad.top = new FormAttachment(wlServerLoad, 0, SWT.CENTER);
+    fdServerLoad.right = new FormAttachment(100, 0);
+    wServerLoad.setLayoutData(fdServerLoad);
+    lastControl = wServerLoad;
+
+    Label wlMemoryFree = new Label(wContent, SWT.RIGHT);
+    wlMemoryFree.setText(BaseMessages.getString(PKG, "GetServerStatusDialog.MemoryFree"));
+    PropsUi.setLook(wlMemoryFree);
+    FormData fdlMemoryFree = new FormData();
+    fdlMemoryFree.left = new FormAttachment(0, 0);
+    fdlMemoryFree.top = new FormAttachment(lastControl, margin);
+    fdlMemoryFree.right = new FormAttachment(middle, -margin);
+    wlMemoryFree.setLayoutData(fdlMemoryFree);
+    wMemoryFree = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wMemoryFree);
+    FormData fdMemoryFree = new FormData();
+    fdMemoryFree.left = new FormAttachment(middle, 0);
+    fdMemoryFree.top = new FormAttachment(wlMemoryFree, 0, SWT.CENTER);
+    fdMemoryFree.right = new FormAttachment(100, 0);
+    wMemoryFree.setLayoutData(fdMemoryFree);
+    lastControl = wMemoryFree;
+
+    Label wlMemoryTotal = new Label(wContent, SWT.RIGHT);
+    wlMemoryTotal.setText(BaseMessages.getString(PKG, "GetServerStatusDialog.MemoryTotal"));
+    PropsUi.setLook(wlMemoryTotal);
+    FormData fdlMemoryTotal = new FormData();
+    fdlMemoryTotal.left = new FormAttachment(0, 0);
+    fdlMemoryTotal.top = new FormAttachment(lastControl, margin);
+    fdlMemoryTotal.right = new FormAttachment(middle, -margin);
+    wlMemoryTotal.setLayoutData(fdlMemoryTotal);
+    wMemoryTotal = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wMemoryTotal);
+    FormData fdMemoryTotal = new FormData();
+    fdMemoryTotal.left = new FormAttachment(middle, 0);
+    fdMemoryTotal.top = new FormAttachment(wlMemoryTotal, 0, SWT.CENTER);
+    fdMemoryTotal.right = new FormAttachment(100, 0);
+    wMemoryTotal.setLayoutData(fdMemoryTotal);
+    lastControl = wMemoryTotal;
+
+    Label wlCpuCores = new Label(wContent, SWT.RIGHT);
+    wlCpuCores.setText(BaseMessages.getString(PKG, "GetServerStatusDialog.CpuCores"));
+    PropsUi.setLook(wlCpuCores);
+    FormData fdlCpuCores = new FormData();
+    fdlCpuCores.left = new FormAttachment(0, 0);
+    fdlCpuCores.top = new FormAttachment(lastControl, margin);
+    fdlCpuCores.right = new FormAttachment(middle, -margin);
+    wlCpuCores.setLayoutData(fdlCpuCores);
+    wCpuCores = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wCpuCores);
+    FormData fdCpuCores = new FormData();
+    fdCpuCores.left = new FormAttachment(middle, 0);
+    fdCpuCores.top = new FormAttachment(wlCpuCores, 0, SWT.CENTER);
+    fdCpuCores.right = new FormAttachment(100, 0);
+    wCpuCores.setLayoutData(fdCpuCores);
+    lastControl = wCpuCores;
+
+    Label wlCpuProcessTime = new Label(wContent, SWT.RIGHT);
+    wlCpuProcessTime.setText(BaseMessages.getString(PKG, "GetServerStatusDialog.CpuProcessTime"));
+    PropsUi.setLook(wlCpuProcessTime);
+    FormData fdlCpuProcessTime = new FormData();
+    fdlCpuProcessTime.left = new FormAttachment(0, 0);
+    fdlCpuProcessTime.top = new FormAttachment(lastControl, margin);
+    fdlCpuProcessTime.right = new FormAttachment(middle, -margin);
+    wlCpuProcessTime.setLayoutData(fdlCpuProcessTime);
+    wCpuProcessTime = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wCpuProcessTime);
+    FormData fdCpuProcessTime = new FormData();
+    fdCpuProcessTime.left = new FormAttachment(middle, 0);
+    fdCpuProcessTime.top = new FormAttachment(wlCpuProcessTime, 0, SWT.CENTER);
+    fdCpuProcessTime.right = new FormAttachment(100, 0);
+    wCpuProcessTime.setLayoutData(fdCpuProcessTime);
+    lastControl = wCpuProcessTime;
+
+    Label wlOsName = new Label(wContent, SWT.RIGHT);
+    wlOsName.setText(BaseMessages.getString(PKG, "GetServerStatusDialog.OsName"));
+    PropsUi.setLook(wlOsName);
+    FormData fdlOsName = new FormData();
+    fdlOsName.left = new FormAttachment(0, 0);
+    fdlOsName.top = new FormAttachment(lastControl, margin);
+    fdlOsName.right = new FormAttachment(middle, -margin);
+    wlOsName.setLayoutData(fdlOsName);
+    wOsName = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wOsName);
+    FormData fdOsName = new FormData();
+    fdOsName.left = new FormAttachment(middle, 0);
+    fdOsName.top = new FormAttachment(wlOsName, 0, SWT.CENTER);
+    fdOsName.right = new FormAttachment(100, 0);
+    wOsName.setLayoutData(fdOsName);
+    lastControl = wOsName;
+
+    Label wlOsVersion = new Label(wContent, SWT.RIGHT);
+    wlOsVersion.setText(BaseMessages.getString(PKG, "GetServerStatusDialog.OsVersion"));
+    PropsUi.setLook(wlOsVersion);
+    FormData fdlOsVersion = new FormData();
+    fdlOsVersion.left = new FormAttachment(0, 0);
+    fdlOsVersion.top = new FormAttachment(lastControl, margin);
+    fdlOsVersion.right = new FormAttachment(middle, -margin);
+    wlOsVersion.setLayoutData(fdlOsVersion);
+    wOsVersion = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wOsVersion);
+    FormData fdOsVersion = new FormData();
+    fdOsVersion.left = new FormAttachment(middle, 0);
+    fdOsVersion.top = new FormAttachment(wlOsVersion, 0, SWT.CENTER);
+    fdOsVersion.right = new FormAttachment(100, 0);
+    wOsVersion.setLayoutData(fdOsVersion);
+    lastControl = wOsVersion;
+
+    Label wlOsArchitecture = new Label(wContent, SWT.RIGHT);
+    wlOsArchitecture.setText(BaseMessages.getString(PKG, "GetServerStatusDialog.OsArchitecture"));
+    PropsUi.setLook(wlOsArchitecture);
+    FormData fdlOsArchitecture = new FormData();
+    fdlOsArchitecture.left = new FormAttachment(0, 0);
+    fdlOsArchitecture.top = new FormAttachment(lastControl, margin);
+    fdlOsArchitecture.right = new FormAttachment(middle, -margin);
+    wlOsArchitecture.setLayoutData(fdlOsArchitecture);
+    wOsArchitecture = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wOsArchitecture);
+    FormData fdOsArchitecture = new FormData();
+    fdOsArchitecture.left = new FormAttachment(middle, 0);
+    fdOsArchitecture.top = new FormAttachment(wlOsArchitecture, 0, SWT.CENTER);
+    fdOsArchitecture.right = new FormAttachment(100, 0);
+    wOsArchitecture.setLayoutData(fdOsArchitecture);
+    lastControl = wOsArchitecture;
+
+    Label wlActivePipelines = new Label(wContent, SWT.RIGHT);
+    wlActivePipelines.setText(BaseMessages.getString(PKG, "GetServerStatusDialog.ActivePipelines"));
+    PropsUi.setLook(wlActivePipelines);
+    FormData fdlActivePipelines = new FormData();
+    fdlActivePipelines.left = new FormAttachment(0, 0);
+    fdlActivePipelines.top = new FormAttachment(lastControl, margin);
+    fdlActivePipelines.right = new FormAttachment(middle, -margin);
+    wlActivePipelines.setLayoutData(fdlActivePipelines);
+    wActivePipelines = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wActivePipelines);
+    FormData fdActivePipelines = new FormData();
+    fdActivePipelines.left = new FormAttachment(middle, 0);
+    fdActivePipelines.top = new FormAttachment(wlActivePipelines, 0, SWT.CENTER);
+    fdActivePipelines.right = new FormAttachment(100, 0);
+    wActivePipelines.setLayoutData(fdActivePipelines);
+    lastControl = wActivePipelines;
+
+    Label wlFinishedPipelines = new Label(wContent, SWT.RIGHT);
+    wlFinishedPipelines.setText(
+        BaseMessages.getString(PKG, "GetServerStatusDialog.FinishedPipelines"));
+    PropsUi.setLook(wlFinishedPipelines);
+    FormData fdlFinishedPipelines = new FormData();
+    fdlFinishedPipelines.left = new FormAttachment(0, 0);
+    fdlFinishedPipelines.top = new FormAttachment(lastControl, margin);
+    fdlFinishedPipelines.right = new FormAttachment(middle, -margin);
+    wlFinishedPipelines.setLayoutData(fdlFinishedPipelines);
+    wFinishedPipelines = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wFinishedPipelines);
+    FormData fdFinishedPipelines = new FormData();
+    fdFinishedPipelines.left = new FormAttachment(middle, 0);
+    fdFinishedPipelines.top = new FormAttachment(wlFinishedPipelines, 0, SWT.CENTER);
+    fdFinishedPipelines.right = new FormAttachment(100, 0);
+    wFinishedPipelines.setLayoutData(fdFinishedPipelines);
+    lastControl = wFinishedPipelines;
+
+    Label wlActiveWorkflows = new Label(wContent, SWT.RIGHT);
+    wlActiveWorkflows.setText(BaseMessages.getString(PKG, "GetServerStatusDialog.ActiveWorkflows"));
+    PropsUi.setLook(wlActiveWorkflows);
+    FormData fdlActiveWorkflows = new FormData();
+    fdlActiveWorkflows.left = new FormAttachment(0, 0);
+    fdlActiveWorkflows.top = new FormAttachment(lastControl, margin);
+    fdlActiveWorkflows.right = new FormAttachment(middle, -margin);
+    wlActiveWorkflows.setLayoutData(fdlActiveWorkflows);
+    wActiveWorkflows = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wActiveWorkflows);
+    FormData fdActiveWorkflows = new FormData();
+    fdActiveWorkflows.left = new FormAttachment(middle, 0);
+    fdActiveWorkflows.top = new FormAttachment(wlActiveWorkflows, 0, SWT.CENTER);
+    fdActiveWorkflows.right = new FormAttachment(100, 0);
+    wActiveWorkflows.setLayoutData(fdActiveWorkflows);
+    lastControl = wActiveWorkflows;
+
+    Label wlFinishedWorkflows = new Label(wContent, SWT.RIGHT);
+    wlFinishedWorkflows.setText(
+        BaseMessages.getString(PKG, "GetServerStatusDialog.FinishedWorkflows"));
+    PropsUi.setLook(wlFinishedWorkflows);
+    FormData fdlFinishedWorkflows = new FormData();
+    fdlFinishedWorkflows.left = new FormAttachment(0, 0);
+    fdlFinishedWorkflows.top = new FormAttachment(lastControl, margin);
+    fdlFinishedWorkflows.right = new FormAttachment(middle, -margin);
+    wlFinishedWorkflows.setLayoutData(fdlFinishedWorkflows);
+    wFinishedWorkflows = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wFinishedWorkflows);
+    FormData fdFinishedWorkflows = new FormData();
+    fdFinishedWorkflows.left = new FormAttachment(middle, 0);
+    fdFinishedWorkflows.top = new FormAttachment(wlFinishedWorkflows, 0, SWT.CENTER);
+    fdFinishedWorkflows.right = new FormAttachment(100, 0);
+    wFinishedWorkflows.setLayoutData(fdFinishedWorkflows);
+    lastControl = wFinishedWorkflows;
+
+    Label wlAvailable = new Label(wContent, SWT.RIGHT);
+    wlAvailable.setText(BaseMessages.getString(PKG, "GetServerStatusDialog.Available"));
+    PropsUi.setLook(wlAvailable);
+    FormData fdlAvailable = new FormData();
+    fdlAvailable.left = new FormAttachment(0, 0);
+    fdlAvailable.top = new FormAttachment(lastControl, margin);
+    fdlAvailable.right = new FormAttachment(middle, -margin);
+    wlAvailable.setLayoutData(fdlAvailable);
+    wAvailable = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wAvailable);
+    FormData fdAvailable = new FormData();
+    fdAvailable.left = new FormAttachment(middle, 0);
+    fdAvailable.top = new FormAttachment(wlAvailable, 0, SWT.CENTER);
+    fdAvailable.right = new FormAttachment(100, 0);
+    wAvailable.setLayoutData(fdAvailable);
+    lastControl = wAvailable;
+
+    Label wlResponseNs = new Label(wContent, SWT.RIGHT);
+    wlResponseNs.setText(BaseMessages.getString(PKG, "GetServerStatusDialog.ResponseNs"));
+    PropsUi.setLook(wlResponseNs);
+    FormData fdlResponseNs = new FormData();
+    fdlResponseNs.left = new FormAttachment(0, 0);
+    fdlResponseNs.top = new FormAttachment(lastControl, margin);
+    fdlResponseNs.right = new FormAttachment(middle, -margin);
+    wlResponseNs.setLayoutData(fdlResponseNs);
+    wResponseNs = new Text(wContent, SWT.SINGLE | SWT.LEFT | SWT.BORDER);
+    PropsUi.setLook(wResponseNs);
+    FormData fdResponseNs = new FormData();
+    fdResponseNs.left = new FormAttachment(middle, 0);
+    fdResponseNs.top = new FormAttachment(wlResponseNs, 0, SWT.CENTER);
+    fdResponseNs.right = new FormAttachment(100, 0);
+    wResponseNs.setLayoutData(fdResponseNs);
+    lastControl = wResponseNs;
+
+    wContent.pack();
+    Rectangle bounds = wContent.getBounds();
+    sc.setContent(wContent);
+    sc.setExpandHorizontal(true);
+    sc.setExpandVertical(true);
+    sc.setMinWidth(bounds.width);
+    sc.setMinHeight(bounds.height);
+
+    // Get field names...
+    //
+    try {
+      wServerField.setItems(
+          pipelineMeta.getPrevTransformFields(variables, transformName).getFieldNames());
+    } catch (Exception e) {
+      log.logError("Error getting field names", e);
+    }
+
+    getData();
+    focusTransformName();
+    BaseDialog.defaultShellHandling(shell, c -> ok(), c -> cancel());
+
+    return transformName;
+  }
+
+  /** Populate the widgets. */
+  public void getData() {
+    wServerField.setText(Const.NVL(input.getServerField(), ""));
+    wErrorMessage.setText(Const.NVL(input.getErrorMessageField(), ""));
+    wStatusDescription.setText(Const.NVL(input.getStatusDescriptionField(), ""));
+    wServerLoad.setText(Const.NVL(input.getServerLoadField(), ""));
+    wMemoryFree.setText(Const.NVL(input.getMemoryFreeField(), ""));
+    wMemoryTotal.setText(Const.NVL(input.getMemoryTotalField(), ""));
+    wCpuCores.setText(Const.NVL(input.getCpuCoresField(), ""));
+    wCpuProcessTime.setText(Const.NVL(input.getCpuProcessTimeField(), ""));
+    wOsName.setText(Const.NVL(input.getOsNameField(), ""));
+    wOsVersion.setText(Const.NVL(input.getOsVersionField(), ""));
+    wOsArchitecture.setText(Const.NVL(input.getOsArchitectureField(), ""));
+    wActivePipelines.setText(Const.NVL(input.getActivePipelinesField(), ""));
+    wFinishedPipelines.setText(Const.NVL(input.getFinishedPipelinesField(), ""));
+    wActiveWorkflows.setText(Const.NVL(input.getActiveWorkflowsField(), ""));
+    wFinishedWorkflows.setText(Const.NVL(input.getFinishedWorkflowsField(), ""));
+    wAvailable.setText(Const.NVL(input.getAvailableField(), ""));
+    wResponseNs.setText(Const.NVL(input.getResponseNsField(), ""));
+  }
+
+  private void cancel() {
+    transformName = null;
+    dispose();
+  }
+
+  private void ok() {
+    if (StringUtils.isEmpty(wTransformName.getText())) {
+      return;
+    }
+
+    getInfo(input);
+    dispose();
+  }
+
+  private void getInfo(GetServerStatusMeta in) {
+    transformName = wTransformName.getText(); // return value
+
+    in.setServerField(wServerField.getText());
+    in.setErrorMessageField(wErrorMessage.getText());
+    in.setStatusDescriptionField(wStatusDescription.getText());
+    in.setServerLoadField(wServerLoad.getText());
+    in.setMemoryFreeField(wMemoryFree.getText());
+    in.setMemoryTotalField(wMemoryTotal.getText());
+    in.setCpuCoresField(wCpuCores.getText());
+    in.setCpuProcessTimeField(wCpuProcessTime.getText());
+    in.setOsNameField(wOsName.getText());
+    in.setOsVersionField(wOsVersion.getText());
+    in.setOsArchitectureField(wOsArchitecture.getText());
+    in.setActivePipelinesField(wActivePipelines.getText());
+    in.setFinishedPipelinesField(wFinishedPipelines.getText());
+    in.setActiveWorkflowsField(wActiveWorkflows.getText());
+    in.setFinishedWorkflowsField(wFinishedWorkflows.getText());
+    in.setAvailableField(wAvailable.getText());
+    in.setResponseNsField(wResponseNs.getText());
+
+    in.setChanged();
+  }
+}

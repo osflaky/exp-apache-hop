@@ -1,0 +1,159 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.hop.pipeline.transforms.filterrows;
+
+import static org.apache.hop.core.Condition.Function.EQUAL;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+
+import com.google.common.collect.ImmutableList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.apache.hop.core.Condition;
+import org.apache.hop.core.HopEnvironment;
+import org.apache.hop.core.plugins.PluginRegistry;
+import org.apache.hop.core.row.ValueMetaAndData;
+import org.apache.hop.pipeline.transform.TransformMeta;
+import org.apache.hop.pipeline.transform.TransformSerializationTestUtil;
+import org.apache.hop.pipeline.transforms.dummy.DummyMeta;
+import org.apache.hop.pipeline.transforms.loadsave.validator.ConditionLoadSaveValidator;
+import org.apache.hop.pipeline.transforms.loadsave.validator.IFieldLoadSaveValidator;
+import org.apache.hop.pipeline.transforms.loadsave.validator.StringLoadSaveValidator;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+class FilterRowsMetaTest {
+
+  @BeforeEach
+  void setUpLoadSave() throws Exception {
+    HopEnvironment.init();
+    PluginRegistry.init();
+    List<String> attributes = Arrays.asList("condition", "send_true_to", "send_false_to");
+
+    Map<String, String> getterMap = new HashMap<>();
+    Map<String, String> setterMap = new HashMap<>();
+
+    Map<String, IFieldLoadSaveValidator<?>> attrValidatorMap = new HashMap<>();
+    attrValidatorMap.put("condition", new ConditionLoadSaveValidator());
+    attrValidatorMap.put("trueTransformName", new StringLoadSaveValidator());
+    attrValidatorMap.put("falseTransformName", new StringLoadSaveValidator());
+
+    getterMap.put("send_true_to", "getTrueTransformName");
+    setterMap.put("send_true_to", "setTrueTransformName");
+    getterMap.put("send_false_to", "getFalseTransformName");
+    setterMap.put("send_false_to", "setFalseTransformName");
+
+    Map<String, IFieldLoadSaveValidator<?>> typeValidatorMap = new HashMap<>();
+  }
+
+  @Test
+  void testSerialization() throws Exception {
+
+    FilterRowsMeta meta =
+        TransformSerializationTestUtil.testSerialization(
+            "/filter-rows-transform-basic.xml", FilterRowsMeta.class);
+    assertEquals("True", meta.getTransformIOMeta().getTargetStreams().get(0).getSubject());
+    assertEquals("False", meta.getTransformIOMeta().getTargetStreams().get(1).getSubject());
+
+    Condition condition = meta.getCondition();
+    assertNotNull(condition);
+    assertEquals(2, condition.getChildren().size());
+    Condition c1 = condition.getChildren().get(0);
+    assertEquals("stateCode", c1.getLeftValueName());
+    assertEquals("FL", c1.getRightValueString());
+
+    Condition c2 = condition.getChildren().get(1);
+    assertEquals("housenr", c2.getLeftValueName());
+    assertEquals("100", c2.getRightValueString());
+  }
+
+  @Test
+  void testClone() {
+    FilterRowsMeta filterRowsMeta = new FilterRowsMeta();
+    filterRowsMeta.setCondition(new Condition());
+    filterRowsMeta.setTrueTransformName("true");
+    filterRowsMeta.setFalseTransformName("false");
+
+    FilterRowsMeta clone = (FilterRowsMeta) filterRowsMeta.clone();
+    assertNotNull(clone.getCondition());
+    assertEquals("true", clone.getTrueTransformName());
+    assertEquals("false", clone.getFalseTransformName());
+  }
+
+  /**
+   * FilterRowsMeta.clone() must deep-copy the condition tree so copy/paste and undo do not share
+   * mutable Condition / CValue instances with the original meta.
+   */
+  @Test
+  void testCloneDeepCopiesCondition() throws Exception {
+    Condition nameCondition =
+        new Condition("name", EQUAL, null, new ValueMetaAndData("constant", "Alice"));
+    Condition codeCondition =
+        new Condition("code", EQUAL, null, new ValueMetaAndData("constant", "A-1"));
+    Condition condition = new Condition();
+    condition.addCondition(nameCondition);
+    condition.addCondition(codeCondition);
+
+    FilterRowsMeta filterRowsMeta = new FilterRowsMeta();
+    filterRowsMeta.setCondition(condition);
+    filterRowsMeta.setTrueTransformName("true");
+    filterRowsMeta.setFalseTransformName("false");
+
+    FilterRowsMeta clone = filterRowsMeta.clone();
+    assertNotSame(filterRowsMeta, clone);
+    assertNotSame(filterRowsMeta.getCondition(), clone.getCondition());
+    assertNotSame(
+        filterRowsMeta.getCondition().getCondition(0), clone.getCondition().getCondition(0));
+    assertNotSame(
+        filterRowsMeta.getCondition().getCondition(0).getRightValue(),
+        clone.getCondition().getCondition(0).getRightValue());
+    assertEquals("true", clone.getTrueTransformName());
+    assertEquals("false", clone.getFalseTransformName());
+    assertEquals(2, clone.getCondition().nrConditions());
+    assertEquals("Alice", clone.getCondition().getCondition(0).getRightValueString());
+    assertEquals("A-1", clone.getCondition().getCondition(1).getRightValueString());
+
+    clone.getCondition().getCondition(0).getRightValue().setText("Bob");
+    clone.getCondition().getCondition(0).setLeftValueName("other");
+
+    assertEquals("Alice", filterRowsMeta.getCondition().getCondition(0).getRightValueString());
+    assertEquals("name", filterRowsMeta.getCondition().getCondition(0).getLeftValueName());
+    assertEquals("Bob", clone.getCondition().getCondition(0).getRightValueString());
+    assertEquals("other", clone.getCondition().getCondition(0).getLeftValueName());
+  }
+
+  @Test
+  void modifiedTarget() {
+    FilterRowsMeta filterRowsMeta = new FilterRowsMeta();
+    TransformMeta trueOutput = new TransformMeta("true", new DummyMeta());
+    TransformMeta falseOutput = new TransformMeta("false", new DummyMeta());
+
+    filterRowsMeta.setCondition(new Condition());
+    filterRowsMeta.setTrueTransformName(trueOutput.getName());
+    filterRowsMeta.setFalseTransformName(falseOutput.getName());
+    filterRowsMeta.searchInfoAndTargetTransforms(ImmutableList.of(trueOutput, falseOutput));
+
+    trueOutput.setName("true renamed");
+    falseOutput.setName("false renamed");
+
+    assertEquals("true renamed", filterRowsMeta.getTrueTransformName());
+    assertEquals("false renamed", filterRowsMeta.getFalseTransformName());
+  }
+}

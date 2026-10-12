@@ -1,0 +1,200 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.ui.core.widget;
+
+import java.util.Hashtable;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import org.apache.hop.ui.core.ConstUi;
+import org.apache.hop.ui.hopgui.SessionDisplay;
+import org.eclipse.swt.SWT;
+import org.eclipse.swt.events.TreeEvent;
+import org.eclipse.swt.events.TreeListener;
+import org.eclipse.swt.widgets.Display;
+import org.eclipse.swt.widgets.Tree;
+import org.eclipse.swt.widgets.TreeItem;
+
+/**
+ * This singleton class remembers whether or not a TreeItem is expanded. When the tree is refreshed,
+ * it remembers, making for a better user experience.
+ */
+public class TreeMemory {
+  private static TreeMemory treeMemory;
+
+  private static final Map<Display, TreeMemory> BY_DISPLAY = new ConcurrentHashMap<>();
+
+  private Map<TreeMemoryEntry, Boolean> map;
+
+  public static final TreeMemory getInstance() {
+    Display display = SessionDisplay.current();
+    if (display != null && !display.isDisposed()) {
+      return BY_DISPLAY.computeIfAbsent(
+          display,
+          d -> {
+            d.addListener(SWT.Dispose, e -> BY_DISPLAY.remove(d));
+            return new TreeMemory();
+          });
+    }
+    if (treeMemory != null) {
+      return treeMemory;
+    }
+    treeMemory = new TreeMemory();
+    return treeMemory;
+  }
+
+  TreeMemory() {
+    map = new Hashtable<>(100);
+  }
+
+  private class TreeMemoryEntry {
+    private String treeName;
+    private String[] path;
+
+    TreeMemoryEntry(String treeName, String[] path) {
+      this.path = path;
+      this.treeName = treeName;
+    }
+
+    public int hashCode() {
+      int code = treeName.hashCode();
+      for (String p : path) {
+        code ^= p.hashCode();
+      }
+      return code;
+    }
+
+    public boolean equals(Object obj) {
+      TreeMemoryEntry entry = (TreeMemoryEntry) obj;
+      if (!entry.treeName.equals(treeName)) {
+        return false;
+      }
+      if (entry.path.length != path.length) {
+        return false;
+      }
+      for (int i = 0; i < path.length; i++) {
+        if (!path[i].equals(entry.path[i])) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    public String toString() {
+      StringBuilder string = new StringBuilder(50);
+      string.append("{");
+      for (int i = 0; i < path.length; i++) {
+        if (i > 0) {
+          string.append("|");
+        }
+        string.append(path[i]);
+      }
+      string.append(":").append(treeName).append("}");
+      return string.toString();
+    }
+  }
+
+  public void storeExpanded(String treeName, TreeItem treeItem, boolean expanded) {
+    String[] path = ConstUi.getTreeStrings(treeItem);
+    storeExpanded(treeName, path, expanded);
+  }
+
+  public void storeExpanded(String treeName, String[] path, boolean expanded) {
+    TreeMemoryEntry key = new TreeMemoryEntry(treeName, path);
+    if (expanded) {
+      map.put(key, expanded);
+    } else {
+      map.remove(key);
+    }
+  }
+
+  public boolean isExpanded(String treeName, String[] path) {
+    TreeMemoryEntry key = new TreeMemoryEntry(treeName, path);
+
+    Boolean expanded = map.get(key);
+    if (expanded != null) {
+      return expanded;
+    } else {
+      return false;
+    }
+  }
+
+  public void clear() {
+    map.clear();
+  }
+
+  /** Remove all remembered expand/collapse state for one tree. */
+  public void clearTree(String treeName) {
+    map.entrySet().removeIf(entry -> entry.getKey().treeName.equals(treeName));
+  }
+
+  /**
+   * This method creates, adds and returns a tree listener that will keep track of the
+   * expanded/collapsed state of the TreeItems. This state will then be stored in the TreeMemory
+   * singleton.
+   *
+   * @param tree The tree to add the listener to
+   * @return The created/added TreeListener
+   */
+  public static final TreeListener addTreeListener(final Tree tree, final String treeName) {
+    TreeListener treeListener =
+        new TreeListener() {
+          @Override
+          public void treeExpanded(TreeEvent e) {
+            TreeItem treeItem = (TreeItem) e.item;
+            String[] path = ConstUi.getTreeStrings(treeItem);
+            TreeMemory treeMemory = TreeMemory.getInstance();
+            treeMemory.storeExpanded(treeName, path, true);
+          }
+
+          @Override
+          public void treeCollapsed(TreeEvent e) {
+            TreeItem treeItem = (TreeItem) e.item;
+            String[] path = ConstUi.getTreeStrings(treeItem);
+            TreeMemory treeMemory = TreeMemory.getInstance();
+            treeMemory.storeExpanded(treeName, path, false);
+          }
+        };
+    tree.addTreeListener(treeListener);
+    return treeListener;
+  }
+
+  /**
+   * Expand of collapse all TreeItems in the complete tree based on the values stored in memory.
+   *
+   * @param tree The tree to format.
+   */
+  public static void setExpandedFromMemory(Tree tree, String treeName) {
+    TreeItem[] items = tree.getItems();
+    for (TreeItem item : items) {
+      setExpandedFromMemory(tree, treeName, item);
+    }
+  }
+
+  private static void setExpandedFromMemory(Tree tree, String treeName, TreeItem treeItem) {
+    TreeMemory treeMemory = TreeMemory.getInstance();
+
+    String[] path = ConstUi.getTreeStrings(treeItem);
+    boolean expanded = treeMemory.isExpanded(treeName, path);
+    FolderTreeIcons.setExpanded(treeItem, expanded);
+
+    TreeItem[] items = treeItem.getItems();
+    for (TreeItem item : items) {
+      setExpandedFromMemory(tree, treeName, item);
+    }
+  }
+}

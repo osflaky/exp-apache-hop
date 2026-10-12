@@ -1,0 +1,251 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.core.plugins;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.io.File;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.apache.hop.core.exception.HopPluginClassMapException;
+import org.apache.hop.core.exception.HopPluginException;
+import org.apache.hop.core.extension.IPluginMock;
+import org.apache.hop.core.logging.LoggingPluginType;
+import org.apache.hop.core.row.IValueMeta;
+import org.apache.hop.core.row.RowBuffer;
+import org.apache.hop.core.row.value.ValueMetaPlugin;
+import org.apache.hop.core.row.value.ValueMetaPluginType;
+import org.apache.hop.junit.rules.RestoreHopEnvironmentExtension;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
+
+/** Unit test for {@link PluginRegistry} */
+@ExtendWith(RestoreHopEnvironmentExtension.class)
+class PluginRegistryUnitTest {
+
+  @Test
+  void getGetPluginInformation() throws HopPluginException {
+    PluginRegistry.getInstance().reset();
+    RowBuffer result = PluginRegistry.getInstance().getPluginInformation(BasePluginType.class);
+    assertNotNull(result);
+    assertEquals(10, result.getRowMeta().size());
+
+    for (IValueMeta vmi : result.getRowMeta().getValueMetaList()) {
+      assertEquals(IValueMeta.TYPE_STRING, vmi.getType());
+    }
+  }
+
+  /** Test that additional plugin mappings can be added via the PluginRegistry. */
+  @Test
+  void testSupplementalPluginMappings() throws Exception {
+    PluginRegistry registry = PluginRegistry.getInstance();
+    IPlugin mockPlugin = mock(IPlugin.class);
+    when(mockPlugin.getIds()).thenReturn(new String[] {"mockPlugin"});
+    when(mockPlugin.matches("mockPlugin")).thenReturn(true);
+    when(mockPlugin.getName()).thenReturn("mockPlugin");
+    doReturn(LoggingPluginType.class).when(mockPlugin).getPluginType();
+    registry.registerPlugin(LoggingPluginType.class, mockPlugin);
+
+    registry.addClassFactory(LoggingPluginType.class, String.class, "mockPlugin", () -> "Foo");
+    String result = registry.loadClass(LoggingPluginType.class, "mockPlugin", String.class);
+    assertEquals("Foo", result);
+    assertEquals(2, registry.getPlugins(LoggingPluginType.class).size());
+
+    // Now add another mapping and verify that it works and the existing supplementalPlugin was
+    // reused.
+    UUID uuid = UUID.randomUUID();
+    registry.addClassFactory(LoggingPluginType.class, UUID.class, "mockPlugin", () -> uuid);
+    UUID out = registry.loadClass(LoggingPluginType.class, "mockPlugin", UUID.class);
+    assertEquals(uuid, out);
+    assertEquals(2, registry.getPlugins(LoggingPluginType.class).size());
+  }
+
+  /** Test that several plugin jar can share the same classloader. */
+  @Test
+  void testPluginClassloaderGroup() throws Exception {
+    PluginRegistry registry = PluginRegistry.getInstance();
+    IPlugin mockPlugin1 = mock(IPlugin.class);
+    when(mockPlugin1.getIds()).thenReturn(new String[] {"mockPlugin"});
+    when(mockPlugin1.matches("mockPlugin")).thenReturn(true);
+    when(mockPlugin1.getName()).thenReturn("mockPlugin");
+    when(mockPlugin1.getClassMap())
+        .thenReturn(
+            new HashMap<>() {
+              {
+                put(IPluginType.class, String.class.getName());
+              }
+            });
+    when(mockPlugin1.getClassLoaderGroup()).thenReturn("groupPlugin");
+    doReturn(BasePluginType.class).when(mockPlugin1).getPluginType();
+
+    IPlugin mockPlugin2 = mock(IPlugin.class);
+    when(mockPlugin2.getIds()).thenReturn(new String[] {"mockPlugin2"});
+    when(mockPlugin2.matches("mockPlugin2")).thenReturn(true);
+    when(mockPlugin2.getName()).thenReturn("mockPlugin2");
+    when(mockPlugin2.getClassMap())
+        .thenReturn(
+            new HashMap<>() {
+              {
+                put(IPluginType.class, Integer.class.getName());
+              }
+            });
+    when(mockPlugin2.getClassLoaderGroup()).thenReturn("groupPlugin");
+    doReturn(BasePluginType.class).when(mockPlugin2).getPluginType();
+
+    registry.registerPlugin(BasePluginType.class, mockPlugin1);
+    registry.registerPlugin(BasePluginType.class, mockPlugin2);
+
+    // test they share the same classloader
+    ClassLoader ucl = registry.getClassLoader(mockPlugin1);
+    assertEquals(ucl, registry.getClassLoader(mockPlugin2));
+
+    // test removing a shared plugin creates a new classloader
+    registry.removePlugin(BasePluginType.class, mockPlugin2);
+    assertNotEquals(ucl, registry.getClassLoader(mockPlugin1));
+  }
+
+  /**
+   * A plugin joining an existing class loader group must get its own libraries added to the shared
+   * class loader. The plugin that creates the group's class loader first doesn't necessarily carry
+   * the same libraries - a database plugin adds the shared JDBC folders, the bulk loader transform
+   * sharing its group doesn't - and the loser of that race used to end up without its driver (issue
+   * #8133).
+   */
+  @Test
+  void testPluginClassloaderGroupKeepsLibrariesOfEveryMember(@TempDir Path tempDir)
+      throws Exception {
+    PluginRegistry registry = PluginRegistry.getInstance();
+    File driverJar = tempDir.resolve("driver.jar").toFile();
+
+    // Both plugins live in the same jar, but only the second one needs the driver.
+    //
+    IPlugin withoutLibraries = mockGroupPlugin("noLibs", String.class, List.of());
+    IPlugin withDriver =
+        mockGroupPlugin("withDriver", Integer.class, List.of(driverJar.getAbsolutePath()));
+
+    registry.registerPlugin(BasePluginType.class, withoutLibraries);
+    registry.registerPlugin(BasePluginType.class, withDriver);
+
+    // The plugin without libraries creates the group's class loader first.
+    //
+    URLClassLoader ucl = (URLClassLoader) registry.getClassLoader(withoutLibraries);
+    assertEquals(ucl, registry.getClassLoader(withDriver));
+
+    URL driverUrl = driverJar.toURI().toURL();
+    assertTrue(
+        Arrays.asList(ucl.getURLs()).contains(driverUrl),
+        "the shared class loader should carry the libraries of every plugin in the group");
+
+    // Asking again must not add the same jar a second time.
+    //
+    registry.getClassLoader(withDriver);
+    assertEquals(
+        1, Arrays.stream(ucl.getURLs()).filter(driverUrl::equals).count(), "duplicated library");
+  }
+
+  private static IPlugin mockGroupPlugin(String id, Class<?> mainClass, List<String> libraries) {
+    IPlugin plugin = mock(IPlugin.class);
+    when(plugin.getIds()).thenReturn(new String[] {id});
+    when(plugin.matches(id)).thenReturn(true);
+    when(plugin.getName()).thenReturn(id);
+    when(plugin.getClassMap()).thenReturn(Map.of(IPluginType.class, mainClass.getName()));
+    when(plugin.getLibraries()).thenReturn(libraries);
+    when(plugin.getClassLoaderGroup()).thenReturn("sharedGroup");
+    doReturn(BasePluginType.class).when(plugin).getPluginType();
+    return plugin;
+  }
+
+  @Test
+  void testClassloadingPluginNoClassRegistered() {
+    PluginRegistry registry = PluginRegistry.getInstance();
+    IPluginMock plugin = mock(IPluginMock.class);
+    when(plugin.loadClass(any())).thenReturn(null);
+
+    assertThrows(HopPluginClassMapException.class, () -> registry.loadClass(plugin, Class.class));
+  }
+
+  @Test
+  void testMergingPluginFragment() throws HopPluginException {
+    // setup
+    // initialize Fragment Type
+    PluginRegistry registry = PluginRegistry.getInstance();
+    BaseFragmentType<ValueMetaPlugin> fragmentType =
+        new BaseFragmentType<>(ValueMetaPlugin.class, "", "", ValueMetaPluginType.class) {
+          @Override
+          protected void initListeners(
+              Class<? extends IPluginType> aClass, Class<? extends IPluginType> typeToTrack) {
+            super.initListeners(BaseFragmentType.class, typeToTrack);
+          }
+
+          @Override
+          protected String extractID(ValueMetaPlugin annotation) {
+            return null;
+          }
+        };
+    assertTrue(fragmentType.isFragment());
+
+    IPlugin plugin = mock(IPlugin.class);
+    when(plugin.getIds()).thenReturn(new String[] {"mock"});
+    when(plugin.matches(any())).thenReturn(true);
+    doReturn(ValueMetaPluginType.class).when(plugin).getPluginType();
+    doAnswer(invocationOnMock -> null).when(plugin).merge(any(IPlugin.class));
+
+    IPlugin fragment = mock(IPlugin.class);
+    when(fragment.getIds()).thenReturn(new String[] {"mock"});
+    when(fragment.matches(any())).thenReturn(true);
+    doReturn(BaseFragmentType.class).when(fragment).getPluginType();
+    doAnswer(invocationOnMock -> null).when(fragment).merge(any(IPlugin.class));
+
+    // test
+    registry.registerPlugin(ValueMetaPluginType.class, plugin);
+    verify(plugin, atLeastOnce()).merge(any());
+
+    registry.registerPlugin(BaseFragmentType.class, fragment);
+    verify(fragment, never()).merge(any());
+    verify(plugin, atLeast(2)).merge(any());
+
+    // verify that the order doesn't influence
+    registry.removePlugin(ValueMetaPluginType.class, plugin);
+    registry.registerPlugin(ValueMetaPluginType.class, plugin);
+    verify(plugin, atLeast(3)).merge(any());
+
+    // verify plugin changes
+    registry.registerPlugin(ValueMetaPluginType.class, plugin);
+    verify(plugin, atLeast(4)).merge(any());
+  }
+}

@@ -1,0 +1,311 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.ui.hopgui;
+
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Stream;
+import org.apache.batik.transcoder.TranscoderException;
+import org.apache.batik.transcoder.TranscoderInput;
+import org.apache.batik.transcoder.TranscoderOutput;
+import org.apache.batik.transcoder.image.PNGTranscoder;
+import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.HopVersionProvider;
+import org.apache.hop.core.exception.HopRuntimeException;
+import org.apache.hop.core.gui.plugin.GuiRegistry;
+import org.apache.hop.core.gui.plugin.toolbar.GuiToolbarItem;
+import org.apache.hop.core.logging.LogChannel;
+import org.apache.hop.core.plugins.IPlugin;
+import org.apache.hop.core.plugins.PluginRegistry;
+import org.apache.hop.core.svg.SvgCache;
+import org.apache.hop.core.svg.SvgCacheEntry;
+import org.apache.hop.core.svg.SvgFile;
+import org.apache.hop.core.vfs.HopVfsNamespaces;
+import org.apache.hop.core.xml.XmlHandler;
+import org.apache.hop.metadata.plugin.MetadataPluginType;
+import org.apache.hop.metadata.util.HopMetadataInstance;
+import org.apache.hop.ui.hopgui.canvas.CanvasRenderServiceHandler;
+import org.apache.hop.ui.hopgui.perspective.HopPerspectivePluginType;
+import org.eclipse.rap.rwt.application.Application;
+import org.eclipse.rap.rwt.application.ApplicationConfiguration;
+import org.eclipse.rap.rwt.client.WebClient;
+import org.eclipse.rap.rwt.service.ResourceLoader;
+
+public class HopWeb implements ApplicationConfiguration {
+
+  public static final String CONST_LIGHT = "light";
+
+  private static final String WEB_PAGE_TITLE = "Apache Hop Web";
+  private static final String RESOURCE_LOGO_ICON_PNG = "ui/images/logo_icon.png";
+
+  /**
+   * Returns the browser page title for Hop Web, including the Apache Hop version when it is
+   * available from the runtime manifest ({@link HopVersionProvider}). If no implementation version
+   * is present, only {@link #WEB_PAGE_TITLE} is returned.
+   *
+   * @return page title such as {@code Apache Hop Web - 2.19.0-SNAPSHOT}, or {@code Apache Hop Web}
+   *     when the version is unknown
+   */
+  private static String getWebPageTitle() {
+    String version = new HopVersionProvider().getVersion()[0];
+    if (StringUtils.isNotEmpty(version)) {
+      return WEB_PAGE_TITLE + " - " + version;
+    }
+    return WEB_PAGE_TITLE;
+  }
+
+  @Override
+  public void configure(Application application) {
+
+    HopMetadataInstance.setScope(
+        new RapSessionScope<>(RapSessionScope.MetadataProviderHolder.class));
+    HopVfsNamespaces.setScope(new RapSessionScope<>(RapSessionScope.VfsNamespaceHolder.class));
+
+    try {
+      // Hop initialization is already done here.
+      // This means we can simply ask the gui registry for the toolbar images to register.
+      // Let's add all toolbar SVG files as static resources in the application.
+      // In GuiToolbarWidgets we can then add an exception for it.
+      //
+      GuiRegistry registry = GuiRegistry.getInstance();
+      Map<String, Map<String, GuiToolbarItem>> guiToolbarMap = registry.getGuiToolbarMap();
+      for (Map<String, GuiToolbarItem> itemMap : guiToolbarMap.values()) {
+        for (GuiToolbarItem item : itemMap.values()) {
+          addResource(application, item.getImage(), item.getClassLoader());
+        }
+      }
+
+      // Register alternate images for toolbar toggles (e.g. show/hide, show-all/show-selected,
+      // show-results/hide-results) so setToolbarItemImage() can switch icons in RWT without
+      // "Resource does not exist"
+      //
+      // Only the image a toolbar item declares is registered from the GUI registry above. An icon
+      // that replaces it later has to be named here, or RWT hands the browser the location of a
+      // resource it never registered: the img src 404s, and the icon simply does not change, with
+      // no error on either side. The unread notification bell is one of those.
+      ClassLoader uiClassLoader = HopWeb.class.getClassLoader();
+      for (String path :
+          new String[] {
+            "ui/images/show.svg",
+            "ui/images/hide.svg",
+            "ui/images/show-all.svg",
+            "ui/images/show-selected.svg",
+            "ui/images/show-results.svg",
+            "ui/images/hide-results.svg",
+            "ui/images/notification-bell-unread.svg"
+          }) {
+        addResource(application, path, uiClassLoader);
+      }
+
+      // Find metadata, perspective plugins
+      //
+      List<IPlugin> plugins = PluginRegistry.getInstance().getPlugins(MetadataPluginType.class);
+      plugins.addAll(PluginRegistry.getInstance().getPlugins(HopPerspectivePluginType.class));
+
+      // Add the plugin images as resources
+      //
+      for (IPlugin plugin : plugins) {
+        ClassLoader classLoader = PluginRegistry.getInstance().getClassLoader(plugin);
+        addResource(application, plugin.getImageFile(), classLoader);
+      }
+    } catch (Exception e) {
+      LogChannel.UI.logError("General exception", e);
+    }
+
+    application.addResource(
+        RESOURCE_LOGO_ICON_PNG,
+        new ResourceLoader() {
+          @Override
+          public InputStream getResourceAsStream(String resourceName) {
+            // Convert svg to png without Display
+            PNGTranscoder t = new PNGTranscoder();
+            InputStream inputStream =
+                this.getClass().getClassLoader().getResourceAsStream("ui/images/logo_icon.svg");
+            TranscoderInput input = new TranscoderInput(inputStream);
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            TranscoderOutput output = new TranscoderOutput(outputStream);
+            try {
+              t.transcode(input, output);
+            } catch (TranscoderException e) {
+              LogChannel.UI.logError("Transcoder exception", e);
+            }
+            return new ByteArrayInputStream(outputStream.toByteArray());
+          }
+        });
+    application.addResource(
+        "ui/images/logo_hop.svg",
+        resourceName ->
+            HopWeb.class.getClassLoader().getResourceAsStream("ui/images/logo_hop.svg"));
+    application.addServiceHandler(
+        CanvasRenderServiceHandler.SERVICE_ID, new CanvasRenderServiceHandler());
+
+    Stream.of(
+            "org/apache/hop/ui/hopgui/clipboard.js",
+            "org/apache/hop/ui/hopgui/canvas-zoom.js",
+            "org/apache/hop/ui/hopgui/canvas-svg.js",
+            "org/apache/hop/ui/hopgui/context-dialog-svg.js",
+            "org/apache/hop/ui/hopgui/log-console.js",
+            "org/apache/hop/ui/hopgui/gc-pending-images.js",
+            "org/apache/hop/ui/hopgui/dnd-cursor-passthrough.js",
+            "org/apache/hop/ui/hopgui/monaco-editor.js",
+            "org/apache/hop/ui/hopgui/mac-command-keys.js")
+        .forEach(
+            str ->
+                application.addResource(
+                    "js/" + FilenameUtils.getName(str),
+                    new ResourceLoader() {
+                      @Override
+                      public InputStream getResourceAsStream(String resourceName) {
+                        return this.getClass().getClassLoader().getResourceAsStream(str);
+                      }
+                    }));
+
+    registerMonacoResources(application);
+
+    // Only 2 choices for now
+    //
+    application.addStyleSheet("dark", "org/apache/hop/ui/hopgui/dark-mode.css");
+    application.addStyleSheet(CONST_LIGHT, "org/apache/hop/ui/hopgui/light-mode.css");
+
+    String webPageTitle = getWebPageTitle();
+
+    Map<String, String> propertiesLight = new HashMap<>();
+    propertiesLight.put(WebClient.PAGE_TITLE, webPageTitle);
+    propertiesLight.put(WebClient.FAVICON, RESOURCE_LOGO_ICON_PNG);
+    propertiesLight.put(WebClient.THEME_ID, CONST_LIGHT);
+    propertiesLight.put(WebClient.HEAD_HTML, readTextFromResource("head.html"));
+    propertiesLight.put(WebClient.BODY_HTML, splashBodyHtml(CONST_LIGHT));
+
+    Map<String, String> propertiesDark = new HashMap<>();
+    propertiesDark.put(WebClient.PAGE_TITLE, webPageTitle);
+    propertiesDark.put(WebClient.FAVICON, RESOURCE_LOGO_ICON_PNG);
+    propertiesDark.put(WebClient.THEME_ID, "dark");
+    propertiesDark.put(WebClient.HEAD_HTML, readTextFromResource("head.html"));
+    propertiesDark.put(WebClient.BODY_HTML, splashBodyHtml("dark"));
+
+    application.addEntryPoint("/ui", HopWebEntryPoint.class, propertiesLight);
+    application.addEntryPoint("/ui-dark", HopWebEntryPoint.class, propertiesDark);
+    application.setOperationMode(Application.OperationMode.SWT_COMPATIBILITY);
+
+    // Print some important system settings...
+    //
+    LogChannel.UI.logBasic("HOP_CONFIG_FOLDER: " + Const.HOP_CONFIG_FOLDER);
+    LogChannel.UI.logBasic("HOP_AUDIT_FOLDER (property): " + Const.HOP_AUDIT_FOLDER);
+    LogChannel.UI.logBasic("HOP_AUDIT_FOLDER (effective): " + HopWebAuditPaths.getAuditRoot());
+    LogChannel.UI.logBasic("HOP_GUI_ZOOM_FACTOR: " + System.getProperty("HOP_GUI_ZOOM_FACTOR"));
+  }
+
+  /**
+   * Registers all bundled Monaco Editor files as RAP application resources so the editor works in
+   * offline environments without needing a CDN.
+   */
+  private void registerMonacoResources(Application application) {
+    String manifestPath = "org/apache/hop/ui/hopgui/monaco/monaco-files.list";
+    ClassLoader cl = HopWeb.class.getClassLoader();
+    try (InputStream is = cl.getResourceAsStream(manifestPath);
+        BufferedReader reader =
+            new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+      String line;
+      while ((line = reader.readLine()) != null) {
+        String trimmed = line.trim();
+        if (trimmed.isEmpty()) {
+          continue;
+        }
+        final String classpathResource = "org/apache/hop/ui/hopgui/monaco/" + trimmed;
+        String resourceName = "monaco/" + trimmed;
+        application.addResource(
+            resourceName,
+            name -> HopWeb.class.getClassLoader().getResourceAsStream(classpathResource));
+      }
+    } catch (Exception e) {
+      LogChannel.UI.logError("Failed to register Monaco editor resources", e);
+    }
+  }
+
+  private void addResource(
+      Application application, final String imageFilename, final ClassLoader classLoader) {
+    if (StringUtils.isEmpty(imageFilename)) {
+      return;
+    }
+    // See if the resource was already added.q
+    //
+    if (SvgCache.findSvg(imageFilename) != null) {
+      return;
+    }
+
+    ResourceLoader loader =
+        filename -> {
+          try {
+            SvgFile svgFile = new SvgFile(filename, classLoader);
+            SvgCacheEntry cacheEntry = SvgCache.loadSvg(svgFile);
+            String svgXml = XmlHandler.getXmlString(cacheEntry.getSvgDocument(), false, false);
+            return new ByteArrayInputStream(svgXml.getBytes(StandardCharsets.UTF_8));
+          } catch (Exception e) {
+            throw new HopRuntimeException(
+                "Error loading SVG resource filename: " + imageFilename, e);
+          }
+        };
+    application.addResource(imageFilename, loader);
+  }
+
+  /**
+   * Startup overlay for {@link WebClient#BODY_HTML}. It stays up until the main toolbar exists
+   * ({@code toolbar-10010-new}), covering the first-request {@code HopGui.open()} work; client JS
+   * then drops the z-index so Welcome and the GUI stay clickable (issue #8112).
+   */
+  static String splashBodyHtml(String theme) {
+    String safeTheme = CONST_LIGHT.equals(theme) ? CONST_LIGHT : "dark";
+    return readTextFromResource("splash.html").replace("{{theme}}", safeTheme);
+  }
+
+  private static String readTextFromResource(String resourceName) {
+    String result;
+    try {
+      ClassLoader classLoader = HopWeb.class.getClassLoader();
+      InputStream inputStream = classLoader.getResourceAsStream(resourceName);
+      try (inputStream) {
+        if (inputStream == null) {
+          throw new HopRuntimeException("Resource not found: " + resourceName);
+        }
+        BufferedReader reader =
+            new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
+        StringBuilder stringBuilder = new StringBuilder();
+        String line = reader.readLine();
+        while (line != null) {
+          stringBuilder.append(line);
+          stringBuilder.append('\n');
+          line = reader.readLine();
+        }
+        result = stringBuilder.toString();
+      }
+    } catch (IOException e) {
+      throw new HopRuntimeException("Failed to read text from resource: " + resourceName);
+    }
+    return result;
+  }
+}

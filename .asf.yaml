@@ -1,0 +1,75 @@
+
+notifications:
+  commits: commits@hop.apache.org
+  issues: issues@hop.apache.org
+  pullrequests_status: issues@hop.apache.org
+  pullrequests_comment: issues@hop.apache.org
+  discussions: users@hop.apache.org
+
+github:
+  description: "Hop Orchestration Platform"
+  homepage: https://hop.apache.org/
+  labels:
+    - hop
+    - java
+    - etl
+    - orchestration
+    - data-integration
+    - streaming
+    - pipeline
+    - workflow
+    - apache
+  features:
+    # Enable issues management
+    issues: true
+    # Enable projects for project management boards
+    projects: true
+    # Enable wiki for documentation
+    wiki: false
+    # Enable discussions
+    discussions: true
+
+  enabled_merge_buttons:
+    squash: true
+    merge: false
+    rebase: false
+
+  # Attempt to make the auto-generated github emails more easily readable in email clients.
+  custom_subjects:
+    new_pr: "[PR] {title} ({repository})"
+    close_pr: "Re: [PR] {title} ({repository})"
+    comment_pr: "Re: [PR] {title} ({repository})"
+    diffcomment: "Re: [PR] {title} ({repository})"
+    merge_pr: "Re: [PR] {title} ({repository})"
+    new_issue: "[I] {title} ({repository})"
+    comment_issue: "Re: [I] {title} ({repository})"
+    close_issue: "Re: [I] {title} ({repository})"
+    catchall: "[GH] {title} ({repository})"
+    new_discussion: "[D] {title} ({repository})"
+    edit_discussion: "Re: [D] {title} ({repository})"
+    close_discussion: "Re: [D] {title} ({repository})"
+    close_discussion_with_comment: "Re: [D] {title} ({repository})"
+    reopen_discussion: "Re: [D] {title} ({repository})"
+    new_comment_discussion: "Re: [D] {title} ({repository})"
+    edit_comment_discussion: "Re: [D] {title} ({repository})"
+    delete_comment_discussion: "Re: [D] {title} ({repository})"
+
+  #remove ~ when enabling the protection
+  protected_branches: ~
+#    master:
+#      required_pull_request_reviews:
+#        required_approving_review_count: 1
+
+  rulesets:
+    - name: "Default Branch Protection"
+      type: branch
+      branches:
+        includes:
+          - "~DEFAULT_BRANCH"
+          - "release/*"
+          - "rel/*"
+        excludes: []
+      bypass_teams:
+        - root
+      restrict_deletion: true
+      restrict_force_push: true

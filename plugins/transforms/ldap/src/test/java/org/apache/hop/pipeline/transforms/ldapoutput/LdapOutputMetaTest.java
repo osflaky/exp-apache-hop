@@ -1,0 +1,201 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.hop.pipeline.transforms.ldapoutput;
+
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.apache.commons.lang3.builder.EqualsBuilder;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.HopEnvironment;
+import org.apache.hop.core.encryption.Encr;
+import org.apache.hop.core.encryption.TwoWayPasswordEncoderPluginType;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.plugins.PluginRegistry;
+import org.apache.hop.core.util.EnvUtil;
+import org.apache.hop.junit.rules.RestoreHopEngineEnvironmentExtension;
+import org.apache.hop.pipeline.transforms.loadsave.LoadSaveTester;
+import org.apache.hop.pipeline.transforms.loadsave.validator.ArrayLoadSaveValidator;
+import org.apache.hop.pipeline.transforms.loadsave.validator.BooleanLoadSaveValidator;
+import org.apache.hop.pipeline.transforms.loadsave.validator.IFieldLoadSaveValidator;
+import org.apache.hop.pipeline.transforms.loadsave.validator.IntLoadSaveValidator;
+import org.apache.hop.pipeline.transforms.loadsave.validator.ListLoadSaveValidator;
+import org.apache.hop.pipeline.transforms.loadsave.validator.StringLoadSaveValidator;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+
+class LdapOutputMetaTest {
+  @RegisterExtension
+  static RestoreHopEngineEnvironmentExtension env = new RestoreHopEngineEnvironmentExtension();
+
+  LoadSaveTester<LdapOutputMeta> loadSaveTester;
+
+  @BeforeEach
+  void setUp() throws Exception {
+    HopEnvironment.init();
+    PluginRegistry.addPluginType(TwoWayPasswordEncoderPluginType.getInstance());
+    PluginRegistry.init();
+    List<String> attributes =
+        Arrays.asList(
+            "updateLookup",
+            "updateStream",
+            "update",
+            "useAuthentication",
+            "Host",
+            "userName",
+            "password",
+            "port",
+            "dnFieldName",
+            "failIfNotExist",
+            "searchBase",
+            "multiValuedSeparator",
+            "operationType",
+            "oldDnFieldName",
+            "newDnFieldName",
+            "deleteRDN",
+            "fields",
+            "referralType",
+            "derefAliasesType",
+            "protocol",
+            "useCertificate",
+            "trustStorePath",
+            "trustStorePassword",
+            "trustAllCertificates");
+
+    Map<String, String> getterMap =
+        new HashMap<>() {
+          {
+            put("updateLookup", "getUpdateLookup");
+            put("updateStream", "getUpdateStream");
+            put("update", "getUpdate");
+            put("useAuthentication", "isUseAuthentication");
+            put("Host", "getHost");
+            put("userName", "getUserName");
+            put("password", "getPassword");
+            put("port", "getPort");
+            put("dnFieldName", "getDnField");
+            put("failIfNotExist", "isFailIfNotExist");
+            put("searchBase", "getSearchBase");
+            put("multiValuedSeparator", "getMultiValuedSeparator");
+            put("operationType", "getOperationType");
+            put("oldDnFieldName", "getOldDnFieldName");
+            put("newDnFieldName", "getNewDnFieldName");
+            put("deleteRDN", "isDeleteRDN");
+            put("fields", "getFields");
+            put("referralType", "getReferralType");
+            put("derefAliasesType", "getDerefAliasesType");
+            put("protocol", "getProtocol");
+            put("useCertificate", "isUseCertificate");
+            put("trustStorePath", "getTrustStorePath");
+            put("trustStorePassword", "getTrustStorePassword");
+            put("trustAllCertificates", "isTrustAllCertificates");
+          }
+        };
+
+    Map<String, String> setterMap =
+        new HashMap<>() {
+          {
+            put("updateLookup", "setUpdateLookup");
+            put("updateStream", "setUpdateStream");
+            put("update", "setUpdate");
+            put("useAuthentication", "setUseAuthentication");
+            put("Host", "setHost");
+            put("userName", "setUserName");
+            put("password", "setPassword");
+            put("port", "setPort");
+            put("dnFieldName", "setDnField");
+            put("failIfNotExist", "setFailIfNotExist");
+            put("searchBase", "setSearchBase");
+            put("multiValuedSeparator", "setMultiValuedSeparator");
+            put("operationType", "setOperationType");
+            put("oldDnFieldName", "setOldDnFieldName");
+            put("newDnFieldName", "setNewDnFieldName");
+            put("deleteRDN", "setDeleteRDN");
+            put("fields", "setFields");
+            put("referralType", "setReferralType");
+            put("derefAliasesType", "setDerefAliasesType");
+            put("protocol", "setProtocol");
+            put("useCertificate", "setUseCertificate");
+            put("trustStorePath", "setTrustStorePath");
+            put("trustStorePassword", "setTrustStorePassword");
+            put("trustAllCertificates", "setTrustAllCertificates");
+          }
+        };
+
+    IFieldLoadSaveValidator<String[]> stringArrayLoadSaveValidator =
+        new ArrayLoadSaveValidator<>(new StringLoadSaveValidator(), 3);
+    IFieldLoadSaveValidator<Boolean[]> booleanArrayLoadSaveValidator =
+        new ArrayLoadSaveValidator<>(new BooleanLoadSaveValidator(), 3);
+    Map<String, IFieldLoadSaveValidator<?>> attrValidatorMap = new HashMap<>();
+    attrValidatorMap.put("update", booleanArrayLoadSaveValidator);
+    attrValidatorMap.put("updateLookup", stringArrayLoadSaveValidator);
+    attrValidatorMap.put("updateStream", stringArrayLoadSaveValidator);
+    attrValidatorMap.put("operationType", new IntLoadSaveValidator(7));
+    attrValidatorMap.put("referralType", new IntLoadSaveValidator(2));
+    attrValidatorMap.put("derefAliasesType", new IntLoadSaveValidator(4));
+    attrValidatorMap.put(
+        "fields", new ListLoadSaveValidator<>(new LdapOutputFieldLoadSaveValidator(), 3));
+
+    Map<String, IFieldLoadSaveValidator<?>> typeValidatorMap = new HashMap<>();
+
+    loadSaveTester =
+        new LoadSaveTester<>(
+            LdapOutputMeta.class,
+            attributes,
+            getterMap,
+            setterMap,
+            attrValidatorMap,
+            typeValidatorMap);
+
+    String passwordEncoderPluginID =
+        Const.NVL(EnvUtil.getSystemProperty(Const.HOP_PASSWORD_ENCODER_PLUGIN), "Hop");
+    Encr.init(passwordEncoderPluginID);
+  }
+
+  @Test
+  void testSerialization() throws HopException {
+    loadSaveTester.testSerialization();
+  }
+
+  public class LdapOutputFieldLoadSaveValidator
+      implements IFieldLoadSaveValidator<LdapOutputField> {
+    @Override
+    public LdapOutputField getTestObject() {
+      LdapOutputField rtn = new LdapOutputField();
+      rtn.setUpdateLookup(UUID.randomUUID().toString());
+      rtn.setUpdateStream(UUID.randomUUID().toString());
+      rtn.setUpdate(true);
+      return rtn;
+    }
+
+    @Override
+    public boolean validateTestObject(LdapOutputField testObject, Object actual) {
+      if (!(actual instanceof LdapOutputField)) {
+        return false;
+      }
+      LdapOutputField another = (LdapOutputField) actual;
+      return new EqualsBuilder()
+          .append(testObject.getUpdateLookup(), another.getUpdateLookup())
+          .append(testObject.getUpdateStream(), another.getUpdateStream())
+          .append(testObject.isUpdate(), another.isUpdate())
+          .isEquals();
+    }
+  }
+}

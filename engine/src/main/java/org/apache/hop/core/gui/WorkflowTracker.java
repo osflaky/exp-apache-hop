@@ -1,0 +1,298 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.core.gui;
+
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.ListIterator;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import lombok.Getter;
+import lombok.Setter;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.util.EnvUtil;
+import org.apache.hop.core.xml.XmlHandler;
+import org.apache.hop.workflow.ActionResult;
+import org.apache.hop.workflow.WorkflowMeta;
+import org.apache.hop.workflow.action.ActionMeta;
+import org.w3c.dom.Node;
+
+/** Responsible for tracking the execution of a workflow as a hierarchy. */
+@Getter
+@Setter
+public class WorkflowTracker<T extends WorkflowMeta> {
+  public static final String XML_TAG = "workflow_tracker";
+
+  private static final String XML_TAG_TRACKERS = "workflow_trackers";
+  private static final String TAG_WORKFLOW_NAME = "workflow_name";
+  private static final String TAG_WORKFLOW_FILENAME = "workflow_filename";
+
+  /**
+   * The trackers for each individual action. Since we invoke LinkedList.removeFirst() there is no
+   * sense in lurking the field behind the interface
+   */
+  private LinkedList<WorkflowTracker> workflowTrackers;
+
+  /** If the workflowTrackers list is empty, then this is the result */
+  private ActionResult result;
+
+  /** The parent workflow tracker, null if this is the root */
+  private WorkflowTracker parentWorkflowTracker;
+
+  private String workflowName;
+
+  private String workflowFilename;
+
+  private int maxChildren;
+
+  private final ReentrantReadWriteLock lock;
+
+  /**
+   * @param workflowMeta the workflow metadata to keep track of (with maximum 5000 children)
+   */
+  public WorkflowTracker(T workflowMeta) {
+    this(
+        workflowMeta,
+        Const.toInt(EnvUtil.getSystemProperty(Const.HOP_MAX_WORKFLOW_TRACKER_SIZE), 5000));
+  }
+
+  /**
+   * @param workflowMeta The workflow metadata to track
+   * @param maxChildren The maximum number of children to keep track of (1000 is the default)
+   */
+  public WorkflowTracker(T workflowMeta, int maxChildren) {
+    if (workflowMeta != null) {
+      this.workflowName = workflowMeta.getName();
+      this.workflowFilename = workflowMeta.getFilename();
+    }
+
+    this.workflowTrackers = new LinkedList<>();
+    this.maxChildren = maxChildren;
+    this.lock = new ReentrantReadWriteLock();
+  }
+
+  /**
+   * Creates a workflow tracker with a single result (maxChildren children are kept)
+   *
+   * @param workflowMeta the workflow metadata to keep track of
+   * @param result the action result to track.
+   */
+  public WorkflowTracker(T workflowMeta, ActionResult result) {
+    this(workflowMeta);
+    this.result = result;
+  }
+
+  /**
+   * Creates a workflow tracker with a single result
+   *
+   * @param workflowMeta the workflow metadata to keep track of
+   * @param maxChildren The maximum number of children to keep track of
+   * @param result the action result to track.
+   */
+  public WorkflowTracker(T workflowMeta, int maxChildren, ActionResult result) {
+    this(workflowMeta, maxChildren);
+    this.result = result;
+  }
+
+  /**
+   * Reads a tracker hierarchy back from the XML written by {@link #getXml()}. Used to show the
+   * execution of a remotely running workflow, where the tracker is maintained on the server.
+   *
+   * <p>This is a factory method rather than a constructor because a constructor taking a node would
+   * be ambiguous with {@link #WorkflowTracker(WorkflowMeta)} for a null argument.
+   *
+   * @param node the {@link #XML_TAG} node to read
+   * @return the tracker described by the node
+   */
+  public static WorkflowTracker<WorkflowMeta> fromXml(Node node) throws HopException {
+    WorkflowTracker<WorkflowMeta> tracker = new WorkflowTracker<>(null);
+
+    tracker.workflowName = XmlHandler.getTagValue(node, TAG_WORKFLOW_NAME);
+    tracker.workflowFilename = XmlHandler.getTagValue(node, TAG_WORKFLOW_FILENAME);
+
+    Node resultNode = XmlHandler.getSubNode(node, ActionResult.XML_TAG);
+    if (resultNode != null) {
+      tracker.result = new ActionResult(resultNode);
+    }
+
+    Node trackersNode = XmlHandler.getSubNode(node, XML_TAG_TRACKERS);
+    if (trackersNode != null) {
+      int nrTrackers = XmlHandler.countNodes(trackersNode, XML_TAG);
+      for (int i = 0; i < nrTrackers; i++) {
+        WorkflowTracker<WorkflowMeta> child =
+            fromXml(XmlHandler.getSubNodeByNr(trackersNode, XML_TAG, i));
+        child.setParentWorkflowTracker(tracker);
+        tracker.addWorkflowTracker(child);
+      }
+    }
+    return tracker;
+  }
+
+  /**
+   * Serializes this tracker and, recursively, the trackers of any child workflow. Child workflows
+   * are kept nested so that the hierarchy survives the trip from a workflow running on a server to
+   * the client showing it.
+   */
+  public String getXml() {
+    lock.readLock().lock();
+    try {
+      StringBuilder xml = new StringBuilder();
+      xml.append(XmlHandler.openTag(XML_TAG));
+      xml.append(XmlHandler.addTagValue(TAG_WORKFLOW_NAME, workflowName));
+      xml.append(XmlHandler.addTagValue(TAG_WORKFLOW_FILENAME, workflowFilename));
+      if (result != null) {
+        xml.append(result.getXml());
+      }
+      xml.append(XmlHandler.openTag(XML_TAG_TRACKERS));
+      for (WorkflowTracker workflowTracker : workflowTrackers) {
+        xml.append(workflowTracker.getXml());
+      }
+      xml.append(XmlHandler.closeTag(XML_TAG_TRACKERS));
+      xml.append(XmlHandler.closeTag(XML_TAG));
+      return xml.toString();
+    } finally {
+      lock.readLock().unlock();
+    }
+  }
+
+  public void addWorkflowTracker(WorkflowTracker workflowTracker) {
+    lock.writeLock().lock();
+    try {
+      workflowTrackers.add(workflowTracker);
+      while (workflowTrackers.size() > maxChildren) {
+        // Use remove instead of subList
+        workflowTrackers.removeFirst();
+      }
+    } finally {
+      lock.writeLock().unlock();
+    }
+  }
+
+  public WorkflowTracker getWorkflowTracker(int i) {
+    lock.readLock().lock();
+    try {
+      return workflowTrackers.get(i);
+    } finally {
+      lock.readLock().unlock();
+    }
+  }
+
+  public int nrWorkflowTrackers() {
+    lock.readLock().lock();
+    try {
+      return workflowTrackers.size();
+    } finally {
+      lock.readLock().unlock();
+    }
+  }
+
+  /**
+   * Returns a list that contains all workflow trackers. The list is created as a defensive copy of
+   * internal trackers' storage.
+   *
+   * @return list of workflow trackers
+   */
+  public List<WorkflowTracker> getWorkflowTrackers() {
+    lock.readLock().lock();
+    try {
+      return new ArrayList<>(workflowTrackers);
+    } finally {
+      lock.readLock().unlock();
+    }
+  }
+
+  /**
+   * @param workflowTrackers The workflowTrackers to set.
+   */
+  public void setWorkflowTrackers(List<WorkflowTracker> workflowTrackers) {
+    lock.writeLock().lock();
+    try {
+      this.workflowTrackers.clear();
+      this.workflowTrackers.addAll(workflowTrackers);
+    } finally {
+      lock.writeLock().unlock();
+    }
+  }
+
+  /**
+   * @return Returns the result.
+   */
+  public ActionResult getActionResult() {
+    return result;
+  }
+
+  /**
+   * @param result The result to set.
+   */
+  public void setActionResult(ActionResult result) {
+    this.result = result;
+  }
+
+  public void clear() {
+    lock.writeLock().lock();
+    try {
+      workflowTrackers.clear();
+      result = null;
+    } finally {
+      lock.writeLock().unlock();
+    }
+  }
+
+  /**
+   * Finds the WorkflowTracker for the action specified. Use this to
+   *
+   * @param actionMeta The action to search the workflow tracker for
+   * @return The WorkflowTracker of null if none could be found...
+   */
+  public WorkflowTracker findWorkflowTracker(ActionMeta actionMeta) {
+    if (actionMeta.getName() == null) {
+      return null;
+    }
+
+    lock.readLock().lock();
+    try {
+      ListIterator<WorkflowTracker> it = workflowTrackers.listIterator(workflowTrackers.size());
+      while (it.hasPrevious()) {
+        WorkflowTracker tracker = it.previous();
+        ActionResult result = tracker.getActionResult();
+        if (result != null && actionMeta.getName().equals(result.getActionName())) {
+          return tracker;
+        }
+      }
+    } finally {
+      lock.readLock().unlock();
+    }
+    return null;
+  }
+
+  public int getTotalNumberOfItems() {
+    lock.readLock().lock();
+    try {
+      int total = 1; // 1 = this one
+
+      for (WorkflowTracker workflowTracker : workflowTrackers) {
+        total += workflowTracker.getTotalNumberOfItems();
+      }
+
+      return total;
+    } finally {
+      lock.readLock().unlock();
+    }
+  }
+}

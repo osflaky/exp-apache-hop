@@ -1,0 +1,619 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ */
+
+package org.apache.hop.ui.hopgui.perspective.execution;
+
+import org.apache.hop.core.gui.DPoint;
+import org.apache.hop.core.gui.Point;
+import org.apache.hop.core.gui.plugin.key.GuiKeyboardShortcut;
+import org.apache.hop.core.gui.plugin.key.GuiOsxKeyboardShortcut;
+import org.apache.hop.ui.core.PropsUi;
+import org.apache.hop.ui.util.EnvironmentUtils;
+import org.eclipse.swt.SWT;
+import org.eclipse.swt.events.MouseEvent;
+import org.eclipse.swt.widgets.Canvas;
+import org.eclipse.swt.widgets.Composite;
+
+public abstract class DragViewZoomBase extends Composite {
+
+  /** The distance the view pans for one arrow key press, in graph coordinates at 100% zoom. */
+  private static final double PAN_STEP = 20;
+
+  /**
+   * How much larger a step is when SHIFT is held down, both for panning and for moving elements.
+   */
+  protected static final int LARGE_STEP_FACTOR = 5;
+
+  protected Canvas canvas;
+  protected DPoint offset;
+  protected Point maximum;
+  protected float magnification = 1.0f;
+  protected org.apache.hop.core.gui.Rectangle viewPort;
+  protected org.apache.hop.core.gui.Rectangle graphPort;
+  protected boolean viewDrag;
+  protected Point viewDragStart;
+  protected DPoint viewDragBaseOffset;
+  protected boolean viewPortNavigation;
+  protected Point viewPortStart;
+
+  public Canvas getCanvas() {
+    return canvas;
+  }
+
+  public DragViewZoomBase(Composite parent, int style) {
+    super(parent, style);
+  }
+
+  @Override
+  public abstract void redraw();
+
+  @Override
+  public boolean setFocus() {
+    if (canvas == null || canvas.isDisposed()) {
+      return false;
+    }
+    return canvas.setFocus();
+  }
+
+  @Override
+  public boolean forceFocus() {
+    if (canvas == null || canvas.isDisposed()) {
+      return false;
+    }
+    return canvas.forceFocus();
+  }
+
+  /**
+   * Convert canvas/screen coordinates to graph coordinates. Must match the drawing transform:
+   * canvas = magnification * (graph + offset), so graph = canvas / magnification - offset.
+   */
+  public Point screen2real(int x, int y) {
+    float correctedMagnification = calculateCorrectedMagnification();
+    DPoint real =
+        new DPoint(
+            (double) x / correctedMagnification - offset.x,
+            (double) y / correctedMagnification - offset.y);
+    return real.toPoint();
+  }
+
+  protected float calculateCorrectedMagnification() {
+    return (float) (magnification * PropsUi.getInstance().getZoomFactor());
+  }
+
+  public abstract void setZoomLabel();
+
+  @GuiKeyboardShortcut(key = SWT.HOME)
+  @GuiOsxKeyboardShortcut(key = SWT.HOME)
+  public void viewReset() {
+    offset = new DPoint(0.0, 0.0);
+    redraw();
+  }
+
+  @GuiKeyboardShortcut(key = SWT.ARROW_LEFT)
+  @GuiOsxKeyboardShortcut(key = SWT.ARROW_LEFT)
+  public void viewLeft() {
+    arrowKey(-1, 0, false);
+  }
+
+  @GuiKeyboardShortcut(key = SWT.ARROW_RIGHT)
+  @GuiOsxKeyboardShortcut(key = SWT.ARROW_RIGHT)
+  public void viewRight() {
+    arrowKey(1, 0, false);
+  }
+
+  @GuiKeyboardShortcut(key = SWT.ARROW_UP)
+  @GuiOsxKeyboardShortcut(key = SWT.ARROW_UP)
+  public void viewUp() {
+    arrowKey(0, -1, false);
+  }
+
+  @GuiKeyboardShortcut(key = SWT.ARROW_DOWN)
+  @GuiOsxKeyboardShortcut(key = SWT.ARROW_DOWN)
+  public void viewDown() {
+    arrowKey(0, 1, false);
+  }
+
+  @GuiKeyboardShortcut(shift = true, key = SWT.ARROW_LEFT)
+  @GuiOsxKeyboardShortcut(shift = true, key = SWT.ARROW_LEFT)
+  public void viewLeftFast() {
+    arrowKey(-1, 0, true);
+  }
+
+  @GuiKeyboardShortcut(shift = true, key = SWT.ARROW_RIGHT)
+  @GuiOsxKeyboardShortcut(shift = true, key = SWT.ARROW_RIGHT)
+  public void viewRightFast() {
+    arrowKey(1, 0, true);
+  }
+
+  @GuiKeyboardShortcut(shift = true, key = SWT.ARROW_UP)
+  @GuiOsxKeyboardShortcut(shift = true, key = SWT.ARROW_UP)
+  public void viewUpFast() {
+    arrowKey(0, -1, true);
+  }
+
+  @GuiKeyboardShortcut(shift = true, key = SWT.ARROW_DOWN)
+  @GuiOsxKeyboardShortcut(shift = true, key = SWT.ARROW_DOWN)
+  public void viewDownFast() {
+    arrowKey(0, 1, true);
+  }
+
+  /**
+   * Handle an arrow key: move the selected elements when there are any, pan the view otherwise.
+   *
+   * @param dx -1, 0 or 1: the horizontal direction
+   * @param dy -1, 0 or 1: the vertical direction
+   * @param largeStep true when SHIFT is held down: take a larger step
+   */
+  protected void arrowKey(int dx, int dy, boolean largeStep) {
+    if (moveSelectionWithArrowKey(dx, dy, largeStep)) {
+      return;
+    }
+    double step = calculatePanStep(largeStep);
+    offset.x -= dx * step;
+    offset.y -= dy * step;
+    validateOffset();
+    redraw();
+  }
+
+  /**
+   * Move the elements selected on the canvas with the arrow keys. Only the editors (pipeline and
+   * workflow graph) support this, the execution viewers always pan the view.
+   *
+   * @param dx -1, 0 or 1: the horizontal direction
+   * @param dy -1, 0 or 1: the vertical direction
+   * @param largeStep true when SHIFT is held down: take a larger step
+   * @return true if the arrow key moved a selection, false to pan the view instead
+   */
+  protected boolean moveSelectionWithArrowKey(int dx, int dy, boolean largeStep) {
+    return false;
+  }
+
+  /**
+   * The distance to pan for a single arrow key press, in graph coordinates. It compensates for the
+   * magnification so that the view always moves the same visible distance.
+   *
+   * @param largeStep true to take a larger step (SHIFT)
+   * @return the distance to pan in graph coordinates
+   */
+  protected double calculatePanStep(boolean largeStep) {
+    double step = PAN_STEP / Math.max(0.1f, magnification);
+    return largeStep ? step * LARGE_STEP_FACTOR : step;
+  }
+
+  @GuiKeyboardShortcut(control = true, key = '+')
+  @GuiOsxKeyboardShortcut(command = true, key = '+')
+  public void zoomIn() {
+    magnification += 0.1f;
+    // Minimum 1000%
+    if (magnification > 10f) {
+      magnification = 10f;
+    }
+    validateOffset();
+    setZoomLabel();
+    redraw();
+  }
+
+  /**
+   * Zoom method used when scrolling the mousewheel change canvas position to keep cursor location
+   * in screen
+   *
+   * @param mouseEvent mouse position when scrolling
+   */
+  public void zoomIn(MouseEvent mouseEvent) {
+    double oldZoomFactor = PropsUi.getNativeZoomFactor() * Math.max(0.1, magnification);
+    // get Area
+    Point area = getArea();
+    double oldViewWidth = area.x / oldZoomFactor;
+    double oldViewHeight = area.y / oldZoomFactor;
+
+    magnification += 0.1f;
+    // Maximum 1000%
+    if (magnification > 10f) {
+      magnification = 10f;
+    }
+
+    double zoomFactor = PropsUi.getNativeZoomFactor() * Math.max(0.1, magnification);
+    double viewWidth = area.x / zoomFactor;
+    double viewHeight = area.y / zoomFactor;
+    offset.x =
+        offset.x
+            + Math.floor(((double) mouseEvent.x / area.x) * 100) / 100 * (viewWidth - oldViewWidth);
+    offset.y =
+        offset.y
+            + Math.floor(((double) mouseEvent.y / area.y) * 100)
+                / 100
+                * (viewHeight - oldViewHeight);
+
+    validateOffset();
+    setZoomLabel();
+    redraw();
+  }
+
+  // Double keyboard shortcut zoom in '+' or '='
+  @GuiKeyboardShortcut(control = true, key = '=')
+  @GuiOsxKeyboardShortcut(command = true, key = '=')
+  public void zoomIn2() {
+    zoomIn();
+  }
+
+  @GuiKeyboardShortcut(control = true, key = '-')
+  @GuiOsxKeyboardShortcut(command = true, key = '-')
+  public void zoomOut() {
+    magnification -= 0.1f;
+    // Minimum 10%
+    if (magnification < 0.1f) {
+      magnification = 0.1f;
+    }
+    validateOffset();
+    setZoomLabel();
+    redraw();
+  }
+
+  /**
+   * Zoom method used when scrolling the mousewheel change canvas position to keep cursor location
+   * in screen
+   *
+   * @param mouseEvent mouse position when scrolling
+   */
+  public void zoomOut(MouseEvent mouseEvent) {
+    double oldZoomFactor = PropsUi.getNativeZoomFactor() * Math.max(0.1, magnification);
+    // get Area
+    Point area = getArea();
+    double oldViewWidth = area.x / oldZoomFactor;
+    double oldViewHeight = area.y / oldZoomFactor;
+
+    magnification -= 0.1f;
+    // Minimum 10%
+    if (magnification < 0.1f) {
+      magnification = 0.1f;
+    }
+
+    double zoomFactor = PropsUi.getNativeZoomFactor() * Math.max(0.1, magnification);
+    double viewWidth = area.x / zoomFactor;
+    double viewHeight = area.y / zoomFactor;
+
+    offset.x = offset.x + ((double) mouseEvent.x / area.x) * (viewWidth - oldViewWidth);
+    offset.y = offset.y + ((double) mouseEvent.y / area.y) * (viewHeight - oldViewHeight);
+    if (!PropsUi.getInstance().isInfiniteCanvasMoveEnabled()) {
+      offset.x = offset.x > 0 ? 0 : offset.x;
+      offset.y = offset.y > 0 ? 0 : offset.y;
+    }
+
+    validateOffset();
+    setZoomLabel();
+    redraw();
+  }
+
+  @GuiKeyboardShortcut(control = true, key = '0')
+  @GuiOsxKeyboardShortcut(command = true, key = '0')
+  public void zoom100Percent() {
+    magnification = 1.0f;
+    validateOffset();
+    setZoomLabel();
+    redraw();
+  }
+
+  // Double keyboard shortcut zoom 100% '0' or keypad 0
+  @GuiKeyboardShortcut(control = true, key = SWT.KEYPAD_0)
+  @GuiOsxKeyboardShortcut(command = true, key = SWT.KEYPAD_0)
+  public void zoom100Percent2() {
+    zoom100Percent();
+  }
+
+  @GuiKeyboardShortcut(control = true, key = '*')
+  @GuiOsxKeyboardShortcut(command = true, key = '*')
+  public void zoomFitToScreen() {
+    if (maximum.x <= 0 || maximum.y <= 0) {
+      return;
+    }
+    org.eclipse.swt.graphics.Rectangle canvasBounds = canvas.getBounds();
+
+    // Correct the maximum pipeline/workflow size for magnification, zoom factor, ...
+    //
+    double zoomXPct = canvasBounds.width / (maximum.x * PropsUi.getNativeZoomFactor()) * .9;
+    double zoomYPct = canvasBounds.height / (maximum.y * PropsUi.getNativeZoomFactor()) * .9;
+
+    // We take the minimum value of both to make sure everything fits on screen
+    //
+    magnification = (float) Math.min(zoomXPct, zoomYPct);
+
+    // Reset the offset as well, otherwise we might still be off-screen
+    //
+    offset = new DPoint(0.0, 0.0);
+
+    // Set this on the zoom level widget
+    //
+    setZoomLabel();
+    canvas.redraw();
+  }
+
+  // Double keyboard shortcut zoom fit to screen '*' or keypad *
+  @GuiKeyboardShortcut(control = true, key = SWT.KEYPAD_MULTIPLY)
+  @GuiOsxKeyboardShortcut(command = true, key = SWT.KEYPAD_MULTIPLY)
+  public void zoomFitToScreen2() {
+    zoomFitToScreen();
+  }
+
+  /**
+   * There are 2 ways to drag the view-port around. One way is to use the navigation rectangle at
+   * the bottom. The other way is to click-drag the background.
+   *
+   * @param button
+   * @param control
+   * @param screenClick
+   * @return
+   */
+  protected boolean setupDragView(int button, boolean control, Point screenClick) {
+    // Middle button
+    // CTRL + left button
+    //
+    viewDrag = button == 2 || (control && button == 1);
+    if (viewDrag) {
+      viewDragStart = screenClick;
+      viewDragBaseOffset = new DPoint(offset);
+      // Change cursor when dragging view
+      setCursor(getDisplay().getSystemCursor(SWT.CURSOR_SIZEALL));
+
+      // For web environment, enable pan mode for client-side visual feedback during drag
+      if (EnvironmentUtils.getInstance().isWeb() && canvas != null) {
+        canvas.setData("mode", "pan");
+        canvas.setData("panStartOffset", new Point((int) offset.x, (int) offset.y));
+        canvas.setData("panCurrentOffset", new Point((int) offset.x, (int) offset.y));
+
+        // Pass boundary information to client; when infinite move is off, do not allow panning past
+        // origin (0,0)
+        double zoomFactor = PropsUi.getNativeZoomFactor() * Math.max(0.1, magnification);
+        Point area = getArea();
+        double viewWidth = area.x / zoomFactor;
+        double viewHeight = area.y / zoomFactor;
+        Point effective = getEffectiveMaximum();
+        double minX = -effective.x + viewWidth;
+        double minY = -effective.y + viewHeight;
+        int maxX = PropsUi.getInstance().isInfiniteCanvasMoveEnabled() ? Integer.MAX_VALUE : 0;
+        int maxY = PropsUi.getInstance().isInfiniteCanvasMoveEnabled() ? Integer.MAX_VALUE : 0;
+        canvas.setData(
+            "panBoundaries",
+            new org.apache.hop.core.gui.Rectangle((int) minX, (int) minY, maxX, maxY));
+
+        // Force immediate redraw to sync pan data to client BEFORE mouse move events
+        // This ensures the client has the pan data when the first MouseMove arrives
+        redraw();
+      }
+
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * See if this is a click on the navigation minimap. A click on the blue visible-area overlay
+   * starts a drag. A click on the rest of the minimap first jumps the view so the overlay is
+   * centered on the click, then starts a drag.
+   */
+  protected boolean setupDragViewPort(Point screenClick) {
+    if (!ViewPortNavigator.hitMinimap(graphPort, viewPort, screenClick)) {
+      return false;
+    }
+    if (viewPort != null && !viewPort.contains(screenClick)) {
+      Point viewCenter = ViewPortNavigator.viewPortCenter(viewPort);
+      if (viewCenter != null) {
+        offset = computeViewPortDragOffset(new DPoint(offset), viewCenter, screenClick);
+        validateOffset();
+        redraw();
+      }
+    }
+    viewPortNavigation = true;
+    viewPortStart = new Point(screenClick);
+    viewDragBaseOffset = new DPoint(offset);
+    setCursor(getDisplay().getSystemCursor(SWT.CURSOR_SIZEALL));
+    return true;
+  }
+
+  protected void dragViewPort(Point clickLocation) {
+    if (viewPortStart == null || viewDragBaseOffset == null) {
+      return;
+    }
+    offset = computeViewPortDragOffset(viewDragBaseOffset, viewPortStart, clickLocation);
+    validateOffset();
+    redraw();
+  }
+
+  /**
+   * Convert a pixel drag of the visible-area overlay into a graph offset. Uses the same
+   * magnification as drawing so the overlay tracks the pointer 1:1.
+   */
+  private DPoint computeViewPortDragOffset(DPoint baseOffset, Point start, Point current) {
+    double mag = Math.max(0.01, calculateCorrectedMagnification());
+    Point area = getArea();
+    double visibleWidthGraph = area.x / mag;
+    double visibleHeightGraph = area.y / mag;
+    return ViewPortNavigator.dragOffset(
+        baseOffset, viewPort, start, current, visibleWidthGraph, visibleHeightGraph);
+  }
+
+  /** True when the pointer is over the navigation minimap (frame or visible-area overlay). */
+  protected boolean isOverNavigationView(Point screenClick) {
+    return ViewPortNavigator.hitMinimap(graphPort, viewPort, screenClick);
+  }
+
+  public void validateOffset() {
+    if (maximum == null) {
+      return;
+    }
+    double zoomFactor = PropsUi.getNativeZoomFactor() * Math.max(0.1, magnification);
+
+    Point area = getArea();
+    double viewWidth = area.x / zoomFactor;
+    double viewHeight = area.y / zoomFactor;
+
+    // Use effective graph size: when panning right/down we allow the canvas to expand
+    // so the user can drag into empty space (same as transforming against the side).
+    //
+    double graphWidth = getEffectiveMaximum().x;
+    double graphHeight = getEffectiveMaximum().y;
+
+    // Let's not move the graph off the screen to the top/left
+    //
+    double minX = -graphWidth + viewWidth;
+    if (offset.x < minX) {
+      offset.x = minX;
+    }
+    double minY = -graphHeight + viewHeight;
+    if (offset.y < minY) {
+      offset.y = minY;
+    }
+
+    // Do not allow panning past the origin (0,0) unless "infinite move" is enabled.
+    // Panning right/down (negative offset) can extend the visible view past the content.
+    //
+    if (!PropsUi.getInstance().isInfiniteCanvasMoveEnabled()) {
+      if (offset.x > 0) {
+        offset.x = 0;
+      }
+      if (offset.y > 0) {
+        offset.y = 0;
+      }
+    }
+  }
+
+  /**
+   * Returns the effective canvas size used for pan validation and painting. When the user pans
+   * right or down, the effective size grows so that empty space can be revealed (similar to
+   * resizing a note against the edge).
+   */
+  public Point getEffectiveMaximum() {
+    if (maximum == null) {
+      return new Point(0, 0);
+    }
+    double zoomFactor = PropsUi.getNativeZoomFactor() * Math.max(0.1, magnification);
+    Point area = getArea();
+    double viewWidth = area.x / zoomFactor;
+    double viewHeight = area.y / zoomFactor;
+    double effectiveX = Math.max(maximum.x, viewWidth - offset.x);
+    double effectiveY = Math.max(maximum.y, viewHeight - offset.y);
+    return new Point((int) Math.ceil(effectiveX), (int) Math.ceil(effectiveY));
+  }
+
+  protected Point getArea() {
+    org.eclipse.swt.graphics.Rectangle rect = canvas.getClientArea();
+    return new Point(rect.width, rect.height);
+  }
+
+  /** Pixel distance from canvas edge within which edge-scrolling starts. */
+  private static final int EDGE_SCROLL_MARGIN = 72;
+
+  /**
+   * Maximum scroll speed in graph coordinates per mouse move. Kept low so the view stays easy to
+   * follow when approaching the edge.
+   */
+  private static final double EDGE_SCROLL_MAX_SPEED = 6.0;
+
+  /**
+   * When dragging a transform or action near the canvas border, scroll the view so the user can
+   * keep dragging. Speed increases naturally as the pointer approaches the edge but is capped so
+   * the flow remains easy to follow.
+   *
+   * @param screenX mouse x in canvas coordinates
+   * @param screenY mouse y in canvas coordinates
+   */
+  protected void applyEdgeScrollWhileDragging(int screenX, int screenY) {
+    if (canvas == null || canvas.isDisposed() || maximum == null) {
+      return;
+    }
+    Point area = getArea();
+    if (area.x <= 0 || area.y <= 0) {
+      return;
+    }
+    int margin = EDGE_SCROLL_MARGIN;
+    if (area.x < 2 * margin || area.y < 2 * margin) {
+      return;
+    }
+    double dx = 0;
+    double dy = 0;
+    if (screenX < margin) {
+      double t = (margin - screenX) / (double) margin;
+      dx = t * EDGE_SCROLL_MAX_SPEED;
+    } else if (screenX > area.x - margin) {
+      double t = (screenX - (area.x - margin)) / (double) margin;
+      dx = -t * EDGE_SCROLL_MAX_SPEED;
+    }
+    if (screenY < margin) {
+      double t = (margin - screenY) / (double) margin;
+      dy = t * EDGE_SCROLL_MAX_SPEED;
+    } else if (screenY > area.y - margin) {
+      double t = (screenY - (area.y - margin)) / (double) margin;
+      dy = -t * EDGE_SCROLL_MAX_SPEED;
+    }
+    if (dx != 0 || dy != 0) {
+      offset.x += dx;
+      offset.y += dy;
+      validateOffset();
+      redraw();
+    }
+  }
+
+  /**
+   * Calculate the differences for the scrollbars. We take the system zoom factor and current
+   * magnification into account
+   */
+  protected void dragView(Point lastClick, Point moved) {
+    // The offset is in absolute numbers relative to the pipeline/workflow graph metadata.
+    // The screen coordinates need to be corrected.  If the image is zoomed in we need to move less.
+    //
+    double zoomFactor = PropsUi.getNativeZoomFactor() * Math.max(0.1, magnification);
+    double deltaX = (lastClick.x - moved.x) / zoomFactor;
+    double deltaY = (lastClick.y - moved.y) / zoomFactor;
+
+    offset.x = viewDragBaseOffset.x - deltaX;
+    offset.y = viewDragBaseOffset.y - deltaY;
+
+    validateOffset();
+
+    // For web environment, update canvas data for client-side visual feedback during drag
+    if (EnvironmentUtils.getInstance().isWeb() && canvas != null) {
+      Point startOffset = (Point) canvas.getData("panStartOffset");
+      if (startOffset != null) {
+        int offsetDeltaX = (int) (offset.x - startOffset.x);
+        int offsetDeltaY = (int) (offset.y - startOffset.y);
+        canvas.setData("panOffsetDelta", new Point(offsetDeltaX, offsetDeltaY));
+        canvas.setData("panCurrentOffset", new Point((int) offset.x, (int) offset.y));
+      }
+    }
+
+    redraw();
+  }
+
+  protected void mouseScrolled(MouseEvent mouseEvent) {
+    // Check if zoom scrolling is disabled
+    if (PropsUi.getInstance().isZoomScrollingDisabled()) {
+      return;
+    }
+
+    // Zoom in or out every time we get an event.
+    //
+    // In the future we do want to take the location of the mouse into account.
+    // That way we can adjust the offset accordingly to keep the screen centered on the mouse while
+    // zooming in or out.
+    //
+    if (mouseEvent.count > 0) {
+      zoomIn(mouseEvent);
+    } else {
+      zoomOut(mouseEvent);
+    }
+  }
+}

@@ -1,0 +1,173 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.pipeline.transforms.csvinput;
+
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import org.apache.hop.core.exception.HopTransformException;
+import org.apache.hop.junit.rules.RestoreHopEngineEnvironmentExtension;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+
+class CsvInputContentParsingTest extends BaseCsvParsingTest {
+  @RegisterExtension
+  static RestoreHopEngineEnvironmentExtension env = new RestoreHopEngineEnvironmentExtension();
+
+  @Test
+  void testDefaultOptions() throws Exception {
+    init("default.csv");
+
+    setFields(
+        new CsvInputField("Field 1", -1, -1),
+        new CsvInputField("Field 2", -1, -1),
+        new CsvInputField("Field 3", -1, -1));
+
+    process();
+
+    check(new Object[][] {{"first", "1", "1.1"}, {"second", "2", "2.2"}, {"third", "3", "3.3"}});
+  }
+
+  @Test
+  void testColumnNameWithSpaces() throws Exception {
+    init("column_name_with_spaces.csv");
+
+    setFields(
+        new CsvInputField("Field 1", -1, -1),
+        new CsvInputField("Field 2", -1, -1),
+        new CsvInputField("Field 3", -1, -1));
+
+    process();
+
+    check(new Object[][] {{"first", "1", "1.1"}, {"second", "2", "2.2"}, {"third", "3", "3.3"}});
+  }
+
+  @Test
+  void testSemicolonOptions() throws Exception {
+    meta.setDelimiter(";");
+    init("semicolon.csv");
+
+    setFields(
+        new CsvInputField("Field 1", -1, -1),
+        new CsvInputField("Field 2", -1, -1),
+        new CsvInputField("Field 3", -1, -1));
+
+    process();
+
+    check(
+        new Object[][] {
+          {"first", "1", "1.1"},
+          {"second", "2", "2.2"},
+          {"third", "3", "3.3"},
+          {"\u043d\u0435-\u043b\u0430\u0446\u0456\u043d\u043a\u0430(non-latin)", "4", "4"}
+        });
+  }
+
+  @Test
+  void testMultiCharDelimOptions() throws Exception {
+    meta.setDelimiter("|||");
+    init("multi_delim.csv");
+
+    setFields(
+        new CsvInputField("Field 1", -1, -1),
+        new CsvInputField("Field 2", -1, -1),
+        new CsvInputField("Field 3", -1, -1));
+
+    process();
+
+    check(
+        new Object[][] {
+          {"first", "1", "1.1"},
+          {"second", "2", "2.2"},
+          {"third", "3", "3.3"},
+          {"\u043d\u0435-\u043b\u0430\u0446\u0456\u043d\u043a\u0430(non-latin)", "4", "4"}
+        });
+  }
+
+  @Test
+  void testMixFileFormat() throws Exception {
+    String data =
+        "データ1,データ2,データ3,データ4\n"
+            + "111,\"a\n"
+            + "bc\",あいう,さしす\n"
+            + "222,def,かきく,たちつ\r\n"
+            + "333,,かきく,たちつ\n"
+            + "444,,\n"
+            + "555,かきく,\r\n"
+            + "666,かきく\r\n"
+            + "\n"
+            + "777,\n"
+            + "888,かきく\r\n"
+            + "\n"
+            + "999,123,123,123,132,132,132,132,132\r";
+
+    String file = createTestFile(StandardCharsets.UTF_8, data).getAbsolutePath();
+    init(file, true);
+
+    setFields(
+        new CsvInputField("Col 1", -1, -1),
+        new CsvInputField("Col 2", -1, -1),
+        new CsvInputField("Col 3", -1, -1),
+        new CsvInputField("Col 4", -1, -1),
+        new CsvInputField("Col 5", -1, -1));
+
+    process();
+
+    check(
+        new Object[][] {
+          {"111", "a\nbc", "あいう", "さしす", null},
+          {"222", "def", "かきく", "たちつ", null},
+          {"333", "", "かきく", "たちつ", null},
+          {"444", "", "", null, null},
+          {"555", "かきく", "", null, null},
+          {"666", "かきく", null, null, null},
+          {},
+          {"777", "", null, null, null},
+          {"888", "かきく", null, null, null},
+          {},
+          {"999", "123", "123", "123", "132"}
+        });
+  }
+
+  @Test
+  void testNoHeaderOptions() throws Exception {
+    meta.setHeaderPresent(false);
+    init("default.csv");
+
+    setFields(new CsvInputField(), new CsvInputField(), new CsvInputField());
+
+    transform.setAllowEmptyFieldNamesAndTypes(false);
+
+    assertThrows(HopTransformException.class, () -> process());
+  }
+
+  File createTestFile(final Charset charset, final String content) throws IOException {
+    File tempFile = File.createTempFile("PDI_tmp", ".csv");
+    tempFile.deleteOnExit();
+
+    try (PrintWriter osw = new PrintWriter(tempFile, charset)) {
+      osw.write(content);
+    }
+
+    return tempFile;
+  }
+}

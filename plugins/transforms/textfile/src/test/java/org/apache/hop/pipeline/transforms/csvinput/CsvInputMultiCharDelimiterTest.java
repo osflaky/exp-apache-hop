@@ -1,0 +1,129 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.pipeline.transforms.csvinput;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+
+import java.io.File;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import org.apache.hop.core.IRowSet;
+import org.apache.hop.core.QueueRowSet;
+import org.apache.hop.junit.rules.RestoreHopEngineEnvironmentExtension;
+import org.apache.hop.pipeline.transforms.mock.TransformMockHelper;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+
+class CsvInputMultiCharDelimiterTest extends CsvInputUnitTestBase {
+  @RegisterExtension
+  static RestoreHopEngineEnvironmentExtension env = new RestoreHopEngineEnvironmentExtension();
+
+  private CsvInput csvInput;
+  private TransformMockHelper<CsvInputMeta, CsvInputData> transformMockHelper;
+
+  @BeforeEach
+  void setUp() throws Exception {
+    transformMockHelper =
+        TransformMockUtil.getTransformMockHelper(
+            CsvInputMeta.class, CsvInputData.class, "CsvInputMultiCharDelimiterTest");
+  }
+
+  @AfterEach
+  void cleanUp() {
+    transformMockHelper.cleanUp();
+  }
+
+  @Test
+  void multiChar_hasEnclosures_HasNewLine() throws Exception {
+    doTest("\"value1\"delimiter\"value2\"delimiter\"value3\"\n");
+  }
+
+  @Test
+  void multiChar_hasEnclosures_HasNewLineDoubleEnd() throws Exception {
+    doTest("\"value1\"delimiter\"value2\"delimiter\"value3\"\r\n");
+  }
+
+  @Test
+  void multiChar_hasEnclosures_HasNotNewLine() throws Exception {
+    doTest("\"value1\"delimiter\"value2\"delimiter\"value3\"");
+  }
+
+  @Test
+  void multiChar_hasNotEnclosures_HasNewLine() throws Exception {
+    doTest("value1delimitervalue2delimitervalue3\n");
+  }
+
+  @Test
+  void multiChar_hasNotEnclosures_HasNewLineDoubleEnd() throws Exception {
+    doTest("value1delimitervalue2delimitervalue3\r\n");
+  }
+
+  @Test
+  void multiChar_hasNotEnclosures_HasNotNewLine() throws Exception {
+    doTest("value1delimitervalue2delimitervalue3");
+  }
+
+  private void doTest(String content) throws Exception {
+    IRowSet output = new QueueRowSet();
+    Charset charset = StandardCharsets.UTF_8;
+    File tmp = createTestFile(charset, content);
+    try {
+      CsvInputMeta meta = createMeta(tmp, createInputFileFields("f1", "f2", "f3"));
+      CsvInputData data = new CsvInputData();
+      csvInput =
+          new CsvInput(
+              transformMockHelper.transformMeta,
+              meta,
+              data,
+              0,
+              transformMockHelper.pipelineMeta,
+              transformMockHelper.pipeline);
+      csvInput.init();
+
+      csvInput.addRowSetToOutputRowSets(output);
+
+      try {
+        csvInput.processRow();
+      } finally {
+        csvInput.dispose();
+      }
+
+    } finally {
+      tmp.delete();
+    }
+
+    Object[] row = output.getRowImmediate();
+    assertNotNull(row);
+    assertEquals("value1", row[0]);
+    assertEquals("value2", row[1]);
+    assertEquals("value3", row[2]);
+
+    assertNull(output.getRowImmediate());
+  }
+
+  @Override
+  CsvInputMeta createMeta(File file, CsvInputField[] fields) {
+    CsvInputMeta meta = super.createMeta(file, fields);
+    meta.setDelimiter("delimiter");
+    return meta;
+  }
+}

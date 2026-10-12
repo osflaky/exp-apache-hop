@@ -1,0 +1,358 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.databases.cratedb;
+
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Types;
+import java.util.List;
+import org.apache.hop.core.database.DatabaseMetaPlugin;
+import org.apache.hop.core.database.DriverDownload;
+import org.apache.hop.core.database.IDatabase;
+import org.apache.hop.core.database.types.DatabaseTypes;
+import org.apache.hop.core.database.types.IDatabaseTypeRule;
+import org.apache.hop.core.database.types.IValueBinding;
+import org.apache.hop.core.exception.HopValueException;
+import org.apache.hop.core.gui.plugin.GuiPlugin;
+import org.apache.hop.core.row.IValueMeta;
+import org.apache.hop.databases.postgresql.PostgreSqlDatabaseMeta;
+
+@DatabaseMetaPlugin(
+    type = "CRATEDB",
+    typeDescription = "CrateDB",
+    image = "cratedb.svg",
+    documentationUrl = "/database/databases/cratedb.html",
+    classLoaderGroup = "crate-db")
+@GuiPlugin(id = "GUI-CrateDBDatabaseMeta")
+public class CrateDBDatabaseMeta extends PostgreSqlDatabaseMeta {
+
+  /**
+   * CrateDB is Postgres derived but names these differently: a document goes in an OBJECT and an
+   * address in an IP, and it has neither JSONB nor INET.
+   */
+  private static final List<IDatabaseTypeRule> TYPE_RULES =
+      DatabaseTypes.rules()
+          .write(IValueMeta.TYPE_JSON)
+          .as("OBJECT")
+          .write(IValueMeta.TYPE_INET)
+          .as("IP")
+          // CrateDB's vector type is its own, and it is declared before the PostgreSQL rules are
+          // taken so that this answers instead of pgvector's VECTOR, which CrateDB does not have.
+          // The dimension is not optional, so a vector without one falls back to text.
+          //
+          // The value goes across as a float array rather than as text: CrateDB rejects a string
+          // with "Cannot convert VALUES element of type `text` to `float_vector`", and reads the
+          // column back as a float4 array, which is what it is underneath.
+          .write(IValueMeta.TYPE_VECTOR)
+          .where(v -> v.getLength() > 0)
+          .as(v -> "FLOAT_VECTOR(" + v.getLength() + ")")
+          .bind(
+              IValueMeta.TYPE_VECTOR,
+              (database, valueMeta) -> valueMeta.getLength() > 0,
+              new CrateDbVectorBinding())
+          .include(PostgreSqlDatabaseMeta.POSTGRES_BASE_TYPE_RULES)
+          .build();
+
+  /** Writes a vector as the float array CrateDB stores it as. */
+  private static final class CrateDbVectorBinding implements IValueBinding {
+    @Override
+    public Object read(IDatabase database, IValueMeta valueMeta, ResultSet resultSet, int index) {
+      throw new UnsupportedOperationException("This binding only writes values");
+    }
+
+    @Override
+    public void write(
+        IDatabase database,
+        IValueMeta valueMeta,
+        PreparedStatement preparedStatement,
+        int index,
+        Object value)
+        throws SQLException, HopValueException {
+      float[] vector = (float[]) valueMeta.convertData(valueMeta, value);
+      if (vector == null) {
+        preparedStatement.setNull(index, Types.ARRAY);
+        return;
+      }
+      // The primitive array, and not a boxed one: the CrateDB driver answers a Float[] with
+      // "Can't infer the SQL type to use for an instance of [Ljava.lang.Float;". The alternative
+      // it accepts is createArrayOf("float4", ...), which means naming the server type in a
+      // string - and it only knows that one spelling, not "real" - so the primitive array is both
+      // shorter and the one thing there is nothing to get wrong about.
+      preparedStatement.setObject(index, vector);
+    }
+  }
+
+  /**
+   * CrateDB inherits the PostgreSQL dialect, including its check for the pgvector extension. That
+   * check is about a type CrateDB does not have, and the type it does have needs no check of its
+   * own, so the inherited answer is replaced by a plain yes.
+   */
+  @Override
+  public boolean isColumnTypeAvailable(String columnType) {
+    return true;
+  }
+
+  @Override
+  public List<IDatabaseTypeRule> getTypeRules() {
+    return TYPE_RULES;
+  }
+
+  private static final String SEQUENCES_NOT_SUPPORTED = "CrateDB does not support sequences";
+
+  @Override
+  public String getDriverClass() {
+    return "io.crate.client.jdbc.CrateDriver";
+  }
+
+  @Override
+  public DriverDownload getDriverDownload() {
+    return DriverDownload.builder()
+        .mavenCoordinate("io.crate:crate-jdbc")
+        .defaultVersion("2.7.0")
+        .licenseCategory("A")
+        .licenseName("Apache-2.0")
+        .licenseUrl("https://github.com/crate/crate-jdbc/blob/master/LICENSE")
+        .vendor("CrateDB")
+        .vendorUrl("https://cratedb.com/docs/jdbc/")
+        .excludes(List.of("com.fasterxml.jackson.core:*", "com.google.guava:*", "org.slf4j:*"))
+        .build();
+  }
+
+  @Override
+  public String getURL(String hostname, String port, String databaseName) {
+    return "jdbc:crate://" + hostname + ":" + port + "/" + databaseName;
+  }
+
+  /**
+   * As of the time of writing (Apr 2024), CrateDB does not natively support sequence generators
+   * like the CREATE SEQUENCE command in PostgreSQL and some other SQL databases. CrateDB is built
+   * to be distributed and massively scalable. Certain features found in traditional single-node SQL
+   * databases, like sequence generators, are not directly translatable to a distributed system
+   * because they can become bottlenecks in a distributed environment due to the need for
+   * synchronization between nodes
+   */
+  @Override
+  public boolean isSupportsSequences() {
+    return false;
+  }
+
+  @Override
+  public boolean isSupportsSequenceNoMaxValueOption() {
+    return false;
+  }
+
+  /**
+   * CrateDB doesn't have a direct equivalent of PostgreSQL's SERIAL data type due to its
+   * distributed nature. But you can achieve a similar outcome by using generated columns that
+   * produce a unique UUID. Since UUIDs cannot be sorted, they can't be incremented, as there's no
+   * concept of ordering.
+   */
+  @Override
+  public boolean isSupportsAutoInc() {
+    return false;
+  }
+
+  @Override
+  public String[] getReservedWords() {
+    /**
+     * This list of reserved words has been obtained as per docs
+     * (https://cratedb.com/docs/crate/reference/en/5.6/sql/general/lexical-structure.html#reserved-words)
+     * from the following query against CrateDB 5.6: SELECT word FROM pg_catalog.pg_get_keywords()
+     * WHERE catcode = 'R' ORDER BY 1
+     */
+    return new String[] {
+      "ADD",
+      "ALL",
+      "ALTER",
+      "AND",
+      "ANY",
+      "ARRAY",
+      "AS",
+      "ASC",
+      "BETWEEN",
+      "BY",
+      "CALLED",
+      "CASE",
+      "CAST",
+      "COLUMN",
+      "CONSTRAINT",
+      "COSTS",
+      "CREATE",
+      "CROSS",
+      "CURRENT_DATE",
+      "CURRENT_SCHEMA",
+      "CURRENT_TIME",
+      "CURRENT_TIMESTAMP",
+      "CURRENT_USER",
+      "DEFAULT",
+      "DELETE",
+      "DENY",
+      "DESC",
+      "DESCRIBE",
+      "DIRECTORY",
+      "DISTINCT",
+      "DROP",
+      "ELSE",
+      "END",
+      "ESCAPE",
+      "EXCEPT",
+      "EXISTS",
+      "EXTRACT",
+      "FALSE",
+      "FIRST",
+      "FOR",
+      "FROM",
+      "FULL",
+      "FUNCTION",
+      "GRANT",
+      "GROUP",
+      "HAVING",
+      "IF",
+      "IN",
+      "INDEX",
+      "INNER",
+      "INPUT",
+      "INSERT",
+      "INTERSECT",
+      "INTO",
+      "IS",
+      "JOIN",
+      "LAST",
+      "LEFT",
+      "LIKE",
+      "LIMIT",
+      "MATCH",
+      "NATURAL",
+      "NOT",
+      "NULL",
+      "NULLS",
+      "OBJECT",
+      "OFFSET",
+      "ON",
+      "OR",
+      "ORDER",
+      "OUTER",
+      "PERSISTENT",
+      "RECURSIVE",
+      "RESET",
+      "RETURNS",
+      "REVOKE",
+      "RIGHT",
+      "SELECT",
+      "SESSION_USER",
+      "SET",
+      "SOME",
+      "STRATIFY",
+      "TABLE",
+      "THEN",
+      "TRANSIENT",
+      "TRUE",
+      "TRY_CAST",
+      "UNBOUNDED",
+      "UNION",
+      "UPDATE",
+      "USER",
+      "USING",
+      "WHEN",
+      "WHERE",
+      "WITH"
+    };
+  }
+
+  @Override
+  public String getExtraOptionsHelpText() {
+    return "https://cratedb.com/docs/jdbc/en/latest/connect.html#connection-properties";
+  }
+
+  @Override
+  public String getSqlListOfSequences() {
+    throw new UnsupportedOperationException(SEQUENCES_NOT_SUPPORTED);
+  }
+
+  @Override
+  public String getSqlNextSequenceValue(String sequenceName) {
+    throw new UnsupportedOperationException(SEQUENCES_NOT_SUPPORTED);
+  }
+
+  @Override
+  public String getSqlCurrentSequenceValue(String sequenceName) {
+    throw new UnsupportedOperationException(SEQUENCES_NOT_SUPPORTED);
+  }
+
+  @Override
+  public String getSqlSequenceExists(String sequenceName) {
+    throw new UnsupportedOperationException(SEQUENCES_NOT_SUPPORTED);
+  }
+
+  @Override
+  public String getFieldDefinition(
+      IValueMeta v, String tk, String pk, boolean useAutoinc, boolean addFieldName, boolean addCr) {
+
+    int type = v.getType();
+    switch (type) {
+      case IValueMeta.TYPE_NUMBER, IValueMeta.TYPE_BIGNUMBER, IValueMeta.TYPE_INTEGER:
+        String retval = "";
+        String fieldname = v.getName();
+        int length = v.getLength();
+
+        if (addFieldName) {
+          retval += fieldname + " ";
+        }
+        if (fieldname.equalsIgnoreCase(tk)
+            || // Technical key, Primary key
+            fieldname.equalsIgnoreCase(pk)) {
+          retval += "BIGSERIAL";
+        } else {
+          if (type == IValueMeta.TYPE_INTEGER) {
+            // Integer values...
+            if (length > 9) {
+              retval += "BIGINT";
+            } else if (length > 4) {
+              retval += "INTEGER";
+            } else {
+              retval += "SMALLINT";
+            }
+          } else {
+            // Floating point value with double precision...
+            retval += "DOUBLE PRECISION";
+          }
+        }
+        return retval;
+
+      default:
+        return super.getFieldDefinition(v, tk, pk, useAutoinc, addFieldName, addCr);
+    }
+  }
+
+  @Override
+  public String getSqlLockTables(String[] tableNames) {
+    throw new UnsupportedOperationException("CrateDB does not support locking tables");
+  }
+
+  @Override
+  public String getSqlUnlockTables(String[] tableName) {
+    throw new UnsupportedOperationException("CrateDB does not support locking tables");
+  }
+
+  @Override
+  public void addDefaultOptions() {
+    setSupportsBooleanDataType(true);
+    setSupportsTimestampDataType(true);
+  }
+}

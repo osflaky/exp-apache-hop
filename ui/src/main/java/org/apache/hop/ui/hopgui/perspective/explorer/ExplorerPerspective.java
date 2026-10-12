@@ -1,0 +1,5888 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.ui.hopgui.perspective.explorer;
+
+import java.io.File;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.BooleanSupplier;
+import java.util.function.Function;
+import lombok.Getter;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
+import org.apache.commons.vfs2.FileObject;
+import org.apache.commons.vfs2.FileSystemException;
+import org.apache.commons.vfs2.Selectors;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.Props;
+import org.apache.hop.core.SwtUniversalImageSvg;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.exception.HopFileException;
+import org.apache.hop.core.extension.ExtensionPointHandler;
+import org.apache.hop.core.extension.HopExtensionPoint;
+import org.apache.hop.core.gui.plugin.GuiPlugin;
+import org.apache.hop.core.gui.plugin.GuiRegistry;
+import org.apache.hop.core.gui.plugin.key.GuiKeyboardShortcut;
+import org.apache.hop.core.gui.plugin.key.GuiOsxKeyboardShortcut;
+import org.apache.hop.core.gui.plugin.menu.GuiMenuElement;
+import org.apache.hop.core.gui.plugin.toolbar.GuiToolbarElement;
+import org.apache.hop.core.listeners.IContentChangedListener;
+import org.apache.hop.core.logging.LogChannel;
+import org.apache.hop.core.plugins.IPlugin;
+import org.apache.hop.core.plugins.PluginRegistry;
+import org.apache.hop.core.search.ISearchResult;
+import org.apache.hop.core.search.ISearchable;
+import org.apache.hop.core.search.SearchMatcher;
+import org.apache.hop.core.security.HopSecurity;
+import org.apache.hop.core.security.Permission;
+import org.apache.hop.core.svg.SvgCache;
+import org.apache.hop.core.svg.SvgCacheEntry;
+import org.apache.hop.core.svg.SvgFile;
+import org.apache.hop.core.svg.SvgImage;
+import org.apache.hop.core.util.Utils;
+import org.apache.hop.core.variables.IVariables;
+import org.apache.hop.core.variables.Variables;
+import org.apache.hop.core.vfs.HopVfs;
+import org.apache.hop.core.xml.XmlHandler;
+import org.apache.hop.history.AuditManager;
+import org.apache.hop.history.AuditState;
+import org.apache.hop.history.AuditStateMap;
+import org.apache.hop.i18n.BaseMessages;
+import org.apache.hop.metadata.refactor.MetadataObjectReference;
+import org.apache.hop.metadata.refactor.MetadataReferenceFinder;
+import org.apache.hop.metadata.refactor.MetadataReferenceResult;
+import org.apache.hop.pipeline.PipelineMeta;
+import org.apache.hop.pipeline.engine.IPipelineEngine;
+import org.apache.hop.ui.core.ConstUi;
+import org.apache.hop.ui.core.FormDataBuilder;
+import org.apache.hop.ui.core.PropsUi;
+import org.apache.hop.ui.core.bus.HopGuiEvents;
+import org.apache.hop.ui.core.dialog.BaseDialog;
+import org.apache.hop.ui.core.dialog.DetailsDialog;
+import org.apache.hop.ui.core.dialog.EnterStringDialog;
+import org.apache.hop.ui.core.dialog.ErrorDialog;
+import org.apache.hop.ui.core.dialog.MessageBox;
+import org.apache.hop.ui.core.gui.GuiMenuWidgets;
+import org.apache.hop.ui.core.gui.GuiResource;
+import org.apache.hop.ui.core.gui.GuiToolbarWidgets;
+import org.apache.hop.ui.core.gui.HopNamespace;
+import org.apache.hop.ui.core.gui.IToolbarContainer;
+import org.apache.hop.ui.core.security.HopSecurityUi;
+import org.apache.hop.ui.core.widget.FolderTreeIcons;
+import org.apache.hop.ui.core.widget.NamingSchemeTypes;
+import org.apache.hop.ui.core.widget.NamingSchemeWidgetSupport;
+import org.apache.hop.ui.core.widget.TreeMemory;
+import org.apache.hop.ui.hopgui.HopGui;
+import org.apache.hop.ui.hopgui.HopGuiExtensionPoint;
+import org.apache.hop.ui.hopgui.HopGuiKeyHandler;
+import org.apache.hop.ui.hopgui.HopWebUrlHelper;
+import org.apache.hop.ui.hopgui.ToolbarFacade;
+import org.apache.hop.ui.hopgui.context.IGuiContextHandler;
+import org.apache.hop.ui.hopgui.file.HopFileTypeBase;
+import org.apache.hop.ui.hopgui.file.HopFileTypePluginType;
+import org.apache.hop.ui.hopgui.file.IHopFileType;
+import org.apache.hop.ui.hopgui.file.IHopFileTypeHandler;
+import org.apache.hop.ui.hopgui.file.empty.EmptyFileType;
+import org.apache.hop.ui.hopgui.file.empty.EmptyHopFileTypeHandler;
+import org.apache.hop.ui.hopgui.file.pipeline.HopGuiPipelineGraph;
+import org.apache.hop.ui.hopgui.file.pipeline.HopPipelineFileType;
+import org.apache.hop.ui.hopgui.file.shared.HopGuiAbstractGraph;
+import org.apache.hop.ui.hopgui.file.workflow.HopGuiWorkflowGraph;
+import org.apache.hop.ui.hopgui.file.workflow.HopWorkflowFileType;
+import org.apache.hop.ui.hopgui.perspective.HopPerspectivePlugin;
+import org.apache.hop.ui.hopgui.perspective.IFileDropReceiver;
+import org.apache.hop.ui.hopgui.perspective.IHopPerspective;
+import org.apache.hop.ui.hopgui.perspective.TabClosable;
+import org.apache.hop.ui.hopgui.perspective.TabCloseHandler;
+import org.apache.hop.ui.hopgui.perspective.TabItemHandler;
+import org.apache.hop.ui.hopgui.perspective.TabItemReorder;
+import org.apache.hop.ui.hopgui.perspective.explorer.config.ExplorerPerspectiveConfigSingleton;
+import org.apache.hop.ui.hopgui.perspective.explorer.file.ExplorerFileType;
+import org.apache.hop.ui.hopgui.perspective.explorer.file.IExplorerFileTypeHandler;
+import org.apache.hop.ui.hopgui.perspective.explorer.file.types.FolderFileType;
+import org.apache.hop.ui.hopgui.perspective.explorer.file.types.GenericFileType;
+import org.apache.hop.ui.hopgui.perspective.explorer.file.types.raw.RawExplorerFileType;
+import org.apache.hop.ui.hopgui.perspective.metadata.MetadataPerspective;
+import org.apache.hop.ui.hopgui.search.HopGuiPipelineSearchable;
+import org.apache.hop.ui.hopgui.search.HopGuiWorkflowSearchable;
+import org.apache.hop.ui.hopgui.search.ReferenceSearchResults;
+import org.apache.hop.ui.hopgui.shared.CanvasSvgHelper;
+import org.apache.hop.ui.hopgui.shared.CanvasZoomHelper;
+import org.apache.hop.ui.hopgui.shared.SashFormMemory;
+import org.apache.hop.ui.pipeline.transform.BaseTransformDialog;
+import org.apache.hop.ui.util.EnvironmentUtils;
+import org.apache.hop.workflow.WorkflowMeta;
+import org.apache.hop.workflow.engine.IWorkflowEngine;
+import org.eclipse.swt.SWT;
+import org.eclipse.swt.custom.BusyIndicator;
+import org.eclipse.swt.custom.CTabFolder;
+import org.eclipse.swt.custom.CTabFolder2Adapter;
+import org.eclipse.swt.custom.CTabFolderEvent;
+import org.eclipse.swt.custom.CTabItem;
+import org.eclipse.swt.custom.SashForm;
+import org.eclipse.swt.custom.TreeEditor;
+import org.eclipse.swt.dnd.DND;
+import org.eclipse.swt.dnd.DragSource;
+import org.eclipse.swt.dnd.DragSourceAdapter;
+import org.eclipse.swt.dnd.DragSourceEvent;
+import org.eclipse.swt.dnd.DropTarget;
+import org.eclipse.swt.dnd.DropTargetAdapter;
+import org.eclipse.swt.dnd.DropTargetEvent;
+import org.eclipse.swt.dnd.FileTransfer;
+import org.eclipse.swt.graphics.Font;
+import org.eclipse.swt.graphics.GC;
+import org.eclipse.swt.graphics.Image;
+import org.eclipse.swt.graphics.Rectangle;
+import org.eclipse.swt.layout.FormAttachment;
+import org.eclipse.swt.layout.FormData;
+import org.eclipse.swt.layout.FormLayout;
+import org.eclipse.swt.widgets.Button;
+import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Control;
+import org.eclipse.swt.widgets.Display;
+import org.eclipse.swt.widgets.Event;
+import org.eclipse.swt.widgets.Label;
+import org.eclipse.swt.widgets.Menu;
+import org.eclipse.swt.widgets.MenuItem;
+import org.eclipse.swt.widgets.Shell;
+import org.eclipse.swt.widgets.Text;
+import org.eclipse.swt.widgets.ToolBar;
+import org.eclipse.swt.widgets.ToolItem;
+import org.eclipse.swt.widgets.Tree;
+import org.eclipse.swt.widgets.TreeItem;
+
+@HopPerspectivePlugin(
+    id = "100-HopExplorerPerspective",
+    name = "i18n::ExplorerPerspective.Name",
+    description = "The Hop Explorer Perspective",
+    image = "ui/images/folder.svg",
+    documentationUrl = "/hop-gui/perspective-file-explorer.html")
+@GuiPlugin(
+    name = "i18n::ExplorerPerspective.Name",
+    description = "i18n::ExplorerPerspective.GuiPlugin.Description")
+@SuppressWarnings("java:S1104")
+public class ExplorerPerspective implements IHopPerspective, TabClosable, IFileDropReceiver {
+
+  public static final Class<?> PKG = ExplorerPerspective.class; // i18n
+
+  public static final String GUI_TOOLBAR_CREATED_CALLBACK_ID =
+      "ExplorerPerspective-Toolbar-Created";
+  public static final String GUI_CONTEXT_MENU_CREATED_CALLBACK_ID =
+      "ExplorerPerspective-ContextMenu-Created";
+  public static final String GUI_PLUGIN_TOOLBAR_PARENT_ID = "ExplorerPerspective-Toolbar";
+  public static final String GUI_PLUGIN_CONTEXT_MENU_PARENT_ID = "ExplorerPerspective-ContextMenu";
+  public static final String TOOLBAR_ITEM_OPEN = "ExplorerPerspective-Toolbar-10000-Open";
+  public static final String TOOLBAR_ITEM_CREATE_FOLDER =
+      "ExplorerPerspective-Toolbar-10050-CreateFolder";
+  public static final String TOOLBAR_ITEM_EXPAND_ALL =
+      "ExplorerPerspective-Toolbar-10060-ExpandAll";
+  public static final String TOOLBAR_ITEM_COLLAPSE_ALL =
+      "ExplorerPerspective-Toolbar-10070-CollapseAll";
+  public static final String TOOLBAR_ITEM_DELETE = "ExplorerPerspective-Toolbar-10100-Delete";
+  public static final String TOOLBAR_ITEM_RENAME = "ExplorerPerspective-Toolbar-10200-Rename";
+  public static final String TOOLBAR_ITEM_REFRESH = "ExplorerPerspective-Toolbar-10300-Refresh";
+  public static final String TOOLBAR_ITEM_SHOW_HIDDEN =
+      "ExplorerPerspective-Toolbar-10400-Show-hidden";
+  public static final String TOOLBAR_ITEM_SELECT_OPENED_FILE =
+      "ExplorerPerspective-Toolbar-10500-Select-opened-file";
+  public static final String CONTEXT_MENU_CREATE_PIPELINE =
+      "ExplorerPerspective-ContextMenu-10010-CreatePipeline";
+  public static final String CONTEXT_MENU_CREATE_WORKFLOW =
+      "ExplorerPerspective-ContextMenu-10020-CreateWorkflow";
+  public static final String CONTEXT_MENU_CREATE_FILE =
+      "ExplorerPerspective-ContextMenu-10030-CreateFile";
+  public static final String CONTEXT_MENU_CREATE_FOLDER =
+      "ExplorerPerspective-ContextMenu-10050-CreateFolder";
+  public static final String CONTEXT_MENU_EXPAND_ALL =
+      "ExplorerPerspective-ContextMenu-10060-ExpandAll";
+  public static final String CONTEXT_MENU_COLLAPSE_ALL =
+      "ExplorerPerspective-ContextMenu-10070-CollapseAll";
+  public static final String CONTEXT_MENU_REFRESH_FOLDER =
+      "ExplorerPerspective-ContextMenu-10080-RefreshFolder";
+  public static final String CONTEXT_MENU_OPEN = "ExplorerPerspective-ContextMenu-10100-Open";
+  public static final String CONTEXT_MENU_OPEN_AS_TEXT =
+      "ExplorerPerspective-ContextMenu-10101-OpenAsText";
+  public static final String CONTEXT_MENU_OPEN_IN_EXPLORER =
+      "ExplorerPerspective-ContextMenu-10102-OpenInExplorer";
+  public static final String CONTEXT_MENU_RENAME = "ExplorerPerspective-ContextMenu-10300-Rename";
+  public static final String CONTEXT_MENU_COPY_NAME =
+      "ExplorerPerspective-ContextMenu-10400-CopyName";
+  public static final String CONTEXT_MENU_COPY_PATH =
+      "ExplorerPerspective-ContextMenu-10401-CopyPath";
+  public static final String CONTEXT_MENU_FIND_REFERENCES =
+      "ExplorerPerspective-ContextMenu-10402-FindReferences";
+  public static final String CONTEXT_MENU_DELETE = "ExplorerPerspective-ContextMenu-90000-Delete";
+  private static final String FILE_EXPLORER_TREE = "File explorer tree";
+
+  /** Maximum number of paths listed in the delete confirmation dialog. */
+  private static final int MAX_LISTED_DELETE_PATHS = 20;
+
+  private static final String TREE_WIDTH_AUDIT_TYPE = "explorer-perspective-tree-width";
+  private static final String EXPLORER_AUDIT_TYPE = "explorer-perspective-state";
+
+  /** State key under {@link #EXPLORER_AUDIT_TYPE} holding the serialized editor layout tree. */
+  private static final String STATE_EDITOR_LAYOUT_KEY = "editor-layout";
+
+  private static final String STATE_EDITOR_LAYOUT_ROOT = "root";
+
+  // Serialized layout-node fields (kept short: the blob is written per shutdown).
+  private static final String LAYOUT_TYPE = "t";
+  private static final String LAYOUT_TYPE_SPLIT = "split";
+  private static final String LAYOUT_TYPE_LEAF = "leaf";
+  private static final String LAYOUT_ORIENTATION = "o";
+  private static final String LAYOUT_ORIENTATION_VERTICAL = "V";
+  private static final String LAYOUT_ORIENTATION_HORIZONTAL = "H";
+  private static final String LAYOUT_WEIGHTS = "w";
+  private static final String LAYOUT_CHILDREN = "c";
+  private static final String LAYOUT_LEAF_ID = "id";
+  private static final String STATE_PANEL_VISIBLE_KEY = "panel-visible";
+  private static final String STATE_PANEL_VISIBLE_PROP = "visible";
+  private static final String KEY_TAB_FOLDER = "hop-explorer-tabFolder";
+
+  private static ExplorerPerspective instance;
+  @Getter private GuiToolbarWidgets toolBarWidgets;
+
+  @Getter private final ExplorerFileType explorerFileType;
+  @Getter private final HopPipelineFileType<PipelineMeta> pipelineFileType;
+  @Getter private final HopWorkflowFileType<WorkflowMeta> workflowFileType;
+
+  private HopGui hopGui;
+  private SashForm sash;
+  @Getter private Tree tree;
+  private TreeEditor treeEditor;
+
+  /**
+   * Root of the recursive editor layout tree. A leaf is a {@link CTabFolder}; an internal node is a
+   * {@link SashForm} whose (non-{@link org.eclipse.swt.widgets.Sash}) children are themselves
+   * leaves or nested SashForms. When there is a single pane, {@code editorRoot} is that one
+   * CTabFolder.
+   */
+  private Control editorRoot;
+
+  /**
+   * Leaf tab folders that live in their own floating windows (detached editor tabs). They are not
+   * part of {@link #editorRoot} but do participate in {@link #getTabFolders()} so that active-file
+   * tracking, save/close and drag-and-drop work across windows.
+   */
+  private final List<CTabFolder> detachedFolders = new ArrayList<>();
+
+  /**
+   * Maps a persisted leaf id ("L0", "L1", ... in tree pre-order) to the docked tab folder rebuilt
+   * for it during {@link #applyRestoredEditorSplitState()}. Used by audit restore to route each
+   * reopened file into the pane it was saved in. Rebuilt on every restore.
+   */
+  private final Map<String, CTabFolder> folderByLeafId = new HashMap<>();
+
+  private CTabFolder activeTabFolder;
+  private Composite tabFolderWrapper;
+  private Control toolBar;
+  @Getter private GuiMenuWidgets menuWidgets;
+  private final List<TabItemHandler> items;
+  private boolean showingHiddenFiles;
+
+  private boolean fileExplorerPanelVisible = true;
+  @Getter private String rootFolder;
+  @Getter private String rootName;
+  private String dragFile;
+  private int dropOperation;
+  @Getter private List<IExplorerFilePaintListener> filePaintListeners;
+  @Getter private List<IExplorerRootChangedListener> rootChangedListeners;
+  @Getter private List<IExplorerRefreshListener> refreshListeners;
+  @Getter private List<IExplorerSelectionListener> selectionListeners;
+  private List<IHopFileType> fileTypes;
+
+  /**
+   * Lower-case extension (no dot) → first matching file type; built once in {@link #loadFileTypes}.
+   */
+  private Map<String, IHopFileType> fileTypeByExtension = new HashMap<>();
+
+  /** Exact base name → type for filters that are not extension patterns (e.g. Dockerfile). */
+  private Map<String, IHopFileType> fileTypeByBaseName = new HashMap<>();
+
+  private IHopFileType folderFileType;
+  private IHopFileType genericFileType;
+  private final IHopFileType emptyFileType = new EmptyFileType();
+  private Map<String, Image> typeImageMap;
+  private Text searchText;
+  private String filterText = "";
+
+  /** Substring matcher only — fuzzy scoring is too expensive for per-keystroke file filters. */
+  private SearchMatcher filterMatcher = new SearchMatcher("", false, false, false);
+
+  private Map<String, Boolean> treeStateBeforeFilter = null;
+
+  /** In-memory project tree for fast filter re-applies without re-walking VFS. */
+  private final ExplorerTreeModel treeModel = new ExplorerTreeModel();
+
+  private final Runnable applyFilterRunnable = this::applyPendingFilter;
+  private static final int FILTER_DEBOUNCE_MS = 250;
+
+  /** Last folder the user selected in the tree; used for scoped refresh. */
+  private String lastSelectedFolderPath;
+
+  public ExplorerPerspective() {
+    instance = this;
+
+    this.explorerFileType = new ExplorerFileType();
+    this.pipelineFileType = new HopPipelineFileType<>();
+    this.workflowFileType = new HopWorkflowFileType<>();
+
+    this.items = new CopyOnWriteArrayList<>();
+    this.filePaintListeners = new ArrayList<>();
+    this.rootChangedListeners = new ArrayList<>();
+    this.refreshListeners = new ArrayList<>();
+    this.selectionListeners = new ArrayList<>();
+    this.typeImageMap = new HashMap<>();
+    this.showingHiddenFiles = false;
+  }
+
+  public static ExplorerPerspective getInstance() {
+    ExplorerPerspective fromGui = sessionPerspectiveOrNull();
+    if (fromGui != null) {
+      return fromGui;
+    }
+    // Fallback for tests and the disabled-perspective case (constructed, never initialized).
+    if (instance == null) {
+      new ExplorerPerspective();
+    }
+    return instance;
+  }
+
+  private static ExplorerPerspective sessionPerspectiveOrNull() {
+    try {
+      return HopGui.findSessionPerspective(ExplorerPerspective.class);
+    } catch (Throwable e) {
+      return null;
+    }
+  }
+
+  @Override
+  public String getId() {
+    return "explorer-perspective";
+  }
+
+  @GuiKeyboardShortcut(control = true, shift = true, key = 'e', global = true)
+  @GuiOsxKeyboardShortcut(command = true, shift = true, key = 'e', global = true)
+  @Override
+  public void activate() {
+    if (!isInitialized()) {
+      return;
+    }
+    hopGui.setActivePerspective(this);
+  }
+
+  /**
+   * When this perspective is disabled (an exclusion in disabledGuiElements.xml) HopGui skips it
+   * while loading the perspectives, so initialize() never runs. The instance still exists because
+   * the @GuiPlugin class is instantiated to register the GUI elements it declares, leaving an
+   * instance without a HopGui or any widgets to work with.
+   */
+  private boolean isInitialized() {
+    return hopGui != null;
+  }
+
+  @Override
+  public void perspectiveActivated() {
+    this.updateGui();
+  }
+
+  @Override
+  public boolean isActive() {
+    return hopGui != null && hopGui.isActivePerspective(this);
+  }
+
+  @Override
+  public List<IHopFileType> getSupportedHopFileTypes() {
+    return List.of(explorerFileType, pipelineFileType, workflowFileType);
+  }
+
+  @Override
+  public void initialize(HopGui hopGui, Composite parent) {
+    this.hopGui = hopGui;
+
+    determineRootFolderName(hopGui);
+    loadFileTypes();
+    loadTypeImages(parent);
+
+    // Split tree and editor
+    //
+    sash = new SashForm(parent, SWT.HORIZONTAL);
+    sash.setLayoutData(new FormDataBuilder().fullSize().result());
+
+    createTree(sash);
+    createTabFolder(sash);
+
+    SashFormMemory.persist(sash, TREE_WIDTH_AUDIT_TYPE);
+
+    // Set initial file explorer panel visibility from configuration only.
+    // Saved state is applied later in applyRestoredState() after startup (and project) so
+    // the correct namespace is set (see HopGui open() async block and ProjectActivated).
+    Boolean visibleByDefault =
+        ExplorerPerspectiveConfigSingleton.getConfig().getFileExplorerVisibleByDefault();
+    fileExplorerPanelVisible = visibleByDefault == null || visibleByDefault;
+    if (!fileExplorerPanelVisible) {
+      sash.setMaximizedControl(tabFolderWrapper);
+    }
+
+    // Refresh the file explorer when a project is activated or updated.
+    // applyRestoredState() only rebuilds the editor split layout when the editor is empty, so it
+    // is safe after enableHopGuiProject has already reopened tabs (issue #7692).
+    //
+    hopGui
+        .getEventsHandler()
+        .addEventListener(
+            getClass().getName() + "ProjectActivated",
+            e ->
+                hopGui
+                    .getDisplay()
+                    .asyncExec(
+                        () -> {
+                          clearSearchFilters();
+                          refresh();
+                          applyRestoredState();
+                        }),
+            HopGuiEvents.ProjectActivated.name());
+
+    hopGui
+        .getEventsHandler()
+        .addEventListener(
+            getClass().getName() + "ProjectUpdated",
+            e -> refresh(),
+            HopGuiEvents.ProjectUpdated.name());
+
+    // Add key listeners
+    HopGuiKeyHandler.getInstance().addParentObjectToHandle(this);
+
+    // Sync active tab with focused editor content so Save/shortcuts target the right tab in split
+    // view
+    ExplorerPerspective perspective = this;
+    parent
+        .getDisplay()
+        .addFilter(
+            SWT.FocusIn,
+            e -> {
+              if (!(e.widget instanceof Control)) {
+                return;
+              }
+              Control focusControl = (Control) e.widget;
+              if (hopGui.getActivePerspective() != perspective) {
+                return;
+              }
+              Control c = focusControl;
+              while (c != null) {
+                Object data = c.getData(KEY_TAB_FOLDER);
+                if (data instanceof CTabFolder folder && isEditorTabFolder((Control) data)) {
+                  for (CTabItem item : folder.getItems()) {
+                    if (item.getControl() == c) {
+                      if (activeTabFolder != folder || folder.getSelection() != item) {
+                        activeTabFolder = folder;
+                        folder.setSelection(item);
+                        folder.showItem(item);
+                        if (item.getData() instanceof IHopFileTypeHandler handler) {
+                          hopGui.handleFileCapabilities(
+                              handler.getFileType(), handler, handler.hasChanged(), false, false);
+                          selectInTree(handler.getFilename());
+                        }
+                      }
+                      break;
+                    }
+                  }
+                  break;
+                }
+                c = c.getParent();
+              }
+            });
+  }
+
+  private void loadFileTypes() {
+    fileTypes = new ArrayList<>();
+    PluginRegistry registry = PluginRegistry.getInstance();
+    List<IPlugin> plugins = PluginRegistry.getInstance().getPlugins(HopFileTypePluginType.class);
+    for (IPlugin plugin : plugins) {
+      try {
+        IHopFileType fileType = (IHopFileType) registry.loadClass(plugin);
+        fileTypes.add(fileType);
+      } catch (Exception e) {
+        hopGui.getLog().logError("Unable to load file type plugin: " + plugin.getIds()[0], e);
+      }
+    }
+    // Keep as last in the list...
+    fileTypes.add(new RawExplorerFileType());
+    fileTypes.add(new GenericFileType());
+    indexFileTypes();
+  }
+
+  /**
+   * Build O(1) extension and basename maps so tree painting does not probe every file type (and
+   * historically every probe opened a VFS object) for each of thousands of project files.
+   */
+  private void indexFileTypes() {
+    fileTypeByExtension = new HashMap<>();
+    fileTypeByBaseName = new HashMap<>();
+    folderFileType = null;
+    genericFileType = null;
+
+    for (IHopFileType type : fileTypes) {
+      if (type instanceof FolderFileType) {
+        folderFileType = type;
+        continue;
+      }
+      if (type instanceof GenericFileType) {
+        genericFileType = type;
+        continue;
+      }
+
+      String[] filters = type.getFilterExtensions();
+      if (filters == null) {
+        continue;
+      }
+      for (String filter : filters) {
+        if (Utils.isEmpty(filter)) {
+          continue;
+        }
+        for (String part : filter.split(";")) {
+          String token = part.trim();
+          if (token.isEmpty() || "*".equals(token)) {
+            continue;
+          }
+          if (token.startsWith("*.") && token.length() > 2) {
+            String ext = token.substring(2).toLowerCase(Locale.ROOT);
+            fileTypeByExtension.putIfAbsent(ext, type);
+          } else if (token.startsWith(".") && token.length() > 1 && token.indexOf('.', 1) < 0) {
+            // ".gitignore" style token used as exact base name elsewhere — also as extension-less
+            // name match
+            fileTypeByBaseName.putIfAbsent(token, type);
+          } else if (!token.contains("*")) {
+            // Exact base name: Dockerfile, config, README, ...
+            fileTypeByBaseName.putIfAbsent(token, type);
+          }
+        }
+      }
+    }
+
+    if (folderFileType == null) {
+      folderFileType = new FolderFileType();
+    }
+    if (genericFileType == null) {
+      genericFileType = new GenericFileType();
+    }
+  }
+
+  private void loadTypeImages(Composite parentComposite) {
+    typeImageMap = new HashMap<>();
+    int iconSize = (int) (PropsUi.getInstance().getZoomFactor() * 16);
+
+    for (IHopFileType fileType : fileTypes) {
+      String imageFilename = fileType.getFileTypeImage();
+      if (imageFilename != null) {
+        try {
+          SvgCacheEntry svgCacheEntry =
+              SvgCache.loadSvg(new SvgFile(imageFilename, fileType.getClass().getClassLoader()));
+          SwtUniversalImageSvg imageSvg =
+              new SwtUniversalImageSvg(new SvgImage(svgCacheEntry.getSvgDocument()));
+          Image image = imageSvg.getAsBitmapForSize(hopGui.getDisplay(), iconSize, iconSize);
+          typeImageMap.put(fileType.getName(), image);
+        } catch (Exception e) {
+          hopGui
+              .getLog()
+              .logError(
+                  "Error loading image : '"
+                      + imageFilename
+                      + "' for type '"
+                      + fileType.getName()
+                      + "'",
+                  e);
+        }
+      }
+    }
+    // Properly dispose images when done...
+    //
+    parentComposite.addListener(
+        SWT.Dispose,
+        e -> {
+          for (Image image : typeImageMap.values()) {
+            image.dispose();
+          }
+        });
+  }
+
+  public void determineRootFolderName(HopGui hopGui) {
+
+    String oldRootFolder = rootFolder;
+    String oldRootName = rootName;
+    rootFolder = hopGui.getVariables().getVariable("user.home");
+    rootName = "Home folder";
+
+    DetermineRootFolderExtension ext =
+        new DetermineRootFolderExtension(hopGui, rootFolder, rootName);
+    try {
+      ExtensionPointHandler.callExtensionPoint(
+          hopGui.getLog(),
+          hopGui.getVariables(),
+          HopGuiExtensionPoint.HopGuiDetermineExplorerRoot.id,
+          ext);
+      rootFolder = ext.rootFolder;
+      rootName = ext.rootName;
+    } catch (Exception e) {
+      new ErrorDialog(
+          getShell(),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.RootFolder.Header"),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.RootFolder.Message"),
+          e);
+    }
+
+    if (!Strings.CS.equals(oldRootFolder, rootFolder)
+        || !Strings.CS.equals(oldRootName, rootName)) {
+      // Project or root folder changed — drop any folder path from the previous tree.
+      lastSelectedFolderPath = null;
+      TreeMemory.getInstance().clearTree(FILE_EXPLORER_TREE);
+      // call the root changed listeners...
+      //
+      for (IExplorerRootChangedListener listener : rootChangedListeners) {
+        listener.rootChanged(rootFolder, rootName);
+      }
+    }
+  }
+
+  protected void createTree(Composite parent) {
+    Composite treeComposite;
+    // Create composite
+    //
+    treeComposite = new Composite(parent, SWT.NONE);
+    FormLayout layout = new FormLayout();
+    layout.marginWidth = 0;
+    layout.marginHeight = 0;
+    treeComposite.setLayout(layout);
+
+    // Create search/filter text box
+    //
+    searchText = new Text(treeComposite, SWT.SEARCH | SWT.ICON_CANCEL | SWT.ICON_SEARCH);
+    searchText.setMessage(BaseMessages.getString(PKG, "ExplorerPerspective.Search.Placeholder"));
+    PropsUi.setLook(searchText);
+    FormData searchFormData = new FormData();
+    searchFormData.left = new FormAttachment(0, 0);
+    searchFormData.top = new FormAttachment(0, 0);
+    searchFormData.right = new FormAttachment(100, 0);
+    searchText.setLayoutData(searchFormData);
+
+    // Debounced filter: rebuild only after typing pauses (see SearchEverywhereDialog).
+    searchText.addListener(SWT.Modify, event -> scheduleFilterApply());
+    // Enter applies immediately
+    searchText.addListener(
+        SWT.DefaultSelection,
+        event -> {
+          cancelScheduledFilterApply();
+          applyPendingFilter();
+        });
+
+    // Create a composite with toolbar and tree for the border
+    Composite composite = new Composite(treeComposite, SWT.BORDER);
+    composite.setLayout(new FormLayout());
+    FormData layoutData = new FormData();
+    layoutData.left = new FormAttachment(0, 0);
+    layoutData.top = new FormAttachment(searchText, PropsUi.getMargin());
+    layoutData.right = new FormAttachment(100, 0);
+    layoutData.bottom = new FormAttachment(100, 0);
+    composite.setLayoutData(layoutData);
+
+    // Create toolbar
+    //
+    IToolbarContainer toolBarContainer =
+        ToolbarFacade.createToolbarContainer(composite, SWT.WRAP | SWT.LEFT | SWT.HORIZONTAL);
+    toolBar = toolBarContainer.getControl();
+    toolBarWidgets = new GuiToolbarWidgets();
+    toolBarWidgets.registerGuiPluginObject(this);
+    toolBarWidgets.createToolbarWidgets(toolBarContainer, GUI_PLUGIN_TOOLBAR_PARENT_ID);
+    FormData toolBarFormData = new FormData();
+    toolBarFormData.left = new FormAttachment(0, 0);
+    toolBarFormData.top = new FormAttachment(0, 0);
+    toolBarFormData.right = new FormAttachment(100, 0);
+    toolBar.setLayoutData(toolBarFormData);
+    toolBar.pack();
+    PropsUi.setLook(toolBar, Props.WIDGET_STYLE_TOOLBAR);
+
+    tree = new Tree(composite, SWT.MULTI | SWT.H_SCROLL | SWT.V_SCROLL);
+    tree.setHeaderVisible(false);
+    tree.addListener(SWT.Selection, event -> updateSelection());
+    tree.addListener(SWT.DefaultSelection, this::openFile);
+    PropsUi.setLook(tree);
+
+    FormData treeFormData = new FormData();
+    treeFormData.left = new FormAttachment(0, 0);
+    treeFormData.top = new FormAttachment(toolBar, PropsUi.getMargin());
+    treeFormData.right = new FormAttachment(100, 0);
+    treeFormData.bottom = new FormAttachment(100, 0);
+    tree.setLayoutData(treeFormData);
+
+    // Create Tree editor for rename
+    treeEditor = new TreeEditor(tree);
+    treeEditor.horizontalAlignment = SWT.LEFT;
+    treeEditor.grabHorizontal = true;
+
+    // Lazy loading...
+    //
+    tree.addListener(SWT.Expand, this::lazyLoadFolderOnExpand);
+    FolderTreeIcons.install(tree);
+
+    // Create context menu...
+    //
+    Menu menu = new Menu(tree);
+    menuWidgets = new GuiMenuWidgets();
+    menuWidgets.registerGuiPluginObject(this);
+    menuWidgets.createMenuWidgets(GUI_PLUGIN_CONTEXT_MENU_PARENT_ID, getShell(), menu);
+    tree.setMenu(menu);
+    tree.addListener(
+        SWT.MenuDetect,
+        event -> {
+          if (tree.getSelectionCount() < 1) {
+            return;
+          }
+
+          TreeItem[] selection = tree.getSelection();
+          TreeItemFolder tif =
+              selection.length == 1 ? (TreeItemFolder) selection[0].getData() : null;
+          // Opening works on the whole selection, everything else needs exactly one file.
+          //
+          boolean openSupported = isOpenSupported(selection);
+          MenuItem openItem = menuWidgets.findMenuItem(CONTEXT_MENU_OPEN);
+          if (openItem != null) {
+            openItem.setEnabled(openSupported);
+          }
+          MenuItem openAsTextItem = menuWidgets.findMenuItem(CONTEXT_MENU_OPEN_AS_TEXT);
+          if (openAsTextItem != null) {
+            openAsTextItem.setEnabled(selection.length == 1 && tif != null && !tif.folder);
+          }
+          MenuItem openInExplorerItem = menuWidgets.findMenuItem(CONTEXT_MENU_OPEN_IN_EXPLORER);
+          if (openInExplorerItem != null) {
+            openInExplorerItem.setEnabled(tif != null && HopVfs.isLocalFileSystem(tif.path));
+          }
+
+          MenuItem renameItem = menuWidgets.findMenuItem(CONTEXT_MENU_RENAME);
+          if (renameItem != null) {
+            renameItem.setEnabled(selection.length == 1);
+          }
+
+          MenuItem deleteItem = menuWidgets.findMenuItem(CONTEXT_MENU_DELETE);
+          if (deleteItem != null) {
+            deleteItem.setEnabled(selection.length >= 1);
+          }
+
+          // Creating anything only makes sense inside a folder.
+          //
+          boolean folderSelected = selection.length == 1 && tif != null && tif.folder;
+          for (String createMenuId :
+              new String[] {
+                CONTEXT_MENU_CREATE_PIPELINE,
+                CONTEXT_MENU_CREATE_WORKFLOW,
+                CONTEXT_MENU_CREATE_FILE,
+                CONTEXT_MENU_CREATE_FOLDER
+              }) {
+            MenuItem createItem = menuWidgets.findMenuItem(createMenuId);
+            if (createItem != null) {
+              createItem.setEnabled(folderSelected);
+            }
+          }
+
+          MenuItem refreshFolderItem = menuWidgets.findMenuItem(CONTEXT_MENU_REFRESH_FOLDER);
+          if (refreshFolderItem != null) {
+            // Scoped refresh needs a single selection so lastSelectedFolderPath is meaningful.
+            refreshFolderItem.setEnabled(selection.length == 1 && tif != null);
+          }
+
+          // Finding references is only meaningful for a single pipeline or workflow file.
+          //
+          MenuItem findReferencesItem = menuWidgets.findMenuItem(CONTEXT_MENU_FIND_REFERENCES);
+          if (findReferencesItem != null) {
+            findReferencesItem.setEnabled(
+                selection.length == 1
+                    && tif != null
+                    && !tif.folder
+                    && isPipelineOrWorkflowFile(tif.path));
+          }
+
+          // Show the menu
+          //
+          menu.setVisible(true);
+        });
+
+    // Create drag and drop on the tree
+    //
+    createTreeDragSource(tree);
+    createTreeDropTarget(tree);
+
+    // Remember tree node expanded/Collapsed
+    //
+    TreeMemory.addTreeListener(tree, FILE_EXPLORER_TREE);
+
+    // Inform other plugins that toolbar and context menu are created
+    // They can then add listeners to this class and so on.
+    //
+    GuiRegistry.getInstance().executeCallbackMethods(GUI_TOOLBAR_CREATED_CALLBACK_ID);
+    GuiRegistry.getInstance().executeCallbackMethods(GUI_CONTEXT_MENU_CREATED_CALLBACK_ID);
+  }
+
+  /**
+   * Creates the Drag & Drop DragSource for items being dragged from the tree.
+   *
+   * @return the DragSource for the tree
+   */
+  private DragSource createTreeDragSource(final Tree tree) {
+
+    final FileTransfer fileTransfer = FileTransfer.getInstance();
+
+    final DragSource dragSource = new DragSource(tree, DND.DROP_COPY | DND.DROP_MOVE);
+    dragSource.setTransfer(fileTransfer);
+    dragSource.addDragListener(
+        new DragSourceAdapter() {
+          private Image dragImage;
+
+          @Override
+          public void dragStart(DragSourceEvent event) {
+            List<ExplorerFile> files = getSelectedFiles();
+            String metadataFolder = hopGui.getVariables().getVariable(Const.HOP_METADATA_FOLDER);
+            // Avoid moving root folder, metadata folder or hidden file (like .git)
+            if (files.isEmpty()) {
+              event.doit = false;
+              return;
+            }
+            for (ExplorerFile file : files) {
+              if (file.getFilename().equals(rootFolder)
+                  || file.getFilename().contains(metadataFolder)
+                  || file.getName().startsWith(".")) {
+                event.doit = false;
+                return;
+              }
+            }
+
+            // Used by dragOver. The files are dragged from the same folder, so the first one is
+            // enough to keep them from being dropped onto their own parent.
+            dragFile = files.get(0).getFilename();
+
+            // Set an explicit drag image to avoid macOS NPE in TreeDragSourceEffect when the
+            // native side requests the default tree drag image (dragImageFromListener.handle null).
+            if (EnvironmentUtils.getInstance().isWeb()) {
+              event.image = GuiResource.getInstance().getImageHop();
+            } else {
+              TreeItem[] selection = tree.getSelection();
+              if (selection != null && selection.length > 0) {
+                Rectangle bounds = selection[0].getBounds();
+                int w = Math.max(1, bounds.width);
+                int h = Math.max(1, bounds.height);
+                try {
+                  dragImage = new Image(hopGui.getDisplay(), w, h);
+                  GC gc = new GC(tree);
+                  try {
+                    gc.copyArea(dragImage, bounds.x, bounds.y);
+                  } finally {
+                    gc.dispose();
+                  }
+                  event.image = dragImage;
+                } catch (Exception e) {
+                  hopGui
+                      .getLog()
+                      .logDebug(getClass().getSimpleName(), "Could not create drag image", e);
+                }
+              }
+            }
+          }
+
+          @Override
+          public void dragSetData(DragSourceEvent event) {
+            if (fileTransfer.isSupportedType(event.dataType)) {
+              List<ExplorerFile> files = getSelectedFiles();
+              event.doit = !files.isEmpty();
+              event.data = files.stream().map(ExplorerFile::getFilename).toArray(String[]::new);
+            }
+          }
+
+          @Override
+          public void dragFinished(DragSourceEvent event) {
+            if (dragImage != null) {
+              dragImage.dispose();
+              dragImage = null;
+            }
+            dragFile = null;
+          }
+        });
+
+    return dragSource;
+  }
+
+  /**
+   * Creates the Drag & Drop DropTarget for items being dropped onto the tree.
+   *
+   * @return the DropTarget for the tree
+   */
+  private DropTarget createTreeDropTarget(final Tree tree) {
+
+    final FileTransfer fileTransfer = FileTransfer.getInstance();
+
+    // Allow files to be copied or moved to the drop target
+    DropTarget target = new DropTarget(tree, DND.DROP_COPY | DND.DROP_MOVE);
+    target.setTransfer(fileTransfer);
+    target.addDropListener(
+        new DropTargetAdapter() {
+
+          @Override
+          public void dragEnter(final DropTargetEvent event) {
+            // By default try to perform a move operation
+            if (event.detail == DND.DROP_DEFAULT) {
+              // Check if the drag source support the move action
+              if ((event.operations & DND.DROP_MOVE) == 0) {
+                event.detail = DND.DROP_COPY;
+              } else {
+                event.detail = DND.DROP_MOVE;
+              }
+            }
+            dropOperation = event.detail;
+
+            // Will accept only files dropped
+            for (int i = 0; i < event.dataTypes.length; i++) {
+              if (fileTransfer.isSupportedType(event.dataTypes[i])) {
+                event.currentDataType = event.dataTypes[i];
+                break;
+              }
+            }
+          }
+
+          @Override
+          public void dragOperationChanged(DropTargetEvent event) {
+            // By default try to perform a move operation
+            if (event.detail == DND.DROP_DEFAULT) {
+              // Check if the drag source support the move action
+              if ((event.operations & DND.DROP_MOVE) == 0) {
+                event.detail = DND.DROP_COPY;
+              } else {
+                event.detail = DND.DROP_MOVE;
+              }
+            }
+
+            dropOperation = event.detail;
+          }
+
+          @Override
+          public void dragLeave(DropTargetEvent event) {
+            // Do nothing
+          }
+
+          @Override
+          public void dropAccept(final DropTargetEvent event) {
+            // Will accept only files dropped
+            if (!FileTransfer.getInstance().isSupportedType(event.currentDataType)) {
+              event.detail = DND.DROP_NONE;
+            }
+          }
+
+          @Override
+          public void dragOver(final DropTargetEvent event) {
+            // No tree item under the cursor (empty area / between items). Reject so RAP/Hop Web
+            // does not attempt an invalid drop that can NPE and kill the session (#7933).
+            if (event.item == null) {
+              event.detail = DND.DROP_NONE;
+              event.feedback = DND.FEEDBACK_NONE;
+              return;
+            }
+
+            Object data = event.item.getData();
+            if (data instanceof TreeItemFolder targetItem) {
+              // Only drop to folder
+              if (targetItem.folder) {
+                event.detail = dropOperation;
+                event.feedback = DND.FEEDBACK_SELECT | DND.FEEDBACK_SCROLL | DND.FEEDBACK_EXPAND;
+
+                try {
+                  FileObject targetFile = HopVfs.getFileObject(targetItem.path);
+
+                  // For internal drag check hierarchies
+                  if (dragFile != null) {
+                    FileObject sourceFile = HopVfs.getFileObject(dragFile);
+                    FileObject sourceParent = sourceFile.getParent();
+
+                    // Avoid copy or move to itself, its parent or for folder its descendant
+                    if (sourceFile.equals(targetFile)
+                        || (sourceParent != null && sourceParent.equals(targetFile))
+                        || sourceFile.getName().isDescendent(targetFile.getName())) {
+                      event.detail = DND.DROP_NONE;
+                    }
+                  }
+                } catch (FileSystemException | HopFileException e) {
+                  // Ignore
+                }
+              } else {
+                event.detail = DND.DROP_NONE;
+                event.feedback = DND.FEEDBACK_NONE;
+              }
+            } else {
+              event.detail = DND.DROP_NONE;
+              event.feedback = DND.FEEDBACK_NONE;
+            }
+          }
+
+          @Override
+          public void drop(final DropTargetEvent event) {
+            // Guard every precondition: uncaught exceptions in RAP DND listeners can tear down
+            // the Hop Web UI session (see #7933).
+            try {
+              if (!FileTransfer.getInstance().isSupportedType(event.currentDataType)
+                  || event.item == null
+                  || event.data == null
+                  || !(event.data instanceof String[] paths)) {
+                event.detail = DND.DROP_NONE;
+                return;
+              }
+
+              Object itemData = event.item.getData();
+              if (!(itemData instanceof TreeItemFolder targetItem) || !targetItem.folder) {
+                event.detail = DND.DROP_NONE;
+                return;
+              }
+
+              List<String> errors = new ArrayList<>();
+
+              for (String path : paths) {
+                if (Utils.isEmpty(path)) {
+                  continue;
+                }
+                try {
+                  FileObject sourceFile = HopVfs.getFileObject(path);
+                  FileObject targetFile =
+                      HopVfs.getFileObject(
+                          targetItem.path
+                              + Const.FILE_SEPARATOR
+                              + sourceFile.getName().getBaseName());
+
+                  if (event.detail == DND.DROP_COPY) {
+                    // Copy file and folder and all its descendants
+                    // No need to update tab item handler because all files are new
+                    targetFile.copyFrom(sourceFile, Selectors.SELECT_ALL);
+                  } else if (event.detail == DND.DROP_MOVE) {
+                    // Move file or folder and all its descendants and update tab item handlers
+                    moveFile(sourceFile, targetFile);
+                  }
+                } catch (Exception e) {
+                  errors.add(path);
+                }
+              }
+
+              // Report errors
+              if (!errors.isEmpty()) {
+                String errorPaths = String.join("\n", errors);
+
+                MessageBox messageBox =
+                    new MessageBox(HopGui.getInstance().getShell(), SWT.ICON_ERROR | SWT.OK);
+                messageBox.setText("Drag and drop");
+                messageBox.setMessage("Unable to copy/move file(s):\n\n" + errorPaths);
+                messageBox.open();
+              }
+
+              refresh();
+            } catch (Exception e) {
+              event.detail = DND.DROP_NONE;
+              new ErrorDialog(
+                  HopGui.getInstance().getShell(),
+                  "Drag and drop",
+                  "Unexpected error during file drag and drop",
+                  e);
+            }
+          }
+        });
+
+    return target;
+  }
+
+  /**
+   * folder if it's not loaded already. To keep track of this we have a flag called "loaded" in the
+   * item data.
+   */
+  private void lazyLoadFolderOnExpand(Event event) {
+    // Which folder is being expanded?
+    //
+    TreeItem item = (TreeItem) event.item;
+    ensureFolderLoaded(item);
+  }
+
+  /**
+   * True when the folder still has only the lazy-loading placeholder child (empty text, no data).
+   * Expanding such a node would show a blank row in the tree.
+   */
+  private static boolean hasOnlyLazyDummyChild(TreeItem item) {
+    if (item == null || item.isDisposed() || item.getItemCount() != 1) {
+      return false;
+    }
+    TreeItem firstChild = item.getItem(0);
+    return firstChild.getData() == null && Utils.isEmpty(firstChild.getText());
+  }
+
+  /** Depth passed to {@link #refreshFolder} when loading children of {@code tif}. */
+  private int childDepthForFolder(TreeItemFolder tif) {
+    return ExplorerPathUtils.pathsEqual(tif.path, rootFolder) ? 0 : tif.depth + 1;
+  }
+
+  /**
+   * Loads folder contents when still unloaded or stuck with a lazy placeholder. Safe to call before
+   * any programmatic {@code setExpanded(true)}.
+   */
+  private void ensureFolderLoaded(TreeItem item) {
+    if (item == null || item.isDisposed()) {
+      return;
+    }
+    TreeItemFolder tif = (TreeItemFolder) item.getData();
+    if (tif == null || !tif.folder) {
+      return;
+    }
+    if (tif.loaded && !hasOnlyLazyDummyChild(item)) {
+      return;
+    }
+
+    BusyIndicator.showWhile(
+        hopGui.getDisplay(),
+        () -> {
+          refreshFolder(item, tif.path, childDepthForFolder(tif));
+          tif.loaded = true;
+        });
+  }
+
+  /** Every selected item needs to be openable before we offer to open the selection. */
+  private boolean isOpenSupported(TreeItem[] selection) {
+    if (selection == null || selection.length == 0) {
+      return false;
+    }
+    for (TreeItem item : selection) {
+      TreeItemFolder tif = (TreeItemFolder) item.getData();
+      if (tif == null || tif.fileType == null) {
+        return false;
+      }
+      if (!tif.folder && !tif.fileType.supportsOpening()) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private void openFile(Event event) {
+    if (event.item instanceof TreeItem item) {
+      TreeItemFolder tif = (TreeItemFolder) item.getData();
+      if (tif.folder) {
+        if (!item.getExpanded()) {
+          lazyLoadFolderOnExpand(event);
+          FolderTreeIcons.setExpanded(item, true);
+        } else {
+          FolderTreeIcons.setExpanded(item, false);
+        }
+        TreeMemory.getInstance().storeExpanded(FILE_EXPLORER_TREE, item, item.getExpanded());
+      } else {
+        openFile(item);
+      }
+    }
+  }
+
+  private void openFile(TreeItem item) {
+    try {
+      TreeItemFolder tif = (TreeItemFolder) item.getData();
+      if (tif != null && tif.fileType != null) {
+        if (tif.fileType instanceof FolderFileType) {
+          // Expand the folder
+          //
+          boolean expanded = !item.getExpanded();
+          if (expanded) {
+            ensureFolderLoaded(item);
+          }
+          FolderTreeIcons.setExpanded(item, expanded);
+          TreeMemory.getInstance().storeExpanded(FILE_EXPLORER_TREE, item, expanded);
+        } else {
+          IHopFileTypeHandler handler =
+              tif.fileType.openFile(hopGui, tif.path, hopGui.getVariables());
+          if (handler != null) {
+            handler.updateGui();
+            hopGui.auditDelegate.writeLastOpenFiles();
+          }
+        }
+      }
+    } catch (Exception e) {
+      new ErrorDialog(
+          hopGui.getShell(),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.OpenFile.Header"),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.OpenFile.Message"),
+          e);
+    }
+  }
+
+  private void deleteFiles(final TreeItem[] treeItems) {
+    try {
+      // Items nested inside another selected folder are deleted along with that folder, so drop
+      // them from the list. Otherwise we'd try to delete and dispose them a second time.
+      //
+      List<TreeItem> items = new ArrayList<>();
+      List<FileObject> fileObjects = new ArrayList<>();
+      for (TreeItem treeItem : removeNestedSelection(treeItems)) {
+        TreeItemFolder tif = (TreeItemFolder) treeItem.getData();
+        if (tif == null || tif.fileType == null) {
+          continue;
+        }
+        items.add(treeItem);
+        fileObjects.add(HopVfs.getFileObject(tif.path));
+      }
+      if (fileObjects.isEmpty()) {
+        return;
+      }
+
+      // Collect everything which is about to disappear. The pipelines and workflows in there are
+      // checked for references collectively, for the complete selection at once.
+      //
+      List<List<String>> filenamesPerItem = new ArrayList<>();
+      List<String> pipelineWorkflowFiles = new ArrayList<>();
+      List<String> paths = new ArrayList<>();
+      for (FileObject fileObject : fileObjects) {
+        List<String> filenames = getRecursiveFilenames(fileObject, new ArrayList<>());
+        filenamesPerItem.add(filenames);
+        for (String filename : filenames) {
+          if (filename.endsWith(".hpl") || filename.endsWith(".hwf")) {
+            pipelineWorkflowFiles.add(filename);
+          }
+        }
+        paths.add(HopVfs.getFilename(fileObject));
+      }
+      boolean singleFolder = fileObjects.size() == 1 && fileObjects.get(0).isFolder();
+
+      boolean confirmed;
+      if (pipelineWorkflowFiles.isEmpty()) {
+        confirmed = showDeleteConfirmation(paths, singleFolder);
+      } else {
+        String displayName =
+            fileObjects.size() == 1
+                ? fileObjects.get(0).getName().getBaseName()
+                : BaseMessages.getString(
+                    PKG, "ExplorerPerspective.DeleteFiles.Selection", fileObjects.size());
+        confirmed =
+            confirmDeleteWithReferenceCheck(
+                pipelineWorkflowFiles,
+                displayName,
+                () -> showDeleteConfirmation(paths, singleFolder));
+      }
+      if (!confirmed) {
+        return;
+      }
+
+      if (fileObjects.size() == 1) {
+        if (fileObjects.get(0).deleteAll() > 0) {
+          removeTreeItemAfterDelete(items.get(0), filenamesPerItem.get(0));
+        }
+        return;
+      }
+
+      // Refreshing the tree per item would dispose the tree items still queued up here, so for a
+      // multiple selection everything is deleted first and the tree is refreshed once afterwards.
+      //
+      List<String> deletedFilenames = new ArrayList<>();
+      for (int i = 0; i < fileObjects.size(); i++) {
+        if (fileObjects.get(i).deleteAll() > 0) {
+          updateLastSelectedFolderAfterDelete(items.get(i));
+          deletedFilenames.addAll(filenamesPerItem.get(i));
+        }
+      }
+      closeTabsForFilenames(deletedFilenames);
+      refresh();
+      updateSelection();
+    } catch (Exception e) {
+      new ErrorDialog(
+          hopGui.getShell(),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.DeleteFile.Header"),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.DeleteFile.Message"),
+          e);
+    }
+  }
+
+  /** Removes the tree items which have another item of the same selection as an ancestor. */
+  private static List<TreeItem> removeNestedSelection(TreeItem[] treeItems) {
+    List<TreeItem> selection = Arrays.asList(treeItems);
+    List<TreeItem> topLevel = new ArrayList<>();
+    for (TreeItem treeItem : treeItems) {
+      boolean nested = false;
+      for (TreeItem parent = treeItem.getParentItem();
+          parent != null;
+          parent = parent.getParentItem()) {
+        if (selection.contains(parent)) {
+          nested = true;
+          break;
+        }
+      }
+      if (!nested) {
+        topLevel.add(treeItem);
+      }
+    }
+    return topLevel;
+  }
+
+  /** The plain "are you sure?" confirmation, listing the files and folders about to be deleted. */
+  private boolean showDeleteConfirmation(List<String> paths, boolean singleFolder) {
+    String header;
+    String message;
+    if (paths.size() > 1) {
+      header = BaseMessages.getString(PKG, "ExplorerPerspective.DeleteFiles.Confirmation.Header");
+      message =
+          BaseMessages.getString(
+              PKG, "ExplorerPerspective.DeleteFiles.Confirmation.Message", paths.size());
+    } else if (singleFolder) {
+      header = BaseMessages.getString(PKG, "ExplorerPerspective.DeleteFolder.Confirmation.Header");
+      message =
+          BaseMessages.getString(PKG, "ExplorerPerspective.DeleteFolder.Confirmation.Message");
+    } else {
+      header = BaseMessages.getString(PKG, "ExplorerPerspective.DeleteFile.Confirmation.Header");
+      message = BaseMessages.getString(PKG, "ExplorerPerspective.DeleteFile.Confirmation.Message");
+    }
+
+    StringBuilder listedPaths = new StringBuilder();
+    for (int i = 0; i < paths.size(); i++) {
+      if (i >= MAX_LISTED_DELETE_PATHS) {
+        listedPaths
+            .append(Const.CR)
+            .append(
+                BaseMessages.getString(
+                    PKG,
+                    "ExplorerPerspective.DeleteFiles.Confirmation.More",
+                    paths.size() - MAX_LISTED_DELETE_PATHS));
+        break;
+      }
+      listedPaths.append(Const.CR).append(paths.get(i));
+    }
+
+    MessageBox box = new MessageBox(hopGui.getShell(), SWT.YES | SWT.NO | SWT.ICON_QUESTION);
+    box.setText(header);
+    box.setMessage(message + Const.CR + listedPaths);
+    return (box.open() & SWT.YES) != 0;
+  }
+
+  /**
+   * Replaces the resolved {@code projectHome} prefix in {@code path} with {@code ${PROJECT_HOME}}
+   * so displayed paths are project-relative and shorter.
+   */
+  private static String toDisplayPath(String path, String projectHome) {
+    if (!StringUtils.isEmpty(projectHome) && path.startsWith(projectHome)) {
+      String rel = path.substring(projectHome.length()).replace(File.separatorChar, '/');
+      return Const.VAR_PROJECT_HOME + (rel.startsWith("/") ? rel : '/' + rel);
+    }
+    return path;
+  }
+
+  /**
+   * Finds all references to the given pipeline/workflow file paths in other files and metadata
+   * objects. If references exist, shows a warning dialog (Yes/Details/No). If no references exist,
+   * shows the standard Yes/No confirmation. Returns {@code true} if the user confirmed deletion.
+   */
+  public boolean confirmDeleteWithReferenceCheck(List<String> filePaths, String displayName)
+      throws HopException {
+    return confirmDeleteWithReferenceCheck(filePaths, displayName, null);
+  }
+
+  /**
+   * Same as {@link #confirmDeleteWithReferenceCheck(List, String)} but with a custom confirmation
+   * for the case where no references are found. Pass {@code null} for the standard one.
+   */
+  private boolean confirmDeleteWithReferenceCheck(
+      List<String> filePaths, String displayName, BooleanSupplier plainConfirmation)
+      throws HopException {
+    String projectHome = hopGui.getVariables().resolve(Const.VAR_PROJECT_HOME);
+    List<String> searchRoots =
+        (!Utils.isEmpty(projectHome) && !Const.VAR_PROJECT_HOME.equals(projectHome))
+            ? List.of(projectHome)
+            : Collections.emptyList();
+
+    MetadataReferenceFinder finder = new MetadataReferenceFinder(hopGui.getMetadataProvider());
+
+    // Aggregate references across all supplied file paths
+    java.util.Set<String> seenFiles = new java.util.LinkedHashSet<>();
+    int totalFileRefCount = 0;
+    List<MetadataObjectReference> allMetadataRefs = new ArrayList<>();
+    List<String> detailLines = new ArrayList<>();
+
+    for (String filePath : filePaths) {
+      if (!searchRoots.isEmpty()) {
+        List<MetadataReferenceResult> fileRefs =
+            finder.findFileReferences(searchRoots, filePath, hopGui.getVariables());
+        for (MetadataReferenceResult r : fileRefs) {
+          if (seenFiles.add(r.getFilePath())) {
+            totalFileRefCount += r.getReferenceCount();
+            detailLines.add(toDisplayPath(r.getFilePath(), projectHome));
+          }
+        }
+      }
+      List<MetadataObjectReference> metaRefs =
+          finder.findFilePathReferencesInMetadata(filePath, hopGui.getVariables());
+      for (MetadataObjectReference r : metaRefs) {
+        if (!allMetadataRefs.contains(r)) {
+          allMetadataRefs.add(r);
+          detailLines.add(
+              BaseMessages.getString(
+                  PKG,
+                  "ExplorerPerspective.UpdateFileReferences.Details.MetadataEntry",
+                  r.getContainerMetadataKey(),
+                  r.getContainerObjectName()));
+        }
+      }
+    }
+
+    int totalRefCount = totalFileRefCount + allMetadataRefs.size();
+    if (totalRefCount > 0) {
+      return showDeleteWithReferencesDialog(
+          displayName, totalRefCount, seenFiles.size(), allMetadataRefs.size(), detailLines);
+    }
+
+    // No references — use the standard confirmation box.
+    if (plainConfirmation != null) {
+      return plainConfirmation.getAsBoolean();
+    }
+    String header =
+        BaseMessages.getString(PKG, "ExplorerPerspective.DeleteFile.Confirmation.Header");
+    String message =
+        BaseMessages.getString(PKG, "ExplorerPerspective.DeleteFile.Confirmation.Message");
+    MessageBox box = new MessageBox(hopGui.getShell(), SWT.YES | SWT.NO | SWT.ICON_QUESTION);
+    box.setText(header);
+    box.setMessage(message + Const.CR + Const.CR + displayName);
+    return (box.open() & SWT.YES) != 0;
+  }
+
+  /**
+   * Shows a Yes/Details/No dialog warning that the file(s) being deleted still have active
+   * references. Returns {@code true} if the user confirms the deletion.
+   */
+  private boolean showDeleteWithReferencesDialog(
+      String displayName,
+      int totalRefCount,
+      int fileCount,
+      int metadataObjectCount,
+      List<String> detailLines) {
+    Shell shell =
+        new Shell(hopGui.getShell(), SWT.DIALOG_TRIM | SWT.RESIZE | SWT.APPLICATION_MODAL);
+    shell.setText(
+        BaseMessages.getString(PKG, "ExplorerPerspective.DeleteFile.WithReferences.Title"));
+    shell.setImage(GuiResource.getInstance().getImageHop());
+    PropsUi.setLook(shell);
+    FormLayout layout = new FormLayout();
+    layout.marginLeft = PropsUi.getFormMargin();
+    layout.marginRight = PropsUi.getFormMargin();
+    layout.marginTop = PropsUi.getFormMargin();
+    layout.marginBottom = PropsUi.getFormMargin();
+    shell.setLayout(layout);
+    int margin = PropsUi.getMargin();
+
+    // Buttons first so the message label can attach its bottom to them
+    final boolean[] confirmed = new boolean[1];
+    Button wYes = new Button(shell, SWT.PUSH);
+    PropsUi.setLook(wYes);
+    wYes.setText(BaseMessages.getString("System.Button.Yes"));
+    wYes.addListener(
+        SWT.Selection,
+        e -> {
+          confirmed[0] = true;
+          shell.dispose();
+        });
+    Button wDetails = new Button(shell, SWT.PUSH);
+    PropsUi.setLook(wDetails);
+    wDetails.setText(
+        BaseMessages.getString(
+            PKG, "ExplorerPerspective.DeleteFile.WithReferences.Button.Details"));
+    wDetails.addListener(
+        SWT.Selection,
+        e ->
+            new DetailsDialog(
+                    shell,
+                    BaseMessages.getString(
+                        PKG,
+                        "ExplorerPerspective.DeleteFile.WithReferences.Details.Title",
+                        displayName),
+                    GuiResource.getInstance().getImageHop(),
+                    BaseMessages.getString(
+                        PKG,
+                        "ExplorerPerspective.DeleteFile.WithReferences.Details.Message",
+                        displayName),
+                    String.join(Const.CR, detailLines))
+                .open());
+    Button wNo = new Button(shell, SWT.PUSH);
+    PropsUi.setLook(wNo);
+    wNo.setText(BaseMessages.getString("System.Button.No"));
+    wNo.addListener(
+        SWT.Selection,
+        e -> {
+          confirmed[0] = false;
+          shell.dispose();
+        });
+    BaseTransformDialog.positionBottomButtons(
+        shell, new Button[] {wYes, wDetails, wNo}, margin, null);
+
+    Label wMessage = new Label(shell, SWT.WRAP);
+    PropsUi.setLook(wMessage);
+    wMessage.setText(
+        BaseMessages.getString(
+            PKG,
+            "ExplorerPerspective.DeleteFile.WithReferences.Message",
+            totalRefCount,
+            displayName,
+            fileCount,
+            metadataObjectCount));
+    FormData fdMessage = new FormData();
+    fdMessage.left = new FormAttachment(0, margin);
+    fdMessage.right = new FormAttachment(100, -margin);
+    fdMessage.top = new FormAttachment(0, margin);
+    fdMessage.bottom = new FormAttachment(wYes, -margin);
+    wMessage.setLayoutData(fdMessage);
+
+    shell.setDefaultButton(wNo);
+    BaseDialog.defaultShellHandling(
+        shell,
+        c -> {
+          /* enter: no-op */
+        },
+        c -> confirmed[0] = false);
+    return confirmed[0];
+  }
+
+  private List<String> getRecursiveFilenames(FileObject parentFile, List<String> list)
+      throws FileSystemException {
+    if (parentFile.isFile()) {
+      list.add(HopVfs.getFilename(parentFile));
+    } else {
+      for (FileObject file : parentFile.getChildren()) {
+        getRecursiveFilenames(file, list);
+      }
+    }
+    return list;
+  }
+
+  private void renameFile(final TreeItem item) {
+    TreeItemFolder tif = (TreeItemFolder) item.getData();
+    if (tif != null && tif.fileType != null) {
+
+      // The control that will be the editor must be a child of the Tree
+      Text text = new Text(tree, SWT.BORDER);
+      text.setText(item.getText());
+      NamingSchemeWidgetSupport.attachShortcut(
+          text,
+          hopGui.getVariables(),
+          tif.folder ? NamingSchemeTypes.FOLDER : NamingSchemeTypes.FILE);
+      text.addListener(SWT.FocusOut, event -> text.dispose());
+      text.addListener(
+          SWT.KeyUp,
+          event -> {
+            if (text.isDisposed()) {
+              return;
+            }
+            String newName;
+            try {
+              newName = text.getText();
+            } catch (org.eclipse.swt.SWTException e) {
+              if (e.code == org.eclipse.swt.SWT.ERROR_WIDGET_DISPOSED) {
+                return;
+              }
+              throw e;
+            }
+            switch (event.keyCode) {
+              case SWT.CR, SWT.KEYPAD_CR:
+                // If name changed
+                if (!item.getText().equals(newName)) {
+                  try {
+                    FileObject file = HopVfs.getFileObject(tif.path);
+                    FileObject newFile =
+                        HopVfs.getFileObject(
+                            file.getParent().getName().toString() + File.separator + newName);
+                    renameFile(file, newFile);
+                    item.setText(newName);
+                  } catch (Exception e) {
+                    new ErrorDialog(
+                        hopGui.getShell(),
+                        BaseMessages.getString(PKG, "ExplorerPerspective.Error.RenameFile.Header"),
+                        BaseMessages.getString(PKG, "ExplorerPerspective.Error.RenameFile.Message"),
+                        e);
+                  } finally {
+                    if (!text.isDisposed()) {
+                      text.dispose();
+                    }
+                    refresh();
+                  }
+                }
+                break;
+              case SWT.ESC:
+                if (!text.isDisposed()) {
+                  text.dispose();
+                }
+                break;
+              default:
+                break;
+            }
+          });
+
+      text.selectAll();
+      text.setFocus();
+      PropsUi.setLook(text);
+      treeEditor.setEditor(text, item);
+    }
+  }
+
+  private void renameFile(FileObject sourceFile, FileObject targetFile) throws FileSystemException {
+
+    if (sourceFile.isFolder()) {
+      // List all impacted files before move
+      List<String> filenames = getRecursiveFilenames(sourceFile, new ArrayList<>());
+
+      // Capture old and new paths for reference updates (before move)
+      List<String> oldPaths = new ArrayList<>(filenames);
+      Path sourcePath = sourceFile.getPath();
+      Path targetPath = targetFile.getPath();
+      List<String> newPaths = new ArrayList<>(oldPaths.size());
+      for (String filename : filenames) {
+        Path originalPath = Paths.get(filename);
+        Path relativePath =
+            originalPath.subpath(sourcePath.getNameCount(), originalPath.getNameCount());
+        newPaths.add(Paths.get(targetPath.toString(), relativePath.toString()).toString());
+      }
+
+      // Rename the folder
+      HopVfs.moveFile(sourceFile, targetFile);
+
+      // Update all opened impacted file type handlers
+      for (String filename : filenames) {
+        TabItemHandler handler = findTabItemHandler(filename);
+        if (handler != null) {
+          Path originalPath = Paths.get(filename);
+          Path relativePath =
+              originalPath.subpath(sourcePath.getNameCount(), originalPath.getNameCount());
+          Path path = Paths.get(targetPath.toString(), relativePath.toString());
+
+          changeFilename(handler.getTypeHandler(), path.toString());
+          updateTabItem(handler.getTypeHandler());
+          saveFileIfNameSynchronized(handler.getTypeHandler());
+        }
+      }
+
+      updateReferencesToMovedOrRenamedFile(oldPaths, newPaths);
+    } else {
+      // Capture paths before move. Determine old/new by which file exists (avoids swap if tree
+      // passes source/target in unexpected order).
+      String pathFromSource = HopVfs.getFilename(sourceFile);
+      String pathFromTarget = HopVfs.getFilename(targetFile);
+      boolean sourceExists;
+      try {
+        sourceExists = sourceFile.exists();
+      } catch (Exception e) {
+        sourceExists = true; // assume source exists if we can't tell
+      }
+      String oldPath = sourceExists ? pathFromSource : pathFromTarget;
+      String newPath = sourceExists ? pathFromTarget : pathFromSource;
+
+      // Rename the file
+      HopVfs.moveFile(sourceFile, targetFile);
+
+      // Update opened file type handler (use old path to find the handler)
+      TabItemHandler handler = findTabItemHandler(oldPath);
+      if (handler != null) {
+        changeFilename(handler.getTypeHandler(), newPath);
+        updateTabItem(handler.getTypeHandler());
+        saveFileIfNameSynchronized(handler.getTypeHandler());
+      } else {
+        // File is not open, but we still need to update the name attribute if name sync is enabled
+        updateClosedFileIfNameSynchronized(targetFile);
+      }
+
+      updateReferencesToMovedOrRenamedFile(
+          java.util.Collections.singletonList(oldPath),
+          java.util.Collections.singletonList(newPath));
+    }
+  }
+
+  private void moveFile(FileObject sourceFile, FileObject targetFile) throws FileSystemException {
+
+    if (sourceFile.isFolder()) {
+      // List all impacted files and paths before move
+      List<String> filenames = getRecursiveFilenames(sourceFile, new ArrayList<>());
+      Path sourcePath = sourceFile.getPath();
+      Path targetPath = targetFile.getPath();
+      List<String> oldPaths = new ArrayList<>(filenames);
+      List<String> newPaths = new ArrayList<>(oldPaths.size());
+      for (String filename : filenames) {
+        Path originalPath = Paths.get(filename);
+        Path relativePath =
+            originalPath.subpath(sourcePath.getNameCount(), originalPath.getNameCount());
+        newPaths.add(Paths.get(targetPath.toString(), relativePath.toString()).toString());
+      }
+
+      // Move file
+      HopVfs.moveFile(sourceFile, targetFile);
+
+      // Update all opened impacted file type handlers
+      for (String filename : filenames) {
+        TabItemHandler handler = findTabItemHandler(filename);
+        if (handler != null) {
+          Path originalPath = Paths.get(filename);
+          Path relativePath =
+              originalPath.subpath(sourcePath.getNameCount(), originalPath.getNameCount());
+          Path path = Paths.get(targetPath.toString(), relativePath.toString());
+          changeFilename(handler.getTypeHandler(), path.toString());
+          updateTabItem(handler.getTypeHandler());
+        }
+      }
+
+      updateReferencesToMovedOrRenamedFile(oldPaths, newPaths);
+    } else {
+      // Capture paths before move. Determine old/new by which file exists.
+      String pathFromSource = HopVfs.getFilename(sourceFile);
+      String pathFromTarget = HopVfs.getFilename(targetFile);
+      boolean sourceExists;
+      try {
+        sourceExists = sourceFile.exists();
+      } catch (Exception e) {
+        sourceExists = true;
+      }
+      String oldPath = sourceExists ? pathFromSource : pathFromTarget;
+      String newPath = sourceExists ? pathFromTarget : pathFromSource;
+
+      // Move file
+      HopVfs.moveFile(sourceFile, targetFile);
+
+      // Update opened file type handler
+      TabItemHandler handler = findTabItemHandler(oldPath);
+      if (handler != null) {
+        handler.getTypeHandler().setFilename(newPath);
+        updateTabItem(handler.getTypeHandler());
+      }
+
+      updateReferencesToMovedOrRenamedFile(
+          java.util.Collections.singletonList(oldPath),
+          java.util.Collections.singletonList(newPath));
+    }
+  }
+
+  /**
+   * Shows a dialog asking to update file references. Yes/No confirm; Details opens a list of files
+   * that will be modified. Returns true if the user chose Yes.
+   */
+  private boolean showUpdateFileReferencesDialog(
+      int totalRefCount, int fileCount, int metadataObjectCount, List<String> detailLines) {
+    Shell shell =
+        new Shell(hopGui.getShell(), SWT.DIALOG_TRIM | SWT.RESIZE | SWT.APPLICATION_MODAL);
+    shell.setText(BaseMessages.getString(PKG, "ExplorerPerspective.UpdateFileReferences.Title"));
+    shell.setImage(GuiResource.getInstance().getImageHop());
+    PropsUi.setLook(shell);
+    FormLayout layout = new FormLayout();
+    layout.marginLeft = PropsUi.getFormMargin();
+    layout.marginRight = PropsUi.getFormMargin();
+    layout.marginTop = PropsUi.getFormMargin();
+    layout.marginBottom = PropsUi.getFormMargin();
+    shell.setLayout(layout);
+    int margin = PropsUi.getMargin();
+
+    // Buttons created first so content labels can attach their bottom edge to them
+    final boolean[] confirmed = new boolean[1];
+    Button wYes = new Button(shell, SWT.PUSH);
+    PropsUi.setLook(wYes);
+    wYes.setText(BaseMessages.getString("System.Button.Yes"));
+    wYes.addListener(
+        SWT.Selection,
+        e -> {
+          confirmed[0] = true;
+          shell.dispose();
+        });
+    Button wDetails = new Button(shell, SWT.PUSH);
+    PropsUi.setLook(wDetails);
+    wDetails.setText(
+        BaseMessages.getString(PKG, "ExplorerPerspective.UpdateFileReferences.Button.Details"));
+    wDetails.addListener(
+        SWT.Selection,
+        e -> {
+          DetailsDialog detailsDialog =
+              new DetailsDialog(
+                  shell,
+                  BaseMessages.getString(
+                      PKG, "ExplorerPerspective.UpdateFileReferences.Details.Title"),
+                  GuiResource.getInstance().getImageHop(),
+                  BaseMessages.getString(
+                      PKG, "ExplorerPerspective.UpdateFileReferences.Details.Message"),
+                  String.join(Const.CR, detailLines));
+          detailsDialog.open();
+        });
+    Button wNo = new Button(shell, SWT.PUSH);
+    PropsUi.setLook(wNo);
+    wNo.setText(BaseMessages.getString("System.Button.No"));
+    wNo.addListener(
+        SWT.Selection,
+        e -> {
+          confirmed[0] = false;
+          shell.dispose();
+        });
+    BaseTransformDialog.positionBottomButtons(
+        shell, new Button[] {wYes, wDetails, wNo}, margin, null);
+
+    // Main message
+    String messageKey =
+        metadataObjectCount > 0
+            ? "ExplorerPerspective.UpdateFileReferences.MessageWithMetadata"
+            : "ExplorerPerspective.UpdateFileReferences.Message";
+    Label wMessage = new Label(shell, SWT.WRAP);
+    PropsUi.setLook(wMessage);
+    wMessage.setText(
+        BaseMessages.getString(PKG, messageKey, totalRefCount, fileCount, metadataObjectCount));
+    FormData fdMessage = new FormData();
+    fdMessage.left = new FormAttachment(0, margin);
+    fdMessage.right = new FormAttachment(100, -margin);
+    fdMessage.top = new FormAttachment(0, margin);
+    wMessage.setLayoutData(fdMessage);
+
+    // Experimental feature note — always shown, fills remaining space above buttons
+    Label wNote = new Label(shell, SWT.WRAP);
+    PropsUi.setLook(wNote);
+    wNote.setText(
+        BaseMessages.getString(
+            PKG, "ExplorerPerspective.UpdateFileReferences.ExperimentalFeatureNote"));
+    FormData fdNote = new FormData();
+    fdNote.left = new FormAttachment(0, margin);
+    fdNote.right = new FormAttachment(100, -margin);
+    fdNote.top = new FormAttachment(wMessage, margin);
+    fdNote.bottom = new FormAttachment(wYes, -margin);
+    wNote.setLayoutData(fdNote);
+
+    shell.setDefaultButton(wYes);
+
+    BaseDialog.defaultShellHandling(
+        shell,
+        c -> {
+          /* enter in text field: no-op, buttons handle confirmation */
+        },
+        c -> confirmed[0] = false);
+
+    return confirmed[0];
+  }
+
+  /**
+   * Finds references to the given paths in other pipeline/workflow files (under PROJECT_HOME), asks
+   * the user to update them, then replaces and reloads open tabs.
+   */
+  private void updateReferencesToMovedOrRenamedFile(List<String> oldPaths, List<String> newPaths) {
+    if (oldPaths == null || newPaths == null || oldPaths.size() != newPaths.size()) {
+      return;
+    }
+    String projectHome = hopGui.getVariables().resolve(Const.VAR_PROJECT_HOME);
+    if (Utils.isEmpty(projectHome) || Const.VAR_PROJECT_HOME.equals(projectHome)) {
+      return;
+    }
+    List<String> searchRoots = java.util.Collections.singletonList(projectHome);
+    try {
+      MetadataReferenceFinder finder = new MetadataReferenceFinder(hopGui.getMetadataProvider());
+      Map<String, String> oldToNew = new HashMap<>();
+
+      // File references (pipeline/workflow files referencing the renamed file)
+      java.util.Set<String> allFilePaths = new java.util.HashSet<>();
+      int totalFileRefCount = 0;
+
+      // Metadata references (metadata objects storing the file path)
+      // Keyed by old path so we can replace each old→new correctly
+      Map<String, List<MetadataObjectReference>> metadataRefsByOldPath = new LinkedHashMap<>();
+      List<MetadataObjectReference> allMetadataRefs = new ArrayList<>();
+
+      for (int i = 0; i < oldPaths.size(); i++) {
+        String oldPath = oldPaths.get(i);
+        String newPath = newPaths.get(i);
+        if (Utils.isEmpty(oldPath) || oldPath.equals(newPath)) {
+          continue;
+        }
+        oldToNew.put(oldPath, newPath);
+
+        // Find references in other pipeline/workflow files
+        List<MetadataReferenceResult> refs =
+            finder.findFileReferences(searchRoots, oldPath, hopGui.getVariables());
+        for (MetadataReferenceResult r : refs) {
+          totalFileRefCount += r.getReferenceCount();
+          allFilePaths.add(r.getFilePath());
+        }
+
+        // Find references in metadata objects (resolve variables so ${PROJECT_HOME}/... matches)
+        List<MetadataObjectReference> metaRefs =
+            finder.findFilePathReferencesInMetadata(oldPath, hopGui.getVariables());
+        if (!metaRefs.isEmpty()) {
+          metadataRefsByOldPath.put(oldPath, metaRefs);
+          allMetadataRefs.addAll(metaRefs);
+        }
+      }
+
+      if (totalFileRefCount == 0 && allMetadataRefs.isEmpty()) {
+        return;
+      }
+
+      // Before showing the "update?" dialog, prompt to save any open metadata tabs that would be
+      // affected — so the close/reopen afterwards starts from a clean saved state.
+      MetadataPerspective metadataPerspective = MetadataPerspective.getInstance();
+      if (!metadataPerspective.saveChangedEditorsForRefs(allMetadataRefs)) {
+        return; // user cancelled
+      }
+
+      // Build detail lines for the Details button — show project-relative paths
+      List<String> detailLines = new ArrayList<>();
+      for (String p : allFilePaths) {
+        detailLines.add(toDisplayPath(p, projectHome));
+      }
+      for (MetadataObjectReference ref : allMetadataRefs) {
+        detailLines.add(
+            BaseMessages.getString(
+                PKG,
+                "ExplorerPerspective.UpdateFileReferences.Details.MetadataEntry",
+                ref.getContainerMetadataKey(),
+                ref.getContainerObjectName()));
+      }
+
+      boolean update =
+          showUpdateFileReferencesDialog(
+              totalFileRefCount + allMetadataRefs.size(),
+              allFilePaths.size(),
+              allMetadataRefs.size(),
+              detailLines);
+      if (!update) {
+        return;
+      }
+
+      // Replace references in pipeline/workflow files
+      List<MetadataReferenceResult> filesToUpdate = new ArrayList<>();
+      for (String path : allFilePaths) {
+        filesToUpdate.add(new MetadataReferenceResult(path, 1));
+      }
+      if (oldToNew.size() == 1) {
+        Map.Entry<String, String> e = oldToNew.entrySet().iterator().next();
+        finder.replaceFileReferences(
+            filesToUpdate, e.getKey(), e.getValue(), hopGui.getVariables());
+      } else {
+        finder.replaceFileReferences(filesToUpdate, oldToNew, hopGui.getVariables());
+      }
+
+      // Replace references in metadata objects (one old→new pair at a time)
+      for (Map.Entry<String, List<MetadataObjectReference>> entry :
+          metadataRefsByOldPath.entrySet()) {
+        String oldPath = entry.getKey();
+        String newPath = oldToNew.get(oldPath);
+        finder.replaceFilePathReferencesInMetadata(
+            oldPath, newPath, entry.getValue(), hopGui.getVariables());
+      }
+
+      // Reload open pipeline/workflow tabs whose content changed
+      List<String> updatedPaths = new ArrayList<>(filesToUpdate.size());
+      for (MetadataReferenceResult r : filesToUpdate) {
+        updatedPaths.add(r.getFilePath());
+      }
+      reloadTabsForFilenames(updatedPaths);
+
+      // Close and reopen affected metadata tabs so their content is fresh
+      metadataPerspective.reloadEditorsForMetadata(allMetadataRefs);
+
+    } catch (HopException e) {
+      hopGui.getLog().logError("Error updating file references after rename/move", e);
+    }
+  }
+
+  /** Change the file name of an open tab */
+  @SuppressWarnings("javabugs:S2259") // callers always pass an open file type handler
+  protected void changeFilename(IHopFileTypeHandler fileTypeHandler, String newFilename) {
+    String oldFilename = fileTypeHandler.getFilename();
+    hopGui.fileRefreshDelegate.remove(oldFilename, fileTypeHandler);
+    fileTypeHandler.setFilename(newFilename);
+    hopGui.fileRefreshDelegate.register(newFilename, fileTypeHandler);
+  }
+
+  /**
+   * Save the file if it's a pipeline or workflow with name synchronization enabled. This ensures
+   * that when a file is renamed, the name attribute in the XML is updated to match the new
+   * filename.
+   *
+   * @param fileTypeHandler to specify which filetype
+   */
+  private void saveFileIfNameSynchronized(IHopFileTypeHandler fileTypeHandler) {
+    try {
+      Object subject = fileTypeHandler.getSubject();
+      if (subject instanceof PipelineMeta pipelineMeta
+          && pipelineMeta.isNameSynchronizedWithFilename()) {
+        fileTypeHandler.save();
+      } else if (subject instanceof WorkflowMeta workflowMeta
+          && workflowMeta.isNameSynchronizedWithFilename()) {
+        fileTypeHandler.save();
+      }
+
+    } catch (Exception e) {
+      hopGui.getLog().logError("Error saving file after rename", e);
+    }
+  }
+
+  /**
+   * Update a closed file's name attribute if it has name synchronization enabled. This is called
+   * when renaming a file that is not currently open in any tab.
+   */
+  private void updateClosedFileIfNameSynchronized(FileObject targetFile) {
+    try {
+      String filename = HopVfs.getFilename(targetFile);
+      int dotIndex = filename.lastIndexOf('.');
+      if (dotIndex < 0) {
+        // No extension: not a pipeline or workflow file
+        return;
+      }
+      String extension = filename.substring(dotIndex);
+
+      // Check if it's a pipeline or workflow file
+      if (".hpl".equalsIgnoreCase(extension)) {
+        // Load pipeline
+        IVariables variables = Variables.getADefaultVariableSpace();
+        PipelineMeta pipelineMeta =
+            new PipelineMeta(filename, hopGui.getMetadataProvider(), variables);
+        if (pipelineMeta.isNameSynchronizedWithFilename()) {
+          // Save to update the name attribute
+          String xml = pipelineMeta.getXml(variables);
+          OutputStream out = HopVfs.getOutputStream(filename, false);
+          try {
+            out.write(XmlHandler.getXmlHeader(Const.UTF_8).getBytes(StandardCharsets.UTF_8));
+            out.write(xml.getBytes(StandardCharsets.UTF_8));
+          } finally {
+            out.flush();
+            out.close();
+          }
+        }
+      } else if (".hwf".equalsIgnoreCase(extension)) {
+        // Load workflow
+        IVariables variables = Variables.getADefaultVariableSpace();
+        WorkflowMeta workflowMeta =
+            new WorkflowMeta(variables, filename, hopGui.getMetadataProvider());
+        if (workflowMeta.isNameSynchronizedWithFilename()) {
+          // Save to update the name attribute
+          String xml = workflowMeta.getXml(variables);
+          OutputStream out = HopVfs.getOutputStream(filename, false);
+          try {
+            out.write(XmlHandler.getXmlHeader(Const.UTF_8).getBytes(StandardCharsets.UTF_8));
+            out.write(xml.getBytes(StandardCharsets.UTF_8));
+          } finally {
+            out.flush();
+            out.close();
+          }
+        }
+      }
+    } catch (Exception e) {
+      hopGui.getLog().logError("Error updating closed file after rename", e);
+    }
+  }
+
+  protected void createTabFolder(Composite parent) {
+    tabFolderWrapper = new Composite(parent, SWT.NONE);
+    tabFolderWrapper.setLayout(new FormLayout());
+    tabFolderWrapper.setLayoutData(new FormDataBuilder().fullSize().result());
+    PropsUi.setLook(tabFolderWrapper);
+
+    CTabFolder rootTabFolder = createSingleTabFolder(tabFolderWrapper, true);
+    editorRoot = rootTabFolder;
+    activeTabFolder = rootTabFolder;
+  }
+
+  private CTabFolder createSingleTabFolder(Composite parent, boolean primary) {
+    CTabFolder folder = new CTabFolder(parent, SWT.MULTI | SWT.BORDER);
+    folder.setLayoutData(new FormDataBuilder().fullSize().result());
+    folder.addListener(
+        SWT.Selection,
+        e -> {
+          activeTabFolder = folder;
+          updateGui();
+          if (EnvironmentUtils.getInstance().isWeb()) {
+            notifyZoomHandlerForActiveTab();
+            updateWebUrlForActiveTab();
+          }
+          CTabItem selection = folder.getSelection();
+          if (selection != null) {
+            Object data = selection.getData();
+            if (data instanceof IHopFileTypeHandler handler) {
+              selectInTree(handler.getFilename());
+            }
+          }
+        });
+    folder.addCTabFolder2Listener(
+        new CTabFolder2Adapter() {
+          @Override
+          public void close(CTabFolderEvent event) {
+            CTabItem tabItem = (CTabItem) event.item;
+            closeTab(event, tabItem);
+          }
+        });
+    PropsUi.setLook(folder, Props.WIDGET_STYLE_TAB);
+
+    folder.addListener(SWT.FocusIn, e -> activeTabFolder = folder);
+
+    if (primary) {
+      ToolBar tabToolBar = new ToolBar(folder, SWT.FLAT);
+      folder.setTopRight(tabToolBar, SWT.RIGHT);
+      PropsUi.setLook(tabToolBar);
+
+      final ToolItem item = new ToolItem(tabToolBar, SWT.PUSH);
+      item.setImage(GuiResource.getInstance().getImageMaximizePanel());
+      item.addListener(
+          SWT.Selection,
+          e -> {
+            if (sash.getMaximizedControl() == null) {
+              sash.setMaximizedControl(tabFolderWrapper);
+              item.setImage(GuiResource.getInstance().getImageMinimizePanel());
+            } else {
+              sash.setMaximizedControl(null);
+              item.setImage(GuiResource.getInstance().getImageMaximizePanel());
+            }
+          });
+      int height = tabToolBar.computeSize(SWT.DEFAULT, SWT.DEFAULT).y;
+      folder.setTabHeight(Math.max(height, folder.getTabHeight()));
+    }
+
+    TabCloseHandler tabCloseHandler = new TabCloseHandler(this, folder);
+    new TabItemReorder(this, folder);
+    addTabSplitMenuItems(folder, tabCloseHandler);
+    return folder;
+  }
+
+  /**
+   * The tab popup is owned by {@link TabCloseHandler} and is not attached to the folder. Hop Web
+   * layout restore can run before that menu exists (issue #8477).
+   */
+  static boolean isUsableTabMenu(Menu menu) {
+    return menu != null && !menu.isDisposed();
+  }
+
+  private void addTabSplitMenuItems(CTabFolder folder, TabCloseHandler tabCloseHandler) {
+    Menu menu = tabCloseHandler.getMenu();
+    if (!isUsableTabMenu(menu)) {
+      return;
+    }
+
+    // Split ("Move to Right") works in both desktop and web since it operates within the docked
+    // editor layout. Detach ("Move to New Window") depends on floating windows, which don't work
+    // under RAP, so it is desktop-only.
+    new MenuItem(menu, SWT.SEPARATOR);
+    MenuItem miSplitMove = new MenuItem(menu, SWT.NONE);
+    miSplitMove.setText(BaseMessages.getString(PKG, "ExplorerPerspective.TabMenu.MoveToRight"));
+
+    MenuItem miSplitDown = new MenuItem(menu, SWT.NONE);
+    miSplitDown.setText(BaseMessages.getString(PKG, "ExplorerPerspective.TabMenu.MoveDown"));
+
+    new MenuItem(menu, SWT.SEPARATOR);
+
+    MenuItem miJoinLeft = new MenuItem(menu, SWT.NONE);
+    miJoinLeft.setText(BaseMessages.getString(PKG, "ExplorerPerspective.TabMenu.JoinLeft"));
+
+    MenuItem miJoinAbove = new MenuItem(menu, SWT.NONE);
+    miJoinAbove.setText(BaseMessages.getString(PKG, "ExplorerPerspective.TabMenu.JoinAbove"));
+
+    final MenuItem miDetach;
+    if (!EnvironmentUtils.getInstance().isWeb()) {
+      new MenuItem(menu, SWT.SEPARATOR);
+      miDetach = new MenuItem(menu, SWT.NONE);
+      miDetach.setText(BaseMessages.getString(PKG, "ExplorerPerspective.TabMenu.MoveToNewWindow"));
+      miDetach.addListener(
+          SWT.Selection,
+          e -> {
+            CTabItem targetTab = tabCloseHandler.getSelectedItem();
+            if (targetTab != null && !targetTab.isDisposed()) {
+              detachTabToWindow(targetTab);
+            }
+          });
+    } else {
+      miDetach = null;
+    }
+
+    menu.addListener(
+        SWT.Show,
+        e -> {
+          miSplitMove.setText(
+              BaseMessages.getString(PKG, "ExplorerPerspective.TabMenu.MoveToRight"));
+          miSplitDown.setText(BaseMessages.getString(PKG, "ExplorerPerspective.TabMenu.MoveDown"));
+          miJoinLeft.setText(BaseMessages.getString(PKG, "ExplorerPerspective.TabMenu.JoinLeft"));
+          miJoinAbove.setText(BaseMessages.getString(PKG, "ExplorerPerspective.TabMenu.JoinAbove"));
+
+          // The close handler sets this before it shows the menu, so it is current for this click.
+          CTabItem targetTab = tabCloseHandler.getSelectedItem();
+
+          // Splitting creates a new pane, requiring at least one tab to stay behind.
+          boolean canSplit = targetTab != null && folder.getItemCount() > 1;
+          miSplitMove.setEnabled(canSplit);
+          miSplitDown.setEnabled(canSplit);
+
+          // Joining moves the tab into an existing adjacent pane.
+          CTabFolder leftFolder = findFolderToLeft(folder);
+          miJoinLeft.setEnabled(
+              targetTab != null && leftFolder != null && !leftFolder.isDisposed());
+
+          CTabFolder aboveFolder = findFolderAbove(folder);
+          miJoinAbove.setEnabled(
+              targetTab != null && aboveFolder != null && !aboveFolder.isDisposed());
+
+          if (miDetach != null) {
+            miDetach.setEnabled(targetTab != null);
+          }
+        });
+
+    miSplitMove.addListener(
+        SWT.Selection,
+        e -> {
+          CTabItem targetTab = tabCloseHandler.getSelectedItem();
+          if (targetTab != null && !targetTab.isDisposed()) {
+            splitAndMoveTab(targetTab, SWT.HORIZONTAL, true);
+          }
+        });
+
+    miSplitDown.addListener(
+        SWT.Selection,
+        e -> {
+          CTabItem targetTab = tabCloseHandler.getSelectedItem();
+          if (targetTab != null && !targetTab.isDisposed()) {
+            splitAndMoveTab(targetTab, SWT.VERTICAL, true);
+          }
+        });
+
+    miJoinLeft.addListener(
+        SWT.Selection,
+        e -> {
+          CTabItem targetTab = tabCloseHandler.getSelectedItem();
+          if (targetTab != null && !targetTab.isDisposed()) {
+            CTabFolder leftFolder = findFolderToLeft(folder);
+            if (leftFolder != null && !leftFolder.isDisposed()) {
+              joinTabToFolder(targetTab, leftFolder);
+            }
+          }
+        });
+
+    miJoinAbove.addListener(
+        SWT.Selection,
+        e -> {
+          CTabItem targetTab = tabCloseHandler.getSelectedItem();
+          if (targetTab != null && !targetTab.isDisposed()) {
+            CTabFolder aboveFolder = findFolderAbove(folder);
+            if (aboveFolder != null && !aboveFolder.isDisposed()) {
+              joinTabToFolder(targetTab, aboveFolder);
+            }
+          }
+        });
+  }
+
+  private CTabFolder getTargetTabFolder() {
+    if (activeTabFolder != null && !activeTabFolder.isDisposed()) {
+      return activeTabFolder;
+    }
+    List<CTabFolder> folders = getTabFolders();
+    return folders.isEmpty() ? null : folders.get(0);
+  }
+
+  @Override
+  public void openDroppedFiles(String[] paths) {
+    if (paths == null || paths.length == 0) {
+      return;
+    }
+    List<String> errors = new ArrayList<>();
+    IHopFileTypeHandler lastOpened = null;
+    for (String path : paths) {
+      try {
+        FileObject fileObject = HopVfs.getFileObject(path);
+        if (fileObject.isFolder()) {
+          continue;
+        }
+        String filename = HopVfs.getFilename(fileObject);
+        IHopFileType fileType = getFileType(filename);
+        if (fileType instanceof FolderFileType || !fileType.supportsOpening()) {
+          continue;
+        }
+        IHopFileTypeHandler handler = fileType.openFile(hopGui, filename, hopGui.getVariables());
+        if (handler != null && !(handler instanceof EmptyHopFileTypeHandler)) {
+          lastOpened = handler;
+          handler.updateGui();
+        }
+      } catch (Exception e) {
+        errors.add(path + ": " + e.getMessage());
+        hopGui.getLog().logError("Error opening dropped file '" + path + "'", e);
+      }
+    }
+    if (lastOpened != null) {
+      hopGui.auditDelegate.writeLastOpenFiles();
+    }
+    if (!errors.isEmpty()) {
+      String message = String.join("\n", errors);
+      MessageBox messageBox = new MessageBox(hopGui.getShell(), SWT.ICON_WARNING | SWT.OK);
+      messageBox.setText(BaseMessages.getString(PKG, "ExplorerPerspective.Error.OpenFile.Header"));
+      messageBox.setMessage(
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.OpenFile.Message")
+              + Const.CR
+              + Const.CR
+              + message);
+      messageBox.open();
+    }
+    if (lastOpened != null) {
+      setActiveFileTypeHandler(lastOpened);
+    }
+  }
+
+  /**
+   * Returns all open file handlers whose file has unsaved changes and whose filename is in the
+   * given collection. Useful for pre-flight checks before operations that modify files on disk.
+   */
+  public List<IHopFileTypeHandler> getChangedHandlersForFilenames(
+      java.util.Collection<String> filenames) {
+    List<IHopFileTypeHandler> result = new ArrayList<>();
+    if (filenames == null) {
+      return result;
+    }
+    for (String filename : filenames) {
+      TabItemHandler handler = findTabItemHandler(filename);
+      if (handler != null && handler.getTypeHandler().hasChanged()) {
+        result.add(handler.getTypeHandler());
+      }
+    }
+    return result;
+  }
+
+  protected TabItemHandler findTabItemHandler(String filename) {
+    if (filename != null) {
+      for (TabItemHandler item : items) {
+        if (filename.equals(item.getTypeHandler().getFilename())) {
+          return item;
+        }
+      }
+    }
+    return null;
+  }
+
+  protected TabItemHandler findTabItemHandler(String filename, IHopFileType fileType) {
+    if (filename != null) {
+      for (TabItemHandler item : items) {
+        if (filename.equals(item.getTypeHandler().getFilename())
+            && fileType.equals(item.getTypeHandler().getFileType())) {
+          return item;
+        }
+      }
+    }
+    return null;
+  }
+
+  private CTabItem currentTabItemFor(IHopFileTypeHandler typeHandler) {
+    for (TabItemHandler item : items) {
+      if (item.getTypeHandler() == typeHandler) {
+        CTabItem t = item.getTabItem();
+        return (t == null || t.isDisposed()) ? null : t;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Close tabs for the given filenames (e.g. after files are deleted by revert or external delete).
+   * Only tabs whose handler filename exactly matches one of the given filenames are closed.
+   *
+   * @param filenames filenames as stored in the tab handlers (e.g. from HopVfs.getFilename)
+   */
+  public void closeTabsForFilenames(java.util.Collection<String> filenames) {
+    if (filenames == null) {
+      return;
+    }
+    for (String filename : filenames) {
+      TabItemHandler handler = findTabItemHandler(filename);
+      if (handler != null) {
+        removeTabItem(handler);
+      }
+    }
+  }
+
+  /**
+   * Reload content from disk for tabs matching the given filenames (e.g. after revert that did not
+   * delete the file). Only tabs whose handler filename exactly matches one of the given filenames
+   * are reloaded; handlers that support {@link IHopFileTypeHandler#reload()} will refresh content.
+   *
+   * @param filenames filenames as stored in the tab handlers (e.g. from HopVfs.getFilename)
+   */
+  public void reloadTabsForFilenames(java.util.Collection<String> filenames) {
+    if (filenames == null) {
+      return;
+    }
+    for (String filename : filenames) {
+      TabItemHandler handler = findTabItemHandler(filename);
+      if (handler != null) {
+        try {
+          handler.getTypeHandler().reload();
+        } catch (Exception e) {
+          hopGui.getLog().logError("Error reloading file '" + filename + "'", e);
+        }
+      }
+    }
+  }
+
+  /**
+   * Get an existing tab item handler, can be used when the IHopeFileTypeHandler has no file name.
+   */
+  protected TabItemHandler getTabItemHandler(IHopFileTypeHandler fileTypeHandler) {
+    if (fileTypeHandler != null) {
+      for (TabItemHandler item : items) {
+        if (fileTypeHandler.equals(item.getTypeHandler())) {
+          return item;
+        }
+      }
+    }
+    return null;
+  }
+
+  @Override
+  public void closeTab(CTabFolderEvent event, CTabItem tabItem) {
+    if (tabItem == null || tabItem.isDisposed()) {
+      return;
+    }
+    IHopFileTypeHandler fileTypeHandler = (IHopFileTypeHandler) tabItem.getData();
+    // A tab without a handler is broken: nothing can veto its close.
+    boolean isRemoved = true;
+    if (fileTypeHandler != null) {
+      // This is where the user gets asked to save the file. Answering Cancel means: keep the file
+      // open, so never dispose the tab afterwards (issue #8079).
+      isRemoved = remove(fileTypeHandler);
+    }
+    // The close wasn't vetoed but the tab is still there: the handler wasn't registered in this
+    // perspective (a broken tab). Dispose it directly so the user can still close it.
+    if (isRemoved && !tabItem.isDisposed()) {
+      removeHandlerAndDisposeTab(tabItem);
+    }
+    // Skip during bulk close (project/environment switch): writeLastOpenFiles was already called
+    // before closeAllFiles; writing here would persist an empty open-files list (issue #7692).
+    //
+    if (isRemoved && !hopGui.fileDelegate.isClosing()) {
+      hopGui.auditDelegate.writeLastOpenFiles();
+    }
+    if (!isRemoved && event != null) {
+      event.doit = false;
+    }
+  }
+
+  /**
+   * Remove any handler for this tab from the items list and dispose the tab. Used when the tab is
+   * broken (null handler or handler not in list) so the user can still close it.
+   */
+  private void removeHandlerAndDisposeTab(CTabItem tabItem) {
+    if (tabItem == null || tabItem.isDisposed()) {
+      return;
+    }
+    TabItemHandler toRemove = findHandlerByTabItem(tabItem);
+    if (toRemove != null) {
+      items.remove(toRemove);
+      IHopFileTypeHandler fileTypeHandler = toRemove.getTypeHandler();
+      if (fileTypeHandler != null && fileTypeHandler.getFilename() != null) {
+        hopGui.fileRefreshDelegate.remove(fileTypeHandler.getFilename(), fileTypeHandler);
+      }
+    }
+    tabItem.dispose();
+    if (!hopGui.fileDelegate.isClosing()) {
+      collapseEmptyFolders();
+      if (isEditorEmpty()) {
+        HopGui.getInstance().handleFileCapabilities(new EmptyFileType(), false, false, false);
+      }
+      updateGui();
+    }
+  }
+
+  private void removeTabItem(TabItemHandler item) {
+    if (item == null) {
+      return;
+    }
+    items.remove(item);
+    CTabItem tabItem = item.getTabItem();
+    if (tabItem != null && !tabItem.isDisposed()) {
+      tabItem.dispose();
+    }
+    IHopFileTypeHandler fileTypeHandler = item.getTypeHandler();
+    if (fileTypeHandler != null && fileTypeHandler.getFilename() != null) {
+      hopGui.fileRefreshDelegate.remove(fileTypeHandler.getFilename(), fileTypeHandler);
+    }
+
+    if (!hopGui.fileDelegate.isClosing()) {
+
+      collapseEmptyFolders();
+
+      if (isEditorEmpty()) {
+        HopGui.getInstance().handleFileCapabilities(new EmptyFileType(), false, false, false);
+      }
+
+      this.updateGui();
+    }
+  }
+
+  @Override
+  public CTabFolder getTabFolder() {
+    return getTargetTabFolder();
+  }
+
+  /**
+   * Returns tab item handlers in pane order: leaf folders left-to-right / top-to-bottom, each by
+   * tab index. Used when persisting open files so restore order roughly matches the on-screen
+   * layout.
+   */
+  public List<TabItemHandler> getTabItemHandlersInPaneOrder() {
+    List<TabItemHandler> ordered = new ArrayList<>();
+    for (CTabFolder folder : getTabFolders()) {
+      for (CTabItem item : folder.getItems()) {
+        TabItemHandler h = findHandlerByTabItem(item);
+        if (h != null) {
+          ordered.add(h);
+        }
+      }
+    }
+    return ordered.isEmpty() ? getItems() : ordered;
+  }
+
+  private TabItemHandler findHandlerByTabItem(CTabItem tabItem) {
+    for (TabItemHandler h : items) {
+      if (h.getTabItem() == tabItem) {
+        return h;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The persisted leaf id ("L0", "L1", ... in docked-tree pre-order) of the pane holding {@code
+   * tabItem}, or {@code null} for tabs living in a detached floating window (those re-dock into the
+   * default pane on restart). Matches the ids produced by {@link #serializeEditorLayout()}.
+   */
+  public String getLeafIdForTab(CTabItem tabItem) {
+    if (tabItem == null || tabItem.isDisposed()) {
+      return null;
+    }
+    int index = getDockedTabFolders().indexOf(tabItem.getParent());
+    return index >= 0 ? "L" + index : null;
+  }
+
+  /**
+   * The docked tab folder rebuilt for a persisted leaf id during layout restore, or {@code null}
+   * when the id is unknown (e.g. legacy int pane values, or a detached-window id) so restore falls
+   * back to the default pane.
+   */
+  public CTabFolder getTabFolderForLeafId(String leafId) {
+    if (leafId == null) {
+      return null;
+    }
+    CTabFolder folder = folderByLeafId.get(leafId);
+    return (folder != null && !folder.isDisposed()) ? folder : null;
+  }
+
+  public void addFile(IExplorerFileTypeHandler fileTypeHandler) {
+
+    TabItemHandler handler =
+        this.findTabItemHandler(fileTypeHandler.getFilename(), fileTypeHandler.getFileType());
+    if (handler != null) {
+      CTabFolder owningFolder = handler.getTabItem().getParent();
+      owningFolder.setSelection(handler.getTabItem());
+      owningFolder.showItem(handler.getTabItem());
+      owningFolder.setFocus();
+      activeTabFolder = owningFolder;
+      if (EnvironmentUtils.getInstance().isWeb()) {
+        updateWebUrlForActiveTab();
+      }
+      selectInTree(fileTypeHandler.getFilename());
+      return;
+    }
+
+    CTabFolder targetFolder = getTargetTabFolder();
+
+    CTabItem tabItem = new CTabItem(targetFolder, SWT.CLOSE);
+    tabItem.setFont(GuiResource.getInstance().getFontDefault());
+    String displayName = getTabDisplayName(fileTypeHandler);
+    tabItem.setText(Const.NVL(displayName, ""));
+    tabItem.setToolTipText(Const.NVL(fileTypeHandler.getFilename(), ""));
+    tabItem.setImage(getFileTypeImage(fileTypeHandler.getFileType()));
+    tabItem.setData(fileTypeHandler);
+
+    fileTypeHandler.addContentChangedListener(
+        new IContentChangedListener() {
+          @Override
+          public void contentChanged(Object parentObject) {
+            CTabItem current = currentTabItemFor(fileTypeHandler);
+            if (current != null) {
+              current.setFont(GuiResource.getInstance().getFontBold());
+            }
+          }
+
+          @Override
+          public void contentSafe(Object parentObject) {
+            CTabItem current = currentTabItemFor(fileTypeHandler);
+            if (current != null && current.getParent() != null) {
+              current.setFont(current.getParent().getFont());
+            }
+          }
+        });
+
+    Composite composite = new Composite(targetFolder, SWT.NONE);
+    composite.setLayout(new FormLayout());
+    composite.setLayoutData(new FormDataBuilder().fullSize().result());
+    PropsUi.setLook(composite);
+
+    fileTypeHandler.renderFile(composite);
+
+    composite.setData(KEY_TAB_FOLDER, targetFolder);
+    tabItem.setControl(composite);
+
+    items.add(new TabItemHandler(tabItem, fileTypeHandler));
+
+    hopGui.fileRefreshDelegate.register(fileTypeHandler.getFilename(), fileTypeHandler);
+
+    targetFolder.setSelection(tabItem);
+
+    HopGuiKeyHandler keyHandler = HopGuiKeyHandler.getInstance();
+    keyHandler.addParentObjectToHandle(this);
+    HopGui.getInstance().replaceKeyboardShortcutListeners(this.getShell(), keyHandler);
+
+    updateGui();
+    if (EnvironmentUtils.getInstance().isWeb()) {
+      updateWebUrlForActiveTab();
+    }
+    selectInTree(fileTypeHandler.getFilename());
+  }
+
+  /**
+   * Add a new pipeline tab to the tab folder...
+   *
+   * @param pipelineMeta the pipeline metadata to edit
+   * @return The file type handler
+   */
+  public IHopFileTypeHandler addPipeline(PipelineMeta pipelineMeta) throws HopException {
+
+    TabItemHandler handler = this.findTabItemHandler(pipelineMeta.getFilename());
+    if (handler != null) {
+      CTabFolder owningFolder = handler.getTabItem().getParent();
+      owningFolder.setSelection(handler.getTabItem());
+      owningFolder.showItem(handler.getTabItem());
+      owningFolder.setFocus();
+      activeTabFolder = owningFolder;
+      if (EnvironmentUtils.getInstance().isWeb()) {
+        updateWebUrlForActiveTab();
+      }
+      selectInTree(pipelineMeta.getFilename());
+      return handler.getTypeHandler();
+    }
+
+    CTabFolder targetFolder = getTargetTabFolder();
+
+    HopGuiPipelineGraph pipelineGraph =
+        new HopGuiPipelineGraph(targetFolder, hopGui, this, pipelineMeta, pipelineFileType);
+
+    CTabItem tabItem = new CTabItem(targetFolder, SWT.CLOSE);
+    tabItem.setFont(GuiResource.getInstance().getFontDefault());
+    tabItem.setImage(GuiResource.getInstance().getImagePipeline());
+    tabItem.setText(Const.NVL(pipelineGraph.getName(), "<>"));
+    tabItem.setToolTipText(pipelineGraph.getFilename());
+    pipelineGraph.setData(KEY_TAB_FOLDER, targetFolder);
+    tabItem.setControl(pipelineGraph);
+    tabItem.setData(pipelineGraph);
+    pipelineGraph.addListener(
+        SWT.Show,
+        e -> {
+          if (!pipelineGraph.isDisposed()) {
+            pipelineGraph.redraw();
+          }
+        });
+
+    items.add(new TabItemHandler(tabItem, pipelineGraph));
+
+    if (pipelineMeta.getFilename() != null) {
+      hopGui.fileRefreshDelegate.register(pipelineMeta.getFilename(), pipelineGraph);
+    }
+
+    pipelineMeta.setInternalHopVariables(pipelineGraph.getVariables());
+
+    hopGui.setParametersAsVariablesInUI(pipelineMeta, pipelineGraph.getVariables());
+
+    targetFolder.setSelection(tabItem);
+
+    try {
+      ExtensionPointHandler.callExtensionPoint(
+          hopGui.getLog(),
+          pipelineGraph.getVariables(),
+          HopExtensionPoint.HopGuiNewPipelineTab.id,
+          pipelineGraph);
+    } catch (Exception e) {
+      throw new HopException(
+          "Error calling extension point plugin for plugin id "
+              + HopExtensionPoint.HopGuiNewPipelineTab.id
+              + " trying to handle a new pipeline tab",
+          e);
+    }
+
+    HopGuiKeyHandler keyHandler = HopGuiKeyHandler.getInstance();
+    keyHandler.addParentObjectToHandle(this);
+    HopGui.getInstance().replaceKeyboardShortcutListeners(this.getShell(), keyHandler);
+
+    pipelineGraph.setFocus();
+    if (EnvironmentUtils.getInstance().isWeb()) {
+      updateWebUrlForActiveTab();
+    }
+    selectInTree(pipelineMeta.getFilename());
+
+    return pipelineGraph;
+  }
+
+  /**
+   * Add a new workflow tab to the tab folder...
+   *
+   * @param workflowMeta The workflow metadata to edit
+   * @return The file type handler
+   */
+  public IHopFileTypeHandler addWorkflow(WorkflowMeta workflowMeta) throws HopException {
+
+    TabItemHandler handler = this.findTabItemHandler(workflowMeta.getFilename());
+    if (handler != null) {
+      CTabFolder owningFolder = handler.getTabItem().getParent();
+      owningFolder.setSelection(handler.getTabItem());
+      owningFolder.showItem(handler.getTabItem());
+      owningFolder.setFocus();
+      activeTabFolder = owningFolder;
+      if (EnvironmentUtils.getInstance().isWeb()) {
+        updateWebUrlForActiveTab();
+      }
+      selectInTree(workflowMeta.getFilename());
+      return handler.getTypeHandler();
+    }
+
+    CTabFolder targetFolder = getTargetTabFolder();
+
+    HopGuiWorkflowGraph workflowGraph =
+        new HopGuiWorkflowGraph(targetFolder, hopGui, this, workflowMeta, workflowFileType);
+
+    CTabItem tabItem = new CTabItem(targetFolder, SWT.CLOSE);
+    tabItem.setFont(GuiResource.getInstance().getFontDefault());
+    tabItem.setImage(GuiResource.getInstance().getImageWorkflow());
+    tabItem.setText(Const.NVL(workflowGraph.getName(), "<>"));
+    tabItem.setToolTipText(workflowGraph.getFilename());
+    workflowGraph.setData(KEY_TAB_FOLDER, targetFolder);
+    tabItem.setControl(workflowGraph);
+    tabItem.setData(workflowGraph);
+    workflowGraph.addListener(
+        SWT.Show,
+        e -> {
+          if (!workflowGraph.isDisposed()) {
+            workflowGraph.redraw();
+          }
+        });
+
+    items.add(new TabItemHandler(tabItem, workflowGraph));
+
+    if (workflowMeta.getFilename() != null) {
+      hopGui.fileRefreshDelegate.register(workflowMeta.getFilename(), workflowGraph);
+    }
+
+    workflowMeta.setInternalHopVariables(workflowGraph.getVariables());
+
+    hopGui.setParametersAsVariablesInUI(workflowMeta, workflowGraph.getVariables());
+
+    targetFolder.setSelection(tabItem);
+
+    try {
+      ExtensionPointHandler.callExtensionPoint(
+          hopGui.getLog(),
+          workflowGraph.getVariables(),
+          HopExtensionPoint.HopGuiNewWorkflowTab.id,
+          workflowGraph);
+    } catch (Exception e) {
+      throw new HopException(
+          "Error calling extension point plugin for plugin id "
+              + HopExtensionPoint.HopGuiNewWorkflowTab.id
+              + " trying to handle a new workflow tab",
+          e);
+    }
+
+    HopGuiKeyHandler keyHandler = HopGuiKeyHandler.getInstance();
+    keyHandler.addParentObjectToHandle(this);
+    HopGui.getInstance().replaceKeyboardShortcutListeners(this.getShell(), keyHandler);
+
+    workflowGraph.setFocus();
+    if (EnvironmentUtils.getInstance().isWeb()) {
+      updateWebUrlForActiveTab();
+    }
+    selectInTree(workflowMeta.getFilename());
+
+    return workflowGraph;
+  }
+
+  /** Select the corresponding file in the left-hand tree */
+  public void selectInTree(String filename) {
+    selectInTree(filename, true);
+  }
+
+  public void selectInTree(String filename, boolean automatic) {
+    if (automatic) {
+      Boolean activeFileSelection =
+          ExplorerPerspectiveConfigSingleton.getConfig().getActiveFileSelection();
+      if (activeFileSelection != null && !activeFileSelection) {
+        return;
+      }
+    }
+
+    if (Utils.isEmpty(filename)) {
+      return;
+    }
+
+    // Look in the whole tree for the file...
+    //
+    for (TreeItem item : tree.getItems()) {
+      if (selectInTree(item, filename)) {
+        break;
+      }
+    }
+  }
+
+  @SuppressWarnings("javabugs:S2259") // the paths are non-null in the fallback branch
+  private boolean isDescendant(String parentPath, String childPath) {
+    if (parentPath == null || childPath == null) {
+      return false;
+    }
+    try {
+      FileObject parentFile = HopVfs.getFileObject(parentPath);
+      FileObject childFile = HopVfs.getFileObject(childPath);
+      return parentFile.getName().isDescendent(childFile.getName());
+    } catch (Exception e) {
+      // Fallback
+      String parent = parentPath.replace('\\', '/');
+      String child = childPath.replace('\\', '/');
+      if (!parent.endsWith("/")) {
+        parent += "/";
+      }
+      return child.startsWith(parent);
+    }
+  }
+
+  private boolean selectInTree(TreeItem item, String filename) {
+    TreeItemFolder tif = (TreeItemFolder) item.getData();
+    if (tif != null && ExplorerPathUtils.pathsEqual(tif.path, filename)) {
+      tree.setSelection(tif.treeItem);
+      tree.showItem(tif.treeItem);
+      return true;
+    }
+    if (tif != null && tif.folder && isDescendant(tif.path, filename)) {
+      ensureFolderLoaded(item);
+      FolderTreeIcons.setExpanded(item, true);
+      TreeMemory.getInstance().storeExpanded(FILE_EXPLORER_TREE, item, true);
+      for (TreeItem child : item.getItems()) {
+        if (selectInTree(child, filename)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Which file is selected in the tree. It's not delivering a type or handler
+   *
+   * @return The selected explorer file or null if nothing is selected
+   */
+  public ExplorerFile getSelectedFile() {
+    if (tree == null) {
+      // The perspective was never initialized, there's nothing to select
+      return null;
+    }
+    TreeItem[] selection = tree.getSelection();
+    if (selection == null || selection.length == 0) {
+      return null;
+    }
+    TreeItem item = selection[0];
+
+    TreeItemFolder tif = (TreeItemFolder) item.getData();
+    if (tif != null) {
+      return new ExplorerFile(tif.name, tif.path, tif.fileType);
+    }
+    return null;
+  }
+
+  /** All the files selected in the tree, in the order the tree shows them. */
+  public List<ExplorerFile> getSelectedFiles() {
+    TreeItem[] selection = tree.getSelection();
+    if (selection == null) {
+      return Collections.emptyList();
+    }
+    List<ExplorerFile> files = new ArrayList<>();
+    for (TreeItem item : selection) {
+      TreeItemFolder tif = (TreeItemFolder) item.getData();
+      if (tif != null) {
+        files.add(new ExplorerFile(tif.name, tif.path, tif.fileType));
+      }
+    }
+    return files;
+  }
+
+  public IHopFileTypeHandler findFileTypeHandlerByFilename(String filename) {
+    if (filename != null) {
+      for (TabItemHandler item : items) {
+        if (filename.equals(item.getTypeHandler().getFilename())) {
+          return item.getTypeHandler();
+        }
+      }
+    }
+    return null;
+  }
+
+  public HopGuiPipelineGraph findPipeline(String logChannelId) {
+    // Go over all the pipeline graphs and see if there's one that has an IPipelineEngine with the
+    // given ID
+    //
+    for (TabItemHandler item : items) {
+      if (item.getTypeHandler() instanceof HopGuiPipelineGraph pipelineGraph) {
+        IPipelineEngine<PipelineMeta> pipeline = pipelineGraph.getPipeline();
+        if (pipeline != null && logChannelId.equals(pipeline.getLogChannelId())) {
+          return pipelineGraph;
+        }
+      }
+    }
+    return null;
+  }
+
+  public HopGuiWorkflowGraph findWorkflow(String logChannelId) {
+    // Go over all the workflow graphs and see if there's one that has an IWorkflow with the given
+    // ID
+    //
+    for (TabItemHandler item : items) {
+      if (item.getTypeHandler() instanceof HopGuiWorkflowGraph workflowGraph) {
+        IWorkflowEngine<WorkflowMeta> workflow = workflowGraph.getWorkflow();
+        if (workflow != null && logChannelId.equals(workflow.getLogChannelId())) {
+          return workflowGraph;
+        }
+      }
+    }
+    return null;
+  }
+
+  @Override
+  public IHopFileTypeHandler getActiveFileTypeHandler() {
+    CTabFolder active = getTargetTabFolder();
+    if (active == null || active.isDisposed()) {
+      return new EmptyHopFileTypeHandler();
+    }
+    int idx = active.getSelectionIndex();
+    if (idx < 0 || idx >= active.getItemCount()) {
+      // The active pane has no selection: fall back to any other pane that does.
+      for (CTabFolder other : getTabFolders()) {
+        if (other == active || other.isDisposed()) {
+          continue;
+        }
+        int otherIdx = other.getSelectionIndex();
+        if (otherIdx >= 0 && otherIdx < other.getItemCount()) {
+          return (IHopFileTypeHandler) other.getSelection().getData();
+        }
+      }
+      return new EmptyHopFileTypeHandler();
+    }
+    return (IHopFileTypeHandler) active.getSelection().getData();
+  }
+
+  @Override
+  public void setActiveFileTypeHandler(IHopFileTypeHandler fileTypeHandler) {
+    for (CTabFolder folder : getTabFolders()) {
+      for (CTabItem item : folder.getItems()) {
+        if (item.getData().equals(fileTypeHandler)) {
+          folder.setSelection(item);
+          folder.showItem(item);
+          activeTabFolder = folder;
+
+          HopGui.getInstance()
+              .handleFileCapabilities(
+                  fileTypeHandler.getFileType(),
+                  fileTypeHandler,
+                  fileTypeHandler.hasChanged(),
+                  false,
+                  false);
+          if (EnvironmentUtils.getInstance().isWeb()) {
+            // openFile / link navigation often uses setActiveFileTypeHandler without a full
+            // CTabFolder Selection cycle that paints; rebind the SVG canvas client here.
+            notifyZoomHandlerForActiveTab();
+            updateWebUrlForActiveTab();
+          }
+          return;
+        }
+      }
+    }
+  }
+
+  private void updateWebUrlForActiveTab() {
+    if (HopWebUrlHelper.getUrlUpdater() == null) {
+      return;
+    }
+    IHopFileTypeHandler handler = getActiveFileTypeHandler();
+    String filename = handler != null ? handler.getFilename() : null;
+    if (filename != null) {
+      HopWebUrlHelper.getUrlUpdater().updateUrl(HopNamespace.getNamespace(), filename);
+    }
+  }
+
+  @Override
+  public String getUrlForTab(CTabItem tabItem) {
+    if (tabItem == null || HopWebUrlHelper.getUrlUpdater() == null) {
+      return null;
+    }
+    String filename = getFilenameForTab(tabItem);
+    if (filename == null) {
+      return null;
+    }
+    return HopWebUrlHelper.getUrlUpdater().buildUrl(HopNamespace.getNamespace(), filename);
+  }
+
+  private String getFilenameForTab(CTabItem tabItem) {
+    if (tabItem == null) {
+      return null;
+    }
+    Object data = tabItem.getData();
+    if (data instanceof IHopFileTypeHandler) {
+      return ((IHopFileTypeHandler) data).getFilename();
+    }
+    return null;
+  }
+
+  /**
+   * All leaf tab folders that hold editor tabs: the docked layout tree first (left-to-right /
+   * top-to-bottom), then any detached floating windows.
+   */
+  private List<CTabFolder> getTabFolders() {
+    List<CTabFolder> result = new ArrayList<>();
+    collectTabFolders(editorRoot, result);
+    for (CTabFolder folder : detachedFolders) {
+      if (folder != null && !folder.isDisposed()) {
+        result.add(folder);
+      }
+    }
+    return result;
+  }
+
+  /** Leaf folders in the docked layout tree only (excludes detached windows). */
+  private List<CTabFolder> getDockedTabFolders() {
+    List<CTabFolder> result = new ArrayList<>();
+    collectTabFolders(editorRoot, result);
+    return result;
+  }
+
+  private boolean isDockedTabFolder(CTabFolder folder) {
+    return getDockedTabFolders().contains(folder);
+  }
+
+  private void collectTabFolders(Control node, List<CTabFolder> out) {
+    if (node == null || node.isDisposed()) {
+      return;
+    }
+    if (node instanceof CTabFolder folder) {
+      out.add(folder);
+    } else if (node instanceof SashForm sashForm) {
+      for (Control child : sashForm.getChildren()) {
+        // SashForm children include the draggable Sash dividers; only recurse into real nodes.
+        if (child instanceof CTabFolder || child instanceof SashForm) {
+          collectTabFolders(child, out);
+        }
+      }
+    }
+  }
+
+  /** The node children (leaves / nested sashes) of a SashForm, excluding its Sash dividers. */
+  private List<Control> nodeChildren(SashForm sashForm) {
+    List<Control> result = new ArrayList<>();
+    for (Control child : sashForm.getChildren()) {
+      if (child instanceof CTabFolder || child instanceof SashForm) {
+        result.add(child);
+      }
+    }
+    return result;
+  }
+
+  private boolean isEditorTabFolder(Control control) {
+    return control instanceof CTabFolder folder && getTabFolders().contains(folder);
+  }
+
+  /** True when every editor pane is empty (no open files anywhere in the tree). */
+  private boolean isEditorEmpty() {
+    for (CTabFolder folder : getTabFolders()) {
+      if (folder.getItemCount() > 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Split {@code folder} along {@code orientation}, adding a new empty sibling leaf and returning
+   * it. The existing folder is wrapped in a new {@link SashForm} that takes its place in the tree.
+   *
+   * @param folder the leaf to split
+   * @param orientation {@link SWT#HORIZONTAL} (side-by-side) or {@link SWT#VERTICAL} (stacked)
+   * @param after when true the new leaf is placed after (right/below) the existing folder
+   * @return the newly created empty leaf folder
+   */
+  private CTabFolder splitFolder(CTabFolder folder, int orientation, boolean after) {
+    Composite parent = folder.getParent();
+
+    // Remember the folder's position among its parent's node children (for a SashForm parent).
+    int indexInParent = -1;
+    int[] parentWeights = null;
+    if (parent instanceof SashForm parentSash) {
+      indexInParent = nodeChildren(parentSash).indexOf(folder);
+      parentWeights = parentSash.getWeights();
+    }
+
+    SashForm newSash = new SashForm(parent, orientation);
+    newSash.setLayoutData(new FormDataBuilder().fullSize().result());
+    PropsUi.setLook(newSash);
+
+    // Move the existing folder under the new sash, then add the new sibling.
+    folder.setParent(newSash);
+    CTabFolder newFolder = createSingleTabFolder(newSash, true);
+    if (!after) {
+      newFolder.moveAbove(folder);
+    }
+    newSash.setWeights(50, 50);
+
+    if (parent instanceof SashForm parentSash) {
+      // Keep the new sash where the old folder was, and restore the parent's weights.
+      if (indexInParent >= 0) {
+        Control[] order = nodeChildren(parentSash).toArray(new Control[0]);
+        // nodeChildren returns children in z-order; ensure newSash sits at indexInParent.
+        if (indexInParent < order.length - 1) {
+          newSash.moveAbove(order[indexInParent]);
+        }
+      }
+      if (parentWeights != null && parentWeights.length == nodeChildren(parentSash).size()) {
+        parentSash.setWeights(parentWeights);
+      }
+    } else {
+      editorRoot = newSash;
+    }
+
+    parent.layout(true, true);
+    return newFolder;
+  }
+
+  /**
+   * Remove {@code folder} if it is empty and not the last remaining pane, collapsing its parent
+   * SashForm when only one node child would be left.
+   */
+  private void collapseFolder(CTabFolder folder) {
+    if (folder == null || folder.isDisposed() || folder.getItemCount() > 0) {
+      return;
+    }
+    Composite parent = folder.getParent();
+    if (!(parent instanceof SashForm sashForm)) {
+      // The single root pane: keep it even when empty.
+      return;
+    }
+    Composite grandParent = sashForm.getParent();
+
+    folder.dispose();
+
+    List<Control> remaining = nodeChildren(sashForm);
+    if (remaining.size() == 1) {
+      Control survivor = remaining.get(0);
+
+      int indexInGrand = -1;
+      int[] grandWeights = null;
+      if (grandParent instanceof SashForm grandSash) {
+        indexInGrand = nodeChildren(grandSash).indexOf(sashForm);
+        grandWeights = grandSash.getWeights();
+      }
+
+      survivor.setParent(grandParent);
+      sashForm.dispose();
+
+      if (grandParent instanceof SashForm grandSash) {
+        if (indexInGrand >= 0) {
+          Control[] order = nodeChildren(grandSash).toArray(new Control[0]);
+          if (indexInGrand < order.length - 1) {
+            survivor.moveAbove(order[indexInGrand]);
+          }
+        }
+        if (grandWeights != null && grandWeights.length == nodeChildren(grandSash).size()) {
+          grandSash.setWeights(grandWeights);
+        }
+      } else {
+        // Moving back under the FormLayout wrapper: the survivor still carries the SashForm's
+        // SashFormData, which FormLayout rejects with a ClassCastException on its next layout pass.
+        // Give it FormData that fills the wrapper (mirrors createTabFolder's root folder).
+        survivor.setLayoutData(new FormDataBuilder().fullSize().result());
+        editorRoot = survivor;
+      }
+      grandParent.layout(true, true);
+    } else {
+      sashForm.layout(true, true);
+    }
+
+    if (activeTabFolder == folder || activeTabFolder == null || activeTabFolder.isDisposed()) {
+      List<CTabFolder> leaves = getTabFolders();
+      activeTabFolder = leaves.isEmpty() ? null : leaves.get(0);
+    }
+  }
+
+  /** Reclaim every empty leaf: collapse docked panes, close empty detached windows. */
+  private void collapseEmptyFolders() {
+    for (CTabFolder folder : getTabFolders()) {
+      if (folder.getItemCount() == 0) {
+        reclaimFolder(folder);
+      }
+    }
+  }
+
+  /**
+   * Reclaim a folder that a tab just left: a docked pane collapses back into its sash, an emptied
+   * detached window closes.
+   */
+  private void reclaimFolder(CTabFolder folder) {
+    if (folder == null || folder.isDisposed()) {
+      return;
+    }
+    if (detachedFolders.contains(folder)) {
+      if (folder.getItemCount() == 0) {
+        closeDetachedWindow(folder);
+      }
+    } else {
+      collapseFolder(folder);
+    }
+  }
+
+  /**
+   * Find the adjacent leaf tab folder immediately to the left of {@code folder} in the docked
+   * layout tree, or {@code null} if none exists.
+   */
+  private CTabFolder findFolderToLeft(CTabFolder folder) {
+    if (folder == null || folder.isDisposed() || !isDockedTabFolder(folder)) {
+      return null;
+    }
+    Control current = folder;
+    while (current != null && current.getParent() instanceof SashForm parentSash) {
+      if (parentSash.getOrientation() == SWT.HORIZONTAL) {
+        List<Control> children = nodeChildren(parentSash);
+        int idx = children.indexOf(current);
+        if (idx > 0) {
+          CTabFolder target = findRightmostLeaf(children.get(idx - 1));
+          if (target != null && !target.isDisposed()) {
+            return target;
+          }
+        }
+      }
+      current = parentSash;
+    }
+    return null;
+  }
+
+  /**
+   * Find the adjacent leaf tab folder immediately above {@code folder} in the docked layout tree,
+   * or {@code null} if none exists.
+   */
+  private CTabFolder findFolderAbove(CTabFolder folder) {
+    if (folder == null || folder.isDisposed() || !isDockedTabFolder(folder)) {
+      return null;
+    }
+    Control current = folder;
+    while (current != null && current.getParent() instanceof SashForm parentSash) {
+      if (parentSash.getOrientation() == SWT.VERTICAL) {
+        List<Control> children = nodeChildren(parentSash);
+        int idx = children.indexOf(current);
+        if (idx > 0) {
+          CTabFolder target = findBottommostLeaf(children.get(idx - 1));
+          if (target != null && !target.isDisposed()) {
+            return target;
+          }
+        }
+      }
+      current = parentSash;
+    }
+    return null;
+  }
+
+  private CTabFolder findRightmostLeaf(Control node) {
+    if (node == null || node.isDisposed()) {
+      return null;
+    }
+    if (node instanceof CTabFolder folder) {
+      return folder;
+    }
+    if (node instanceof SashForm sash) {
+      List<Control> children = nodeChildren(sash);
+      for (int i = children.size() - 1; i >= 0; i--) {
+        CTabFolder leaf = findRightmostLeaf(children.get(i));
+        if (leaf != null && !leaf.isDisposed()) {
+          return leaf;
+        }
+      }
+    }
+    return null;
+  }
+
+  private CTabFolder findBottommostLeaf(Control node) {
+    if (node == null || node.isDisposed()) {
+      return null;
+    }
+    if (node instanceof CTabFolder folder) {
+      return folder;
+    }
+    if (node instanceof SashForm sash) {
+      List<Control> children = nodeChildren(sash);
+      for (int i = children.size() - 1; i >= 0; i--) {
+        CTabFolder leaf = findBottommostLeaf(children.get(i));
+        if (leaf != null && !leaf.isDisposed()) {
+          return leaf;
+        }
+      }
+    }
+    return null;
+  }
+
+  @GuiMenuElement(
+      root = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      parentId = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      id = CONTEXT_MENU_OPEN,
+      label = "i18n::ExplorerPerspective.Menu.Open",
+      image = "ui/images/open.svg")
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_OPEN,
+      toolTip = "i18n::ExplorerPerspective.ToolbarElement.Open.Tooltip",
+      image = "ui/images/arrow-right.svg")
+  @GuiKeyboardShortcut(key = SWT.F3)
+  @GuiOsxKeyboardShortcut(key = SWT.F3)
+  public void openFile() {
+    TreeItem[] selection = tree.getSelection();
+    if (selection == null || selection.length == 0) {
+      return;
+    }
+    // Open every selected file. Selected folders simply expand or collapse.
+    //
+    for (TreeItem item : selection) {
+      openFile(item);
+    }
+  }
+
+  @GuiMenuElement(
+      root = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      parentId = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      id = CONTEXT_MENU_OPEN_IN_EXPLORER,
+      label = "i18n::ExplorerPerspective.Menu.OpenInExplorer")
+  public void openFileInExplorer() {
+    TreeItem[] selection = tree.getSelection();
+    if (selection == null || selection.length != 1) {
+      return;
+    }
+
+    TreeItemFolder tif = (TreeItemFolder) selection[0].getData();
+    if (tif != null) {
+      try {
+        EnvironmentUtils.getInstance().openFileExplorer(tif.path);
+      } catch (Throwable e) {
+        new ErrorDialog(
+            getShell(),
+            BaseMessages.getString(PKG, "ExplorerPerspective.Error.OpenFileInExplorer.Title"),
+            BaseMessages.getString(
+                PKG, "ExplorerPerspective.Error.OpenFileInExplorer.Message", tif.path),
+            e);
+      }
+    }
+  }
+
+  /**
+   * The path of the selected folder, or null when the selection is not a single folder or the user
+   * has no write permission.
+   */
+  private String getSelectedFolderPath() {
+    if (!HopSecurityUi.check(Permission.EXPLORER_WRITE)) {
+      return null;
+    }
+    TreeItem[] selection = tree.getSelection();
+    if (selection == null || selection.length != 1) {
+      return null;
+    }
+    TreeItemFolder tif = (TreeItemFolder) selection[0].getData();
+    if (tif == null || !tif.folder) {
+      return null;
+    }
+    return tif.path;
+  }
+
+  private boolean refuseExistingFile(String path) {
+    try {
+      if (ExplorerCreateUtils.fileExists(path)) {
+        MessageBox box = new MessageBox(getShell(), SWT.ICON_ERROR | SWT.OK);
+        box.setText(BaseMessages.getString(PKG, "ExplorerPerspective.Error.FileExists.Header"));
+        box.setMessage(
+            BaseMessages.getString(PKG, "ExplorerPerspective.Error.FileExists.Message", path));
+        box.open();
+        return true;
+      }
+    } catch (Exception e) {
+      new ErrorDialog(
+          getShell(),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.CreateFile.Header"),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.CreateFile.Message", path),
+          e);
+      return true;
+    }
+    return false;
+  }
+
+  @GuiMenuElement(
+      root = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      parentId = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      id = CONTEXT_MENU_CREATE_PIPELINE,
+      label = "i18n::ExplorerPerspective.Menu.CreatePipeline",
+      image = "ui/images/pipeline.svg")
+  public void createPipeline() {
+    String folder = getSelectedFolderPath();
+    if (folder == null) {
+      return;
+    }
+    EnterStringDialog dialog =
+        new EnterStringDialog(
+            getShell(),
+            "",
+            BaseMessages.getString(PKG, "ExplorerPerspective.CreatePipeline.Header"),
+            BaseMessages.getString(PKG, "ExplorerPerspective.CreatePipeline.Message", folder));
+    String typedName = dialog.open();
+    if (typedName == null) {
+      return;
+    }
+    if (!ExplorerCreateUtils.isSimpleFileName(typedName)) {
+      MessageBox box = new MessageBox(getShell(), SWT.ICON_ERROR | SWT.OK);
+      box.setText(BaseMessages.getString(PKG, "ExplorerPerspective.Error.InvalidFileName.Header"));
+      box.setMessage(
+          BaseMessages.getString(
+              PKG, "ExplorerPerspective.Error.InvalidFileName.Message", typedName));
+      box.open();
+      return;
+    }
+    String fileName =
+        ExplorerCreateUtils.applyExtension(typedName, pipelineFileType.getDefaultFileExtension());
+    String filename = ExplorerCreateUtils.childPath(folder, fileName);
+    if (!ExplorerCreateUtils.resolvesInsideFolder(folder, filename)) {
+      MessageBox box = new MessageBox(getShell(), SWT.ICON_ERROR | SWT.OK);
+      box.setText(BaseMessages.getString(PKG, "ExplorerPerspective.Error.InvalidFileName.Header"));
+      box.setMessage(
+          BaseMessages.getString(
+              PKG, "ExplorerPerspective.Error.InvalidFileName.Message", typedName));
+      box.open();
+      return;
+    }
+    if (refuseExistingFile(filename)) {
+      return;
+    }
+    try {
+      PipelineMeta pipelineMeta = new PipelineMeta();
+      pipelineMeta.setName(ExplorerCreateUtils.baseName(fileName));
+      pipelineMeta.setMetadataProvider(hopGui.getMetadataProvider());
+      pipelineMeta.setFilename(filename);
+      IHopFileTypeHandler handler = addPipeline(pipelineMeta);
+      handler.save();
+    } catch (Exception e) {
+      new ErrorDialog(
+          getShell(),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.CreateFile.Header"),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.CreateFile.Message", filename),
+          e);
+    }
+  }
+
+  @GuiMenuElement(
+      root = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      parentId = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      id = CONTEXT_MENU_CREATE_WORKFLOW,
+      label = "i18n::ExplorerPerspective.Menu.CreateWorkflow",
+      image = "ui/images/workflow.svg")
+  public void createWorkflow() {
+    String folder = getSelectedFolderPath();
+    if (folder == null) {
+      return;
+    }
+    EnterStringDialog dialog =
+        new EnterStringDialog(
+            getShell(),
+            "",
+            BaseMessages.getString(PKG, "ExplorerPerspective.CreateWorkflow.Header"),
+            BaseMessages.getString(PKG, "ExplorerPerspective.CreateWorkflow.Message", folder));
+    String typedName = dialog.open();
+    if (typedName == null) {
+      return;
+    }
+    if (!ExplorerCreateUtils.isSimpleFileName(typedName)) {
+      MessageBox box = new MessageBox(getShell(), SWT.ICON_ERROR | SWT.OK);
+      box.setText(BaseMessages.getString(PKG, "ExplorerPerspective.Error.InvalidFileName.Header"));
+      box.setMessage(
+          BaseMessages.getString(
+              PKG, "ExplorerPerspective.Error.InvalidFileName.Message", typedName));
+      box.open();
+      return;
+    }
+    String fileName =
+        ExplorerCreateUtils.applyExtension(typedName, workflowFileType.getDefaultFileExtension());
+    String filename = ExplorerCreateUtils.childPath(folder, fileName);
+    if (!ExplorerCreateUtils.resolvesInsideFolder(folder, filename)) {
+      MessageBox box = new MessageBox(getShell(), SWT.ICON_ERROR | SWT.OK);
+      box.setText(BaseMessages.getString(PKG, "ExplorerPerspective.Error.InvalidFileName.Header"));
+      box.setMessage(
+          BaseMessages.getString(
+              PKG, "ExplorerPerspective.Error.InvalidFileName.Message", typedName));
+      box.open();
+      return;
+    }
+    if (refuseExistingFile(filename)) {
+      return;
+    }
+    try {
+      WorkflowMeta workflowMeta = new WorkflowMeta();
+      workflowMeta.setName(ExplorerCreateUtils.baseName(fileName));
+      workflowMeta.setMetadataProvider(hopGui.getMetadataProvider());
+      workflowMeta.setFilename(filename);
+      IHopFileTypeHandler handler = addWorkflow(workflowMeta);
+      handler.save();
+    } catch (Exception e) {
+      new ErrorDialog(
+          getShell(),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.CreateFile.Header"),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.CreateFile.Message", filename),
+          e);
+    }
+  }
+
+  @GuiMenuElement(
+      root = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      parentId = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      id = CONTEXT_MENU_CREATE_FILE,
+      label = "i18n::ExplorerPerspective.Menu.CreateFile",
+      image = "ui/images/new.svg")
+  public void createFile() {
+    String folder = getSelectedFolderPath();
+    if (folder == null) {
+      return;
+    }
+    List<IHopFileType> creatable = ExplorerCreateUtils.creatableFileTypes(fileTypes);
+    if (creatable.isEmpty()) {
+      return;
+    }
+    CreateFileDialog dialog = new CreateFileDialog(getShell(), folder, creatable);
+    String filename = dialog.open();
+    if (Utils.isEmpty(filename)) {
+      return;
+    }
+    if (refuseExistingFile(filename)) {
+      return;
+    }
+    try {
+      ExplorerCreateUtils.createEmptyFile(filename);
+      refresh();
+      IHopFileTypeHandler handler =
+          dialog.getSelectedFileType().openFile(hopGui, filename, hopGui.getVariables());
+      if (handler != null) {
+        handler.updateGui();
+        hopGui.auditDelegate.writeLastOpenFiles();
+      }
+    } catch (Exception e) {
+      new ErrorDialog(
+          getShell(),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.CreateFile.Header"),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.CreateFile.Message", filename),
+          e);
+    }
+  }
+
+  @GuiMenuElement(
+      root = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      parentId = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      id = CONTEXT_MENU_CREATE_FOLDER,
+      label = "i18n::ExplorerPerspective.Menu.CreateFolder",
+      image = "ui/images/folder-add.svg")
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_CREATE_FOLDER,
+      toolTip = "i18n::ExplorerPerspective.ToolbarElement.CreateFolder.Tooltip",
+      image = "ui/images/folder-add.svg")
+  public void createFolder() {
+    if (!HopSecurityUi.check(Permission.EXPLORER_WRITE)) {
+      return;
+    }
+
+    TreeItem[] selection = tree.getSelection();
+    if (selection == null || selection.length != 1) {
+      return;
+    }
+    TreeItem item = selection[0];
+    TreeItemFolder tif = (TreeItemFolder) item.getData();
+    if (tif == null) {
+      return;
+    }
+    EnterStringDialog dialog =
+        new EnterStringDialog(
+            getShell(),
+            "",
+            BaseMessages.getString(PKG, "ExplorerPerspective.CreateFolder.Header"),
+            BaseMessages.getString(PKG, "ExplorerPerspective.CreateFolder.Message", tif.path));
+    String folder = dialog.open();
+    if (!Utils.isEmpty(folder)) {
+      String newPath = tif.path;
+      if (!newPath.endsWith("/") && !newPath.endsWith("\\")) {
+        newPath += "/";
+      }
+      newPath += folder;
+      try {
+        FileObject newFolder = HopVfs.getFileObject(newPath);
+        if (newFolder.exists()) {
+          // createFolder() silently does nothing for an existing folder and fails for an existing
+          // file, so tell the user rather than leaving them guessing.
+          //
+          MessageBox box = new MessageBox(getShell(), SWT.OK | SWT.ICON_WARNING);
+          box.setText(
+              BaseMessages.getString(PKG, "ExplorerPerspective.CreateFolder.AlreadyExists.Header"));
+          box.setMessage(
+              BaseMessages.getString(
+                  PKG,
+                  newFolder.isFolder()
+                      ? "ExplorerPerspective.CreateFolder.AlreadyExists.Message"
+                      : "ExplorerPerspective.CreateFolder.FileAlreadyExists.Message",
+                  folder,
+                  tif.path));
+          box.open();
+
+          // Select the existing folder so it's clear where it is.
+          selectInTree(newPath, false);
+          return;
+        }
+        newFolder.createFolder();
+
+        refresh();
+      } catch (Throwable e) {
+        new ErrorDialog(
+            getShell(),
+            BaseMessages.getString(PKG, "ExplorerPerspective.Error.CreateFolder.Header"),
+            BaseMessages.getString(PKG, "ExplorerPerspective.Error.CreateFolder.Message", newPath),
+            e);
+      }
+    }
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_SELECT_OPENED_FILE,
+      toolTip = "i18n::ExplorerPerspective.ToolbarElement.SelectOpenedFile.Tooltip",
+      image = "ui/images/select-target.svg")
+  @GuiKeyboardShortcut(alt = true, key = SWT.F1)
+  @GuiOsxKeyboardShortcut(alt = true, key = SWT.F1)
+  public void selectInTree() {
+    CTabFolder active = getTargetTabFolder();
+    if (active.getSelectionIndex() >= 0) {
+      this.selectInTree(getActiveFileTypeHandler().getFilename(), false);
+    }
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_EXPAND_ALL,
+      toolTip = "i18n::ExplorerPerspective.ToolbarElement.ExpandAll.Tooltip",
+      image = "ui/images/expand-all.svg")
+  @GuiMenuElement(
+      root = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      parentId = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      id = CONTEXT_MENU_EXPAND_ALL,
+      label = "i18n::ExplorerPerspective.Menu.ExpandAll",
+      image = "ui/images/expand-all.svg")
+  @GuiKeyboardShortcut(control = true, key = '+')
+  @GuiOsxKeyboardShortcut(command = true, key = '+')
+  public void expandAll() {
+    tree.setRedraw(false); // Stop redraw until operation complete
+    TreeItem[] selection = tree.getSelection();
+    if (selection == null || selection.length == 0) {
+      expandCollapse(tree.getTopItem(), true);
+    } else {
+      // expandCollapse → ensureFolderLoaded covers lazy folders under the selection
+      expandCollapse(selection[0], true);
+    }
+    tree.setRedraw(true);
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_COLLAPSE_ALL,
+      toolTip = "i18n::ExplorerPerspective.ToolbarElement.CollapseAll.Tooltip",
+      image = "ui/images/collapse-all.svg")
+  @GuiMenuElement(
+      root = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      parentId = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      id = CONTEXT_MENU_COLLAPSE_ALL,
+      label = "i18n::ExplorerPerspective.Menu.CollapseAll",
+      image = "ui/images/collapse-all.svg")
+  @GuiKeyboardShortcut(control = true, key = '-')
+  @GuiOsxKeyboardShortcut(command = true, key = '-')
+  public void collapsedAll() {
+    tree.setRedraw(false); // Stop redraw until operation complete
+    TreeItem[] selection = tree.getSelection();
+    if (selection == null || selection.length == 0) {
+      expandCollapse(tree.getTopItem(), false);
+    } else {
+      expandCollapse(selection[0], false);
+    }
+    tree.setRedraw(true);
+  }
+
+  /**
+   * Context menu: refresh only the selected folder (or the parent of a selected file). Cheaper than
+   * toolbar F5 full rebuild; use when you know which folder changed.
+   */
+  @GuiMenuElement(
+      root = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      parentId = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      id = CONTEXT_MENU_REFRESH_FOLDER,
+      label = "i18n::ExplorerPerspective.Menu.RefreshFolder",
+      image = "ui/images/refresh.svg",
+      separator = true)
+  public void refreshFolderFromMenu() {
+    TreeItem[] selection = tree.getSelection();
+    if (selection == null || selection.length != 1) {
+      return;
+    }
+    TreeItemFolder tif = (TreeItemFolder) selection[0].getData();
+    if (tif == null) {
+      return;
+    }
+    // Ensure lastSelectedFolderPath matches the context-clicked item
+    recordSelectedFolderPath(tif, selection[0]);
+    refreshSelectedFolder();
+  }
+
+  public void expandCollapse(TreeItem item, boolean expand) {
+    if (item == null || item.isDisposed()) {
+      return;
+    }
+    if (expand) {
+      // Expand All used to setExpanded(true) on lazy folders that still only had a dummy child,
+      // which showed blank rows. Load real children first.
+      ensureFolderLoaded(item);
+    }
+    FolderTreeIcons.setExpanded(item, expand);
+    TreeMemory.getInstance().storeExpanded(FILE_EXPLORER_TREE, item, expand);
+
+    for (TreeItem childItem : item.getItems()) {
+      TreeItemFolder childTif = (TreeItemFolder) childItem.getData();
+
+      if ((childTif != null && childTif.folder) || childItem.getItemCount() > 1) {
+        expandCollapse(childItem, expand);
+      }
+    }
+  }
+
+  @GuiMenuElement(
+      root = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      parentId = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      id = CONTEXT_MENU_DELETE,
+      label = "i18n::ExplorerPerspective.Menu.Delete",
+      image = "ui/images/delete.svg",
+      separator = true)
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_DELETE,
+      toolTip = "i18n::ExplorerPerspective.ToolbarElement.Delete.Tooltip",
+      image = "ui/images/delete.svg",
+      separator = true)
+  @GuiKeyboardShortcut(key = SWT.DEL)
+  @GuiOsxKeyboardShortcut(key = SWT.DEL)
+  public void deleteFile() {
+    // Shortcut only fires when focus is in file explorer.
+    //
+    if (!HopSecurityUi.check(Permission.EXPLORER_WRITE)) {
+      return;
+    }
+    TreeItem[] selection = tree.getSelection();
+    if (selection == null || selection.length == 0) {
+      return;
+    }
+
+    deleteFiles(selection);
+  }
+
+  @GuiMenuElement(
+      root = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      parentId = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      id = CONTEXT_MENU_RENAME,
+      label = "i18n::ExplorerPerspective.Menu.Rename",
+      image = "ui/images/rename.svg")
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_RENAME,
+      toolTip = "i18n::ExplorerPerspective.ToolbarElement.Rename.Tooltip",
+      image = "ui/images/rename.svg",
+      separator = false)
+  @GuiKeyboardShortcut(key = SWT.F2)
+  @GuiOsxKeyboardShortcut(key = SWT.F2)
+  public void renameFile() {
+    if (!HopSecurityUi.check(Permission.EXPLORER_WRITE)) {
+      return;
+    }
+    TreeItem[] selection = tree.getSelection();
+    if (selection == null || selection.length != 1) {
+      return;
+    }
+    renameFile(selection[0]);
+  }
+
+  @GuiMenuElement(
+      root = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      parentId = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      id = CONTEXT_MENU_COPY_NAME,
+      label = "i18n::ExplorerPerspective.Menu.CopyName",
+      separator = true)
+  public void copyFileName() {
+    copyToClipboard(tif -> tif.name);
+  }
+
+  @GuiMenuElement(
+      root = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      parentId = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      id = CONTEXT_MENU_COPY_PATH,
+      label = "i18n::ExplorerPerspective.Menu.CopyPath")
+  public void copyFilePath() {
+    copyToClipboard(tif -> tif.path);
+  }
+
+  /** Copy one line per selected file to the clipboard. */
+  private void copyToClipboard(Function<TreeItemFolder, String> valueGetter) {
+    TreeItem[] selection = tree.getSelection();
+    if (selection == null || selection.length == 0) {
+      return;
+    }
+    List<String> values = new ArrayList<>();
+    for (TreeItem item : selection) {
+      TreeItemFolder tif = (TreeItemFolder) item.getData();
+      if (tif != null) {
+        values.add(valueGetter.apply(tif));
+      }
+    }
+    if (!values.isEmpty()) {
+      GuiResource.getInstance().toClipboard(String.join(Const.CR, values));
+    }
+  }
+
+  @GuiMenuElement(
+      root = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      parentId = GUI_PLUGIN_CONTEXT_MENU_PARENT_ID,
+      id = CONTEXT_MENU_FIND_REFERENCES,
+      label = "i18n::ExplorerPerspective.Menu.FindReferences",
+      image = "ui/images/search.svg",
+      separator = true)
+  public void findReferences() {
+    TreeItem[] selection = tree.getSelection();
+    if (selection == null || selection.length != 1) {
+      return;
+    }
+    TreeItemFolder tif = (TreeItemFolder) selection[0].getData();
+    if (tif == null || tif.folder || !isPipelineOrWorkflowFile(tif.path)) {
+      return;
+    }
+    findReferences(tif.path, tif.name);
+  }
+
+  /**
+   * Best-effort static scan (same engine as rename) for pipelines/workflows and metadata objects
+   * that reference the given file. Results are shown in the shared search-results UI, in a
+   * bottom-dock tab, so each one can be opened by double-clicking it.
+   */
+  private void findReferences(String path, String name) {
+    String projectHome = hopGui.getVariables().resolve(Const.VAR_PROJECT_HOME);
+    if (Utils.isEmpty(projectHome) || Const.VAR_PROJECT_HOME.equals(projectHome)) {
+      // Without an active project there is nothing to scan.
+      showNoReferencesFound(name);
+      return;
+    }
+    List<String> searchRoots = java.util.Collections.singletonList(projectHome);
+    try {
+      MetadataReferenceFinder finder = new MetadataReferenceFinder(hopGui.getMetadataProvider());
+      List<MetadataReferenceResult> fileReferences =
+          finder.findFileReferences(searchRoots, path, hopGui.getVariables());
+      List<MetadataObjectReference> metadataReferences =
+          finder.findFilePathReferencesInMetadata(path, hopGui.getVariables());
+
+      List<ISearchResult> results =
+          ReferenceSearchResults.build(hopGui, fileReferences, metadataReferences);
+      if (results.isEmpty()) {
+        showNoReferencesFound(name);
+        return;
+      }
+      ReferenceSearchResults.showInBottomDock(
+          hopGui,
+          BaseMessages.getString(PKG, "ExplorerPerspective.FindReferences.Tab.Title", name),
+          name,
+          results);
+    } catch (HopException e) {
+      new ErrorDialog(
+          hopGui.getShell(),
+          BaseMessages.getString(PKG, "ExplorerPerspective.FindReferences.Error.Title"),
+          BaseMessages.getString(PKG, "ExplorerPerspective.FindReferences.Error.Message", name),
+          e);
+    }
+  }
+
+  private void showNoReferencesFound(String name) {
+    MessageBox box = new MessageBox(hopGui.getShell(), SWT.ICON_INFORMATION | SWT.OK);
+    box.setText(
+        BaseMessages.getString(PKG, "ExplorerPerspective.FindReferences.NoReferences.Title"));
+    box.setMessage(
+        BaseMessages.getString(
+            PKG, "ExplorerPerspective.FindReferences.NoReferences.Message", name));
+    box.open();
+  }
+
+  /** True when the path is a pipeline (.hpl) or workflow (.hwf) file. */
+  private static boolean isPipelineOrWorkflowFile(String path) {
+    if (path == null) {
+      return false;
+    }
+    String lower = path.toLowerCase(java.util.Locale.ROOT);
+    return lower.endsWith(".hpl") || lower.endsWith(".hwf");
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_REFRESH,
+      toolTip = "i18n::ExplorerPerspective.ToolbarElement.Refresh.Tooltip",
+      image = "ui/images/refresh.svg")
+  @GuiKeyboardShortcut(key = SWT.F5)
+  @GuiOsxKeyboardShortcut(key = SWT.F5)
+  @Override
+  public void clearSearchFilters() {
+    if (searchText != null && !searchText.isDisposed()) {
+      if (Utils.isEmpty(searchText.getText())) {
+        refresh();
+      } else {
+        // Modify listener will apply the cleared filter (immediately via cancel + apply)
+        cancelScheduledFilterApply();
+        searchText.setText("");
+        applyPendingFilter();
+      }
+    } else {
+      filterText = "";
+      filterMatcher = new SearchMatcher("", false, false, false);
+      treeModel.clear();
+      refresh();
+    }
+  }
+
+  /**
+   * Hard-refresh the explorer tree (toolbar / F5).
+   *
+   * <p>Always rebuilds from disk so files and folders created outside the current selection (for
+   * example by a running pipeline) become visible. Clears the filter index and re-lists folders via
+   * VFS with an explicit {@link FileObject#refresh()} so cached children do not hide new entries.
+   * Expand/collapse state is restored from {@link TreeMemory}.
+   *
+   * <p>For a cheaper single-folder update use {@link #refreshSelectedFolder()} (context menu).
+   */
+  public void refresh() {
+    determineRootFolderName(hopGui);
+    // Structural refresh invalidates the filter index and discards lazy tree snapshots
+    treeModel.clear();
+    if (!Utils.isEmpty(filterText)) {
+      // F5 while filtering: update git status, then re-index the full project once
+      for (IExplorerRefreshListener listener : refreshListeners) {
+        listener.beforeRefresh();
+      }
+      applyFilterFromModel();
+      return;
+    }
+    // Always full rebuild — scoped refresh left only for context menu / internal ops
+    refreshEntireTree();
+  }
+
+  private void scheduleFilterApply() {
+    if (hopGui == null || hopGui.getDisplay() == null) {
+      return;
+    }
+    Display display = hopGui.getDisplay();
+    display.timerExec(-1, applyFilterRunnable);
+    display.timerExec(FILTER_DEBOUNCE_MS, applyFilterRunnable);
+  }
+
+  private void cancelScheduledFilterApply() {
+    if (hopGui == null || hopGui.getDisplay() == null) {
+      return;
+    }
+    hopGui.getDisplay().timerExec(-1, applyFilterRunnable);
+  }
+
+  /**
+   * Apply the current search box text to the explorer tree. Debounced from {@link SWT#Modify}; runs
+   * immediately on Enter or when clearing the filter programmatically.
+   */
+  private void applyPendingFilter() {
+    if (searchText == null || searchText.isDisposed()) {
+      return;
+    }
+
+    String text = searchText.getText();
+    boolean wasFiltering = !Utils.isEmpty(filterText);
+    boolean willFilter = text != null && text.length() > 2;
+
+    if (!wasFiltering && willFilter) {
+      saveTreeState();
+    }
+
+    filterText = willFilter ? text : "";
+    filterMatcher = new SearchMatcher(filterText, false, false, false);
+
+    if (willFilter) {
+      applyFilterFromModel();
+    } else {
+      // Leaving filter mode: full tree rebuild + restore expand state
+      treeModel.clear();
+      refreshEntireTree();
+      if (wasFiltering) {
+        restoreTreeState();
+      }
+    }
+  }
+
+  /**
+   * Rebuild the SWT tree from the in-memory model for the active filter. Does <em>not</em> fire
+   * {@link IExplorerRefreshListener#beforeRefresh()} (avoids re-running git status every
+   * keystroke).
+   */
+  private void applyFilterFromModel() {
+    try {
+      determineRootFolderName(hopGui);
+      ensureFullTreeModel();
+
+      if (tree == null || tree.isDisposed() || treeModel.isEmpty()) {
+        return;
+      }
+
+      tree.setRedraw(false);
+      try {
+        tree.removeAll();
+
+        ExplorerTreeModel.Node rootNode = treeModel.getRoot();
+        TreeItem rootItem = new TreeItem(tree, SWT.NONE);
+        rootItem.setText(Const.NVL(rootNode.getName(), ""));
+        IHopFileType fileType = getFileType(rootNode.getPath(), true);
+        setItemImage(rootItem, fileType);
+        callPaintListeners(tree, rootItem, rootNode.getPath(), rootNode.getName());
+        setTreeItemData(rootItem, rootNode.getPath(), rootNode.getName(), fileType, 0, true, true);
+
+        renderFilteredChildren(rootItem, rootNode, 0);
+        FolderTreeIcons.setExpanded(rootItem, true);
+        TreeMemory.getInstance().storeExpanded(FILE_EXPLORER_TREE, rootItem, true);
+      } finally {
+        tree.setRedraw(true);
+      }
+    } catch (Exception e) {
+      new ErrorDialog(
+          getShell(),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.TreeRefresh.Header"),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.TreeRefresh.Message"),
+          e);
+    }
+    updateSelection();
+  }
+
+  /**
+   * Ensure {@link #treeModel} holds a full project walk. One VFS scan is reused for subsequent
+   * filter keystrokes until a structural refresh invalidates the model.
+   */
+  private void ensureFullTreeModel() throws Exception {
+    determineRootFolderName(hopGui);
+    if (treeModel.isUsableFor(rootFolder)) {
+      return;
+    }
+
+    final Exception[] error = new Exception[1];
+    BusyIndicator.showWhile(
+        hopGui.getDisplay(),
+        () -> {
+          try {
+            ExplorerTreeModel.Node rootNode =
+                new ExplorerTreeModel.Node(rootFolder, Const.NVL(rootName, ""), true);
+            String metadataFolderName = resolveMetadataFolderName();
+            loadModelChildren(rootNode, metadataFolderName);
+            treeModel.setRoot(rootNode, true);
+          } catch (Exception e) {
+            error[0] = e;
+          }
+        });
+    if (error[0] != null) {
+      throw error[0];
+    }
+  }
+
+  private void loadModelChildren(ExplorerTreeModel.Node parent, String metadataFolderName)
+      throws Exception {
+    FileObject[] children;
+    try {
+      children = listChildrenFresh(parent.getPath());
+    } catch (Exception e) {
+      return;
+    }
+    if (children.length == 0) {
+      return;
+    }
+
+    Arrays.sort(children, Comparator.comparing(Object::toString));
+
+    for (boolean folder : new boolean[] {true, false}) {
+      for (FileObject child : children) {
+        String childName = child.getName().getBaseName();
+        if (shouldSkipExplorerChild(child, childName, metadataFolderName)) {
+          continue;
+        }
+        boolean isFolder;
+        try {
+          isFolder = child.isFolder();
+        } catch (Exception e) {
+          continue;
+        }
+        if (isFolder != folder) {
+          continue;
+        }
+
+        String childPath = HopVfs.getFilename(child);
+        ExplorerTreeModel.Node childNode =
+            new ExplorerTreeModel.Node(childPath, childName, isFolder);
+        parent.addChild(childNode);
+        if (isFolder) {
+          loadModelChildren(childNode, metadataFolderName);
+        }
+      }
+    }
+  }
+
+  private String resolveMetadataFolderName() {
+    String metadataFolder = hopGui.getVariables().getVariable(Const.HOP_METADATA_FOLDER);
+    if (Utils.isEmpty(metadataFolder)) {
+      return null;
+    }
+    String resolvedMetadataFolder = hopGui.getVariables().resolve(metadataFolder);
+    if (Utils.isEmpty(resolvedMetadataFolder)) {
+      return null;
+    }
+    String normalizedMetadataFolder = resolvedMetadataFolder.replace('\\', '/');
+    int lastSlashIndex = normalizedMetadataFolder.lastIndexOf('/');
+    return (lastSlashIndex >= 0)
+        ? normalizedMetadataFolder.substring(lastSlashIndex + 1)
+        : normalizedMetadataFolder;
+  }
+
+  private boolean shouldSkipExplorerChild(
+      FileObject child, String childName, String metadataFolderName) {
+    boolean isMetadataFolderMatch =
+        !Utils.isEmpty(metadataFolderName) && metadataFolderName.equals(childName);
+    if (!showingHiddenFiles) {
+      try {
+        if (child.isHidden() || childName.startsWith(".") || isMetadataFolderMatch) {
+          return true;
+        }
+      } catch (Exception e) {
+        if (childName.startsWith(".") || isMetadataFolderMatch) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private void renderFilteredChildren(
+      TreeItem parentItem, ExplorerTreeModel.Node parentNode, int depth) throws HopException {
+    boolean filtering = ExplorerTreeModel.isFiltering(filterText);
+    for (ExplorerTreeModel.Node child : parentNode.getChildren()) {
+      if (!ExplorerTreeModel.isVisible(child, filterMatcher, filtering)) {
+        continue;
+      }
+
+      IHopFileType fileType = getFileType(child.getPath(), child.isFolder());
+      TreeItem childItem = new TreeItem(parentItem, SWT.NONE);
+      childItem.setText(child.getName());
+      setItemImage(childItem, fileType);
+
+      if (!child.isFolder() && !fileType.supportsOpening()) {
+        childItem.setForeground(hopGui.getDisplay().getSystemColor(SWT.COLOR_DARK_GRAY));
+      } else {
+        childItem.setForeground(null);
+      }
+
+      callPaintListeners(tree, childItem, child.getPath(), child.getName());
+      setTreeItemData(
+          childItem, child.getPath(), child.getName(), fileType, depth, child.isFolder(), true);
+
+      if (child.isFolder()) {
+        renderFilteredChildren(childItem, child, depth + 1);
+        if (childItem.getItemCount() > 0) {
+          FolderTreeIcons.setExpanded(childItem, true);
+          TreeMemory.getInstance().storeExpanded(FILE_EXPLORER_TREE, childItem, true);
+        }
+      }
+    }
+  }
+
+  /** True when {@code path} is the explorer root or a folder inside it. */
+  private boolean isUnderCurrentRoot(String path) {
+    if (Utils.isEmpty(path) || Utils.isEmpty(rootFolder)) {
+      return false;
+    }
+    if (ExplorerPathUtils.pathsEqual(path, rootFolder)) {
+      return true;
+    }
+    return isDescendant(rootFolder, path);
+  }
+
+  /**
+   * Refresh only the last selected folder, keeping the rest of the tree intact. Used by the context
+   * menu and by internal operations (delete parent fix-up); toolbar F5 uses {@link #refresh()}.
+   */
+  private void refreshSelectedFolder() {
+    String folderPath = lastSelectedFolderPath;
+    if (Utils.isEmpty(folderPath)
+        || !isUnderCurrentRoot(folderPath)
+        || !isAccessibleFolder(folderPath)) {
+      fallbackRefreshFromParent(folderPath);
+      return;
+    }
+
+    try {
+      determineRootFolderName(hopGui);
+
+      for (IExplorerRefreshListener listener : refreshListeners) {
+        listener.beforeRefresh();
+      }
+
+      TreeItem folderItem = locateTreeItem(folderPath);
+      if (folderItem == null || folderItem.isDisposed()) {
+        fallbackRefreshFromParent(folderPath);
+        return;
+      }
+
+      TreeItemFolder tif = (TreeItemFolder) folderItem.getData();
+      if (tif == null || !tif.folder) {
+        fallbackRefreshFromParent(folderPath);
+        return;
+      }
+
+      tree.setRedraw(false);
+      try {
+        refreshTreeItemInPlace(folderItem);
+        tree.setSelection(folderItem);
+        tree.showItem(folderItem);
+      } finally {
+        tree.setRedraw(true);
+      }
+    } catch (Exception e) {
+      new ErrorDialog(
+          getShell(),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.TreeRefresh.Header"),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.TreeRefresh.Message"),
+          e);
+    }
+    updateSelection();
+  }
+
+  /**
+   * When the remembered folder no longer exists, remove any stale tree node and refresh its parent
+   * instead of rebuilding the whole tree.
+   */
+  private void fallbackRefreshFromParent(String folderPath) {
+    removeStaleTreeItem(folderPath);
+    lastSelectedFolderPath = getParentFolderPath(folderPath);
+
+    if (!Utils.isEmpty(lastSelectedFolderPath)
+        && isUnderCurrentRoot(lastSelectedFolderPath)
+        && isAccessibleFolder(lastSelectedFolderPath)) {
+      refreshSelectedFolder();
+    } else {
+      lastSelectedFolderPath = null;
+      refreshEntireTree();
+    }
+  }
+
+  private void refreshTreeItemInPlace(TreeItem folderItem) {
+    TreeItemFolder tif = (TreeItemFolder) folderItem.getData();
+    if (tif == null || !tif.folder) {
+      return;
+    }
+
+    // Dispose children while collapsed so SWT does not leave ghost blank rows under an
+    // expanded parent (common after scoped refresh + later expand/collapse).
+    String[] treePath = ConstUi.getTreeStrings(folderItem);
+    boolean wasExpanded = folderItem.getExpanded();
+    if (wasExpanded) {
+      FolderTreeIcons.setExpanded(folderItem, false);
+      // Collapse listener clears TreeMemory; put the remembered expand state back.
+      TreeMemory.getInstance().storeExpanded(FILE_EXPLORER_TREE, treePath, true);
+    }
+
+    refreshFolder(folderItem, tif.path, childDepthForFolder(tif));
+    tif.loaded = true;
+    restoreTreeItemExpandedFromMemory(folderItem);
+  }
+
+  /**
+   * Removes the deleted tree item, refreshes its parent, closes related tabs, and updates the tree
+   * selection.
+   *
+   * @param treeItem the deleted tree item
+   * @param filenames the file paths associated with the deleted item
+   */
+  private void removeTreeItemAfterDelete(TreeItem treeItem, List<String> filenames) {
+    updateLastSelectedFolderAfterDelete(treeItem);
+    TreeItem parentItem = treeItem.getParentItem();
+    treeItem.dispose();
+    for (String filename : filenames) {
+      TabItemHandler handler = findTabItemHandler(filename);
+      if (handler != null) {
+        removeTabItem(handler);
+      }
+    }
+    if (parentItem != null && !parentItem.isDisposed()) {
+      refreshTreeItemInPlace(parentItem);
+      tree.setSelection(parentItem);
+      tree.showItem(parentItem);
+    }
+    updateSelection();
+  }
+
+  /**
+   * Updates the last selected folder path after a tree item is deleted.
+   *
+   * @param treeItem treeItem the deleted tree item
+   */
+  private void updateLastSelectedFolderAfterDelete(TreeItem treeItem) {
+    TreeItemFolder tif = (TreeItemFolder) treeItem.getData();
+    if (tif == null || !ExplorerPathUtils.pathsEqual(tif.path, lastSelectedFolderPath)) {
+      return;
+    }
+
+    TreeItem parentItem = treeItem.getParentItem();
+    if (parentItem != null) {
+      TreeItemFolder parentTif = (TreeItemFolder) parentItem.getData();
+      if (parentTif != null) {
+        lastSelectedFolderPath = parentTif.path;
+        return;
+      }
+    }
+    lastSelectedFolderPath = null;
+  }
+
+  /**
+   * Removes the tree item associated with the specified path if it exists.
+   *
+   * @param path path the path of the tree item to remove
+   */
+  private void removeStaleTreeItem(String path) {
+    if (Utils.isEmpty(path)) {
+      return;
+    }
+
+    TreeItem stale = findTreeItem(path);
+    if (stale != null && !stale.isDisposed()) {
+      stale.dispose();
+    }
+  }
+
+  private boolean isAccessibleFolder(String path) {
+    if (Utils.isEmpty(path)) {
+      return false;
+    }
+
+    try {
+      FileObject fileObject = HopVfs.getFileObject(path);
+      return fileObject.exists() && fileObject.isFolder();
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  private String getParentFolderPath(String path) {
+    if (Utils.isEmpty(path) || ExplorerPathUtils.pathsEqual(path, rootFolder)) {
+      return null;
+    }
+
+    try {
+      FileObject fileObject = HopVfs.getFileObject(path);
+      if (fileObject.exists()) {
+        FileObject parent = fileObject.getParent();
+        if (parent == null) {
+          return null;
+        }
+        return HopVfs.getFilename(parent);
+      }
+    } catch (Exception ignored) {
+      // Derive parent from the path string when the folder was already deleted.
+    }
+
+    String normalized = path.replace('\\', '/');
+    int lastSlash = normalized.lastIndexOf('/');
+    if (lastSlash <= 0) {
+      return rootFolder;
+    }
+    return normalized.substring(0, lastSlash);
+  }
+
+  private void refreshEntireTree() {
+    try {
+      determineRootFolderName(hopGui);
+      // Lazy UI rebuild is independent of the filter index; clear so the next filter re-indexes.
+      if (Utils.isEmpty(filterText)) {
+        treeModel.clear();
+      }
+
+      for (IExplorerRefreshListener listener : refreshListeners) {
+        listener.beforeRefresh();
+      }
+
+      // Preserve currently expanded items and selection before destroying tree items
+      List<String> selectedPaths = new ArrayList<>();
+      if (tree != null && !tree.isDisposed()) {
+        for (TreeItem selected : tree.getSelection()) {
+          TreeItemFolder tif = (TreeItemFolder) selected.getData();
+          if (tif != null && tif.path != null) {
+            selectedPaths.add(tif.path);
+          }
+        }
+        for (TreeItem item : tree.getItems()) {
+          rememberTreeExpandedState(item);
+        }
+      }
+
+      tree.setRedraw(false);
+      try {
+        tree.removeAll();
+
+        // Add the root element...
+        //
+        TreeItem rootItem = new TreeItem(tree, SWT.NONE);
+        rootItem.setText(Const.NVL(rootName, ""));
+        IHopFileType fileType = getFileType(rootFolder, true);
+        setItemImage(rootItem, fileType);
+        callPaintListeners(tree, rootItem, rootFolder, rootName);
+        setTreeItemData(rootItem, rootFolder, rootName, fileType, 0, true, true);
+
+        // Paint the top level folder only
+        //
+        refreshFolder(rootItem, rootFolder, 0);
+
+        // Always expand root item when filtering
+        if (!Utils.isEmpty(filterText)) {
+          FolderTreeIcons.setExpanded(rootItem, true);
+          TreeMemory.getInstance().storeExpanded(FILE_EXPLORER_TREE, rootItem, true);
+        } else {
+          TreeMemory.getInstance().storeExpanded(FILE_EXPLORER_TREE, rootItem, true);
+
+          // When not filtering, use tree memory (but don't call it here as it will be called later)
+          // The TreeMemory will be applied either by restoreTreeState() or setExpandedFromMemory()
+          if (treeStateBeforeFilter == null) {
+            // Only restore from memory if we're not about to restore from saved state
+            FolderTreeIcons.setExpanded(rootItem, true);
+            restoreTreeItemExpandedFromMemory(rootItem);
+          }
+        }
+
+        // Restore selection of previously selected items
+        for (String selectedPath : selectedPaths) {
+          selectInTree(selectedPath, false);
+        }
+        if (selectedPaths.isEmpty()) {
+          IHopFileTypeHandler activeHandler = getActiveFileTypeHandler();
+          if (activeHandler != null && !Utils.isEmpty(activeHandler.getFilename())) {
+            selectInTree(activeHandler.getFilename(), true);
+          }
+        }
+      } finally {
+        tree.setRedraw(true);
+      }
+    } catch (Exception e) {
+      new ErrorDialog(
+          getShell(),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.TreeRefresh.Header"),
+          BaseMessages.getString(PKG, "ExplorerPerspective.Error.TreeRefresh.Message"),
+          e);
+    }
+    updateSelection();
+  }
+
+  private void rememberTreeExpandedState(TreeItem item) {
+    if (item == null || item.isDisposed()) {
+      return;
+    }
+    if (item.getExpanded()) {
+      TreeMemory.getInstance().storeExpanded(FILE_EXPLORER_TREE, item, true);
+    }
+    for (TreeItem child : item.getItems()) {
+      rememberTreeExpandedState(child);
+    }
+  }
+
+  @GuiToolbarElement(
+      root = GUI_PLUGIN_TOOLBAR_PARENT_ID,
+      id = TOOLBAR_ITEM_SHOW_HIDDEN,
+      toolTip = "i18n:org.apache.hop.ui.core.vfs:HopVfsFileDialog.ShowHiddenFiles.Tooltip.Message",
+      image = "ui/images/hide.svg")
+  public void showHideHidden() {
+    showingHiddenFiles = !showingHiddenFiles;
+
+    ToolItem toolItem = toolBarWidgets.findToolItem(TOOLBAR_ITEM_SHOW_HIDDEN);
+    if (toolItem != null) {
+      if (showingHiddenFiles) {
+        toolItem.setImage(GuiResource.getInstance().getImageShow());
+      } else {
+        toolItem.setImage(GuiResource.getInstance().getImageHide());
+      }
+    }
+
+    refresh();
+  }
+
+  private void setTreeItemData(
+      TreeItem treeItem,
+      String path,
+      String name,
+      IHopFileType fileType,
+      int depth,
+      boolean folder,
+      boolean loaded) {
+    treeItem.setData(new TreeItemFolder(treeItem, path, name, fileType, depth, folder, loaded));
+  }
+
+  private void setItemImage(TreeItem treeItem, IHopFileType fileType) {
+    if (fileType instanceof FolderFileType) {
+      // Shared closed-folder image: FolderTreeIcons swaps it for the open one on expand.
+      treeItem.setImage(GuiResource.getInstance().getImageFolder());
+      return;
+    }
+    Image image = typeImageMap.get(fileType.getName());
+    if (image != null) {
+      treeItem.setImage(image);
+    }
+  }
+
+  public Image getFileTypeImage(IHopFileType fileType) {
+    return typeImageMap.get(fileType.getName());
+  }
+
+  public IHopFileType getFileType(String path) throws HopException {
+    return getFileType(path, null);
+  }
+
+  /**
+   * Resolve the hop file type for a path. When {@code isFolder} is known (explorer listing), skip
+   * all extension probes for directories.
+   *
+   * @param path absolute path
+   * @param isFolder {@link Boolean#TRUE} / {@link Boolean#FALSE} when known, or {@code null}
+   */
+  public IHopFileType getFileType(String path, Boolean isFolder) throws HopException {
+    if (Boolean.TRUE.equals(isFolder)) {
+      return folderFileType != null ? folderFileType : new FolderFileType();
+    }
+
+    // Exact base-name types first (hop-env.yaml, Dockerfile, .gitignore, …) so a specialized
+    // handler can win over a generic extension such as *.yaml.
+    String baseName = HopFileTypeBase.extractBaseName(path);
+    if (!Utils.isEmpty(baseName)) {
+      IHopFileType byName = fileTypeByBaseName.get(baseName);
+      if (byName != null) {
+        return byName;
+      }
+    }
+
+    // Fast path: extension map (most project files)
+    String extension = HopFileTypeBase.extractExtension(path);
+    if (!Utils.isEmpty(extension)) {
+      IHopFileType byExt = fileTypeByExtension.get(extension);
+      if (byExt != null) {
+        return byExt;
+      }
+    }
+
+    // Fallback for custom handlers not covered by the maps (should be rare)
+    if (fileTypes != null) {
+      for (IHopFileType hopFileType : fileTypes) {
+        if (hopFileType instanceof FolderFileType || hopFileType instanceof GenericFileType) {
+          continue;
+        }
+        if (hopFileType.isHandledBy(path, false)) {
+          return hopFileType;
+        }
+      }
+    }
+
+    if (Boolean.FALSE.equals(isFolder) || isFolder == null) {
+      return genericFileType != null ? genericFileType : emptyFileType;
+    }
+    return emptyFileType;
+  }
+
+  /**
+   * Resolve a folder and force a VFS re-list so external creates (pipelines, other processes) are
+   * visible. Commons VFS caches children on {@link FileObject} until {@link FileObject#refresh()}.
+   */
+  private FileObject[] listChildrenFresh(String path) throws Exception {
+    FileObject folder = HopVfs.getFileObject(path);
+    try {
+      folder.refresh();
+    } catch (Exception e) {
+      // Still attempt to list; some providers throw on refresh for missing/imaginary files
+      if (hopGui != null && hopGui.getLog() != null) {
+        hopGui.getLog().logDebug("VFS refresh failed for '" + path + "': " + e.getMessage());
+      }
+    }
+    FileObject[] children = folder.getChildren();
+    return children != null ? children : new FileObject[0];
+  }
+
+  private void refreshFolder(TreeItem item, String path, int depth) {
+
+    try {
+      // Remove any old children in the item...
+      //
+      for (TreeItem child : item.getItems()) {
+        child.dispose();
+      }
+
+      FileObject[] children = listChildrenFresh(path);
+      if (children.length == 0) {
+        return;
+      }
+
+      String metadataFolderName = resolveMetadataFolderName();
+      String maxDepthString = ExplorerPerspectiveConfigSingleton.getConfig().getLazyLoadingDepth();
+      int maxDepth = Const.toInt(hopGui.getVariables().resolve(maxDepthString), 0);
+
+      // Classify once (folder vs file), then sort each group — avoids the old two-pass scan that
+      // called isFolder() twice per child.
+      List<FileObject> folderChildren = new ArrayList<>(children.length / 4 + 1);
+      List<FileObject> fileChildren = new ArrayList<>(children.length);
+      for (FileObject child : children) {
+        String childName = child.getName().getBaseName();
+        if (shouldSkipExplorerChild(child, childName, metadataFolderName)) {
+          continue;
+        }
+        boolean isFolder;
+        try {
+          isFolder = child.isFolder();
+        } catch (Exception e) {
+          continue;
+        }
+        if (isFolder) {
+          folderChildren.add(child);
+        } else {
+          fileChildren.add(child);
+        }
+      }
+
+      Comparator<FileObject> byPath = Comparator.comparing(Object::toString);
+      folderChildren.sort(byPath);
+      fileChildren.sort(byPath);
+
+      for (FileObject child : folderChildren) {
+        addExplorerTreeChild(item, child, depth, true, maxDepth);
+      }
+      for (FileObject child : fileChildren) {
+        addExplorerTreeChild(item, child, depth, false, maxDepth);
+      }
+
+    } catch (Exception e) {
+      TreeItem treeItem = new TreeItem(item, SWT.NONE);
+      treeItem.setText("!!Error refreshing folder!!");
+      hopGui.getLog().logError("Error refresh folder '" + path + "'", e);
+    }
+  }
+
+  private void addExplorerTreeChild(
+      TreeItem parent, FileObject child, int depth, boolean folder, int maxDepth) throws Exception {
+    String childName = child.getName().getBaseName();
+    String childPath = HopVfs.getFilename(child);
+    IHopFileType fileType = getFileType(childPath, folder);
+
+    TreeItem childItem = new TreeItem(parent, SWT.NONE);
+    childItem.setText(childName);
+    setItemImage(childItem, fileType);
+
+    // Apply gray for non-openable files before paint listeners so listeners (e.g. git) can
+    // use gray variants when they see this styling
+    if (!folder && !fileType.supportsOpening()) {
+      childItem.setForeground(hopGui.getDisplay().getSystemColor(SWT.COLOR_DARK_GRAY));
+    } else {
+      childItem.setForeground(null);
+    }
+
+    callPaintListeners(tree, childItem, childPath, childName);
+    setTreeItemData(childItem, childPath, childName, fileType, depth, folder, true);
+
+    if (folder) {
+      if (depth + 1 <= maxDepth) {
+        childItem.setData(
+            new TreeItemFolder(childItem, childPath, childName, fileType, depth, true, true));
+        refreshFolder(childItem, childPath, depth + 1);
+      } else {
+        childItem.setData(
+            new TreeItemFolder(childItem, childPath, childName, fileType, depth, true, false));
+        // Dummy child to show the expand icon without loading content
+        new TreeItem(childItem, SWT.NONE);
+        childItem.setExpanded(false);
+      }
+    }
+  }
+
+  private void callPaintListeners(Tree tree, TreeItem treeItem, String path, String name) {
+    for (IExplorerFilePaintListener filePaintListener : filePaintListeners) {
+      filePaintListener.filePainted(tree, treeItem, path, name);
+    }
+  }
+
+  /**
+   * Save the current expanded/collapsed state of all tree items before filtering. This allows us to
+   * restore the exact state when the filter is cleared.
+   */
+  private void saveTreeState() {
+    treeStateBeforeFilter = new HashMap<>();
+    if (tree != null && !tree.isDisposed()) {
+      for (TreeItem item : tree.getItems()) {
+        saveTreeItemState(item);
+      }
+    }
+  }
+
+  /** Recursively save the expanded state of a tree item and its children. */
+  private void saveTreeItemState(TreeItem item) {
+    if (item == null || item.isDisposed()) {
+      return;
+    }
+
+    TreeItemFolder tif = (TreeItemFolder) item.getData();
+    if (tif != null && tif.path != null) {
+      treeStateBeforeFilter.put(tif.path, item.getExpanded());
+    }
+
+    // Recursively save children
+    for (TreeItem child : item.getItems()) {
+      saveTreeItemState(child);
+    }
+  }
+
+  /**
+   * Restore the tree state that was saved before filtering started. This is called after the tree
+   * is refreshed when the filter is cleared.
+   */
+  private void restoreTreeState() {
+    if (treeStateBeforeFilter != null && tree != null && !tree.isDisposed()) {
+      tree.setRedraw(false);
+      try {
+        for (TreeItem item : tree.getItems()) {
+          restoreTreeItemState(item);
+        }
+      } finally {
+        tree.setRedraw(true);
+        treeStateBeforeFilter = null; // Clear the saved state
+      }
+    }
+  }
+
+  /**
+   * Restore expand/collapse state for a subtree from {@link TreeMemory}, loading lazy folders when
+   * needed.
+   */
+  private void restoreTreeItemExpandedFromMemory(TreeItem item) {
+    if (item == null || item.isDisposed()) {
+      return;
+    }
+
+    TreeItemFolder tif = (TreeItemFolder) item.getData();
+    if (tif != null) {
+      boolean expanded =
+          TreeMemory.getInstance().isExpanded(FILE_EXPLORER_TREE, ConstUi.getTreeStrings(item));
+      if (expanded) {
+        ensureFolderLoaded(item);
+      }
+      FolderTreeIcons.setExpanded(item, expanded);
+    }
+
+    for (TreeItem child : item.getItems()) {
+      restoreTreeItemExpandedFromMemory(child);
+    }
+  }
+
+  /** Recursively restore the expanded state of a tree item and its children. */
+  private void restoreTreeItemState(TreeItem item) {
+    if (item == null || item.isDisposed()) {
+      return;
+    }
+
+    TreeItemFolder tif = (TreeItemFolder) item.getData();
+    if (tif != null && tif.path != null && treeStateBeforeFilter.containsKey(tif.path)) {
+      boolean wasExpanded = treeStateBeforeFilter.get(tif.path);
+
+      // If it should be expanded but still has a lazy placeholder, load real children first
+      if (wasExpanded) {
+        ensureFolderLoaded(item);
+      }
+
+      FolderTreeIcons.setExpanded(item, wasExpanded);
+      TreeMemory.getInstance().storeExpanded(FILE_EXPLORER_TREE, item, wasExpanded);
+    }
+
+    // Recursively restore children
+    for (TreeItem child : item.getItems()) {
+      restoreTreeItemState(child);
+    }
+  }
+
+  /** Update de tab name, tooltip and set the tab bold if the file has changed and vice versa. */
+  public void updateTabItem(IHopFileTypeHandler fileTypeHandler) {
+    TabItemHandler tabItemHandler = this.getTabItemHandler(fileTypeHandler);
+    if (tabItemHandler != null) {
+      CTabItem tabItem = tabItemHandler.getTabItem();
+      if (!tabItem.isDisposed()) {
+        String displayName = getTabDisplayName(fileTypeHandler);
+        tabItem.setText(Const.NVL(displayName, "<>"));
+        tabItem.setToolTipText(Const.NVL(fileTypeHandler.getFilename(), ""));
+        Font font =
+            fileTypeHandler.hasChanged()
+                ? GuiResource.getInstance().getFontBold()
+                : tabItem.getParent().getFont();
+        tabItem.setFont(font);
+      }
+    }
+  }
+
+  /**
+   * Get a display name for a tab, extracting a short title from URLs if needed.
+   *
+   * @param fileTypeHandler The file type handler
+   * @return A short display name (max 30 characters for URLs)
+   */
+  private String getTabDisplayName(IHopFileTypeHandler fileTypeHandler) {
+    String name = fileTypeHandler.getName();
+    String filename = fileTypeHandler.getFilename();
+
+    // If the filename is a URL and the name is the full URL or very long, extract a better title
+    if (filename != null
+        && (filename.toLowerCase().startsWith("http://")
+            || filename.toLowerCase().startsWith("https://"))
+        && (name == null || name.equals(filename) || name.length() > 30)) {
+      return extractTitleFromUrl(filename);
+    }
+
+    return name;
+  }
+
+  /**
+   * Extract a meaningful title from a URL for use as a tab name.
+   *
+   * @param url The URL to extract a title from
+   * @return A short, meaningful title (max 30 characters)
+   */
+  private String extractTitleFromUrl(String url) {
+    try {
+      // Remove protocol and query parameters
+      String path = url;
+      if (path.contains("?")) {
+        path = path.substring(0, path.indexOf("?"));
+      }
+      if (path.contains("#")) {
+        path = path.substring(0, path.indexOf("#"));
+      }
+
+      // Extract the last meaningful part of the path
+      // e.g., "https://hop.apache.org/manual/latest/pipelines/transforms/data-grid.html"
+      // becomes "Data Grid"
+      String[] parts = path.split("/");
+      String lastPart = "";
+      for (int i = parts.length - 1; i >= 0; i--) {
+        if (!parts[i].isEmpty() && !parts[i].equals("manual") && !parts[i].equals("latest")) {
+          lastPart = parts[i];
+          break;
+        }
+      }
+
+      // Remove file extension and decode
+      if (lastPart.endsWith(".html") || lastPart.endsWith(".htm")) {
+        lastPart = lastPart.substring(0, lastPart.lastIndexOf("."));
+      }
+
+      // Convert kebab-case, snake_case, or camelCase to Title Case
+      // e.g., "data-grid" -> "Data Grid", "data_grid" -> "Data Grid"
+      String title = lastPart.replaceAll("[-_]", " ");
+      title = title.replaceAll("([a-z])([A-Z])", "$1 $2"); // camelCase
+
+      // Capitalize words
+      String[] words = title.split("\\s+");
+      StringBuilder result = new StringBuilder();
+      for (String word : words) {
+        if (!word.isEmpty()) {
+          if (!result.isEmpty()) {
+            result.append(" ");
+          }
+          result.append(word.substring(0, 1).toUpperCase());
+          if (word.length() > 1) {
+            result.append(word.substring(1).toLowerCase());
+          }
+        }
+      }
+      title = result.toString();
+
+      // If we got a meaningful title, use it (limit to 30 chars)
+      if (!title.isEmpty() && title.length() <= 30) {
+        return title;
+      }
+
+      // Fallback: show domain + last part (truncated to 30 chars)
+      if (title.length() > 30) {
+        title = title.substring(0, 27) + "...";
+      }
+
+      // If still no good title, use smart truncation of the full URL
+      if (title.isEmpty() || title.length() < 5) {
+        // Show domain and last path segment
+        int domainEnd = path.indexOf("/", 8); // After "https://"
+        if (domainEnd > 0 && domainEnd < path.length() - 1) {
+          String domain = path.substring(0, domainEnd);
+          String pathPart = path.substring(domainEnd);
+          if (pathPart.length() > 20) {
+            pathPart = "..." + pathPart.substring(pathPart.length() - 17);
+          }
+          title = domain + pathPart;
+        } else {
+          title = path;
+        }
+        if (title.length() > 30) {
+          title = title.substring(0, 27) + "...";
+        }
+      }
+
+      return title;
+    } catch (Exception e) {
+      // Fallback to simple truncation if anything goes wrong
+      if (url.length() > 30) {
+        return url.substring(0, 27) + "...";
+      }
+      return url;
+    }
+  }
+
+  /** Update tree item */
+  public void updateTreeItem(IHopFileTypeHandler fileTypeHandler) {
+    // If no filename, no need to update the tree item
+    String filename = fileTypeHandler.getFilename();
+    if (filename != null) {
+
+      // TODO: Check if it's really needed normalize
+      // Normalize the filename to an absolute path
+      try {
+        filename = HopVfs.normalize(filename);
+      } catch (HopFileException e) {
+        hopGui.getLog().logError("Error getting VFS fileObject ''{0}''", filename);
+      }
+
+      // Look in the whole tree for the file...
+      //
+      TreeItem item = findTreeItem(filename);
+      if (item != null) {
+        for (IExplorerRefreshListener listener : refreshListeners) {
+          listener.beforeRefresh();
+        }
+        callPaintListeners(tree, item, filename, fileTypeHandler.getName());
+      }
+    }
+  }
+
+  private TreeItem findTreeItem(String filename) {
+    for (TreeItem item : tree.getItems()) {
+      TreeItem found = findTreeItem(item, filename);
+      if (found != null) {
+        return found;
+      }
+    }
+    return null;
+  }
+
+  /** Locate a tree item by path, loading and expanding ancestor folders as needed. */
+  private TreeItem locateTreeItem(String path) {
+    if (Utils.isEmpty(path)) {
+      return null;
+    }
+    for (TreeItem item : tree.getItems()) {
+      TreeItem found = locateTreeItem(item, path);
+      if (found != null) {
+        return found;
+      }
+    }
+    return null;
+  }
+
+  private TreeItem locateTreeItem(TreeItem item, String path) {
+    TreeItemFolder tif = (TreeItemFolder) item.getData();
+    if (tif != null && ExplorerPathUtils.pathsEqual(tif.path, path)) {
+      return item;
+    }
+
+    if (tif != null && tif.folder && isDescendant(tif.path, path)) {
+      ensureFolderLoaded(item);
+      FolderTreeIcons.setExpanded(item, true);
+      TreeMemory.getInstance().storeExpanded(FILE_EXPLORER_TREE, item, true);
+      for (TreeItem child : item.getItems()) {
+        TreeItem found = locateTreeItem(child, path);
+        if (found != null) {
+          return found;
+        }
+      }
+    }
+    return null;
+  }
+
+  private TreeItem findTreeItem(TreeItem item, String filename) {
+    TreeItemFolder tif = (TreeItemFolder) item.getData();
+    if (tif != null && ExplorerPathUtils.pathsEqual(tif.path, filename)) {
+      return tif.treeItem;
+    }
+    for (TreeItem child : item.getItems()) {
+      TreeItem found = findTreeItem(child, filename);
+      if (found != null) {
+        return found;
+      }
+    }
+    return null;
+  }
+
+  public void updateSelection() {
+
+    TreeItemFolder tif = null;
+
+    if (tree.getSelectionCount() > 0) {
+      TreeItem selectedItem = tree.getSelection()[0];
+      tif = (TreeItemFolder) selectedItem.getData();
+      if (tif == null) {
+        return;
+      }
+
+      // update lastSelectedFolderPath
+      recordSelectedFolderPath(tif, selectedItem);
+    }
+
+    boolean isFolderSelected = tif != null && tif.fileType instanceof FolderFileType;
+    boolean openSupported = tif != null && (tif.folder || tif.fileType.supportsOpening());
+    boolean canWrite = HopSecurity.allows(Permission.EXPLORER_WRITE);
+
+    toolBarWidgets.enableToolbarItem(TOOLBAR_ITEM_CREATE_FOLDER, isFolderSelected && canWrite);
+    toolBarWidgets.enableToolbarItem(TOOLBAR_ITEM_OPEN, openSupported);
+    toolBarWidgets.enableToolbarItem(TOOLBAR_ITEM_DELETE, tif != null && canWrite);
+    toolBarWidgets.enableToolbarItem(TOOLBAR_ITEM_RENAME, tif != null && canWrite);
+
+    menuWidgets.enableMenuItem(CONTEXT_MENU_CREATE_FOLDER, isFolderSelected && canWrite);
+    menuWidgets.enableMenuItem(CONTEXT_MENU_OPEN, openSupported);
+    menuWidgets.enableMenuItem(CONTEXT_MENU_DELETE, tif != null && canWrite);
+    menuWidgets.enableMenuItem(CONTEXT_MENU_RENAME, tif != null && canWrite);
+    menuWidgets.enableMenuItem(CONTEXT_MENU_COPY_NAME, tif != null);
+    menuWidgets.enableMenuItem(CONTEXT_MENU_COPY_PATH, tif != null);
+
+    for (IExplorerSelectionListener listener : selectionListeners) {
+      listener.fileSelected();
+    }
+  }
+
+  /**
+   * Records the path of the currently selected folder.
+   *
+   * <p>If the selected item is a folder, its path is recorded directly. Otherwise, the path of its
+   * parent folder is recorded.
+   *
+   * @param tif the data associated with the selected tree item
+   * @param selectedItem the currently selected tree item
+   */
+  private void recordSelectedFolderPath(TreeItemFolder tif, TreeItem selectedItem) {
+    // current selected folder.
+    if (tif.folder) {
+      lastSelectedFolderPath = tif.path;
+      return;
+    }
+
+    TreeItem parent = selectedItem.getParentItem();
+    if (parent != null) {
+      TreeItemFolder parentTif = (TreeItemFolder) parent.getData();
+      if (parentTif != null && parentTif.folder) {
+        lastSelectedFolderPath = parentTif.path;
+      }
+    }
+  }
+
+  /**
+   * Remove the file type handler from this perspective, from the tab folder. This simply tries to
+   * remove the item, does not
+   *
+   * @param fileTypeHandler The file type handler to remove
+   * @return true if the handler was removed from the perspective, false if it wasn't (canceled, not
+   *     possible, ...)
+   */
+  @Override
+  public boolean remove(IHopFileTypeHandler fileTypeHandler) {
+    if (fileTypeHandler == null || !fileTypeHandler.isCloseable()) {
+      return false;
+    }
+    TabItemHandler item = this.getTabItemHandler(fileTypeHandler);
+    if (item == null) {
+      return true; // Allow close to proceed; closeTab will dispose the tab directly
+    }
+    removeTabItem(item);
+    return true;
+  }
+
+  @Override
+  public List<TabItemHandler> getItems() {
+    return items;
+  }
+
+  @Override
+  public void navigateToPreviousFile() {
+    if (hasNavigationPreviousFile()) {
+      CTabFolder active = getTargetTabFolder();
+      int index = active.getSelectionIndex() - 1;
+      if (index < 0) {
+        index = active.getItemCount() - 1;
+      }
+      active.setSelection(index);
+      updateGui();
+    }
+  }
+
+  @Override
+  public void navigateToNextFile() {
+    if (hasNavigationNextFile()) {
+      CTabFolder active = getTargetTabFolder();
+      int index = active.getSelectionIndex() + 1;
+      if (index >= active.getItemCount()) {
+        index = 0;
+      }
+      active.setSelection(index);
+      updateGui();
+    }
+  }
+
+  @Override
+  public boolean hasNavigationPreviousFile() {
+    return getTargetTabFolder().getItemCount() > 1;
+  }
+
+  @Override
+  public boolean hasNavigationNextFile() {
+    return getTargetTabFolder().getItemCount() > 1;
+  }
+
+  @Override
+  public Control getControl() {
+    return sash;
+  }
+
+  protected Shell getShell() {
+    return hopGui.getShell();
+  }
+
+  @Override
+  public List<IGuiContextHandler> getContextHandlers() {
+    return new ArrayList<>();
+  }
+
+  @Override
+  public List<ISearchable> getSearchables() {
+    // Surface open tabs so they show up - and can be prioritized - in the global search.
+    // Pipelines/workflows use the in-memory subject (includes unsaved edits). Other file types
+    // that opt in via CAPABILITY_SEARCH are loaded through IHopFileTypeHandler.createSearchable.
+    List<ISearchable> searchables = new ArrayList<>();
+    for (TabItemHandler item : items) {
+      IHopFileTypeHandler typeHandler = item.getTypeHandler();
+      if (typeHandler == null) {
+        continue;
+      }
+      try {
+        Object subject = typeHandler.getSubject();
+        if (subject instanceof PipelineMeta pipelineMeta) {
+          searchables.add(new HopGuiPipelineSearchable("Open file", pipelineMeta));
+        } else if (subject instanceof WorkflowMeta workflowMeta) {
+          searchables.add(new HopGuiWorkflowSearchable("Open file", workflowMeta));
+        } else {
+          ISearchable searchable =
+              typeHandler.createSearchable("Open file", hopGui.getMetadataProvider());
+          if (searchable != null) {
+            searchables.add(searchable);
+          }
+        }
+      } catch (Exception e) {
+        LogChannel.UI.logError(
+            "Error creating searchable for open file: " + typeHandler.getFilename(), e);
+      }
+    }
+    return searchables;
+  }
+
+  /** Update HOP GUI menu and toolbar... */
+  public void updateGui() {
+    if (hopGui == null || toolBarWidgets == null || toolBar == null || toolBar.isDisposed()) {
+      return;
+    }
+    final IHopFileTypeHandler activeHandler = getActiveFileTypeHandler();
+    // Under Hop Web, CTabItem.setControl can fire focus/selection before tab data is set
+    // (plugin file openers, first tab, etc.). Avoid NPE during that race.
+    if (activeHandler != null) {
+      activeHandler.updateGui();
+    }
+  }
+
+  /** Notify the zoom handler when tab is switched (for web/RAP) */
+  private void notifyZoomHandlerForActiveTab() {
+    final IHopFileTypeHandler activeHandler = getActiveFileTypeHandler();
+    if (activeHandler == null) {
+      return;
+    }
+
+    // Check if it's a pipeline or workflow graph and notify its zoom handler
+    if (activeHandler instanceof HopGuiPipelineGraph pipelineGraph) {
+      Object zoomHandler = pipelineGraph.getCanvasZoomHandler();
+      if (zoomHandler != null) {
+        CanvasZoomHelper.notifyCanvasReady(zoomHandler);
+      }
+      CanvasSvgHelper.notifyCanvasReady(pipelineGraph.getCanvas());
+    } else if (activeHandler instanceof HopGuiWorkflowGraph workflowGraph) {
+      Object zoomHandler = workflowGraph.getCanvasZoomHandler();
+      if (zoomHandler != null) {
+        CanvasZoomHelper.notifyCanvasReady(zoomHandler);
+      }
+      CanvasSvgHelper.notifyCanvasReady(workflowGraph.getCanvas());
+    } else if (activeHandler instanceof HopGuiAbstractGraph abstractGraph) {
+      // Plugin model graphs (Data Vault, Business Vault, dimensional, source model, …)
+      // each have their own Hop Web SVG renderer and zoom remotes; refresh on tab switch.
+      Object zoomHandler = getModelGraphZoomHandler(abstractGraph);
+      if (zoomHandler != null) {
+        CanvasZoomHelper.notifyCanvasReady(zoomHandler);
+      }
+      CanvasSvgHelper.notifyCanvasReady(abstractGraph.getCanvas());
+      if (!abstractGraph.isDisposed()) {
+        abstractGraph.redraw();
+      }
+    }
+  }
+
+  /**
+   * Model graphs store the RAP zoom handler as a private/protected field (or getter). Resolve via
+   * reflection so Explorer does not depend on hop-datavault types.
+   */
+  private static Object getModelGraphZoomHandler(HopGuiAbstractGraph graph) {
+    if (graph == null) {
+      return null;
+    }
+    try {
+      return graph.getClass().getMethod("getCanvasZoomHandler").invoke(graph);
+    } catch (ReflectiveOperationException ignored) {
+      // fall through
+    }
+    Class<?> type = graph.getClass();
+    while (type != null && type != Object.class) {
+      try {
+        var field = type.getDeclaredField("canvasZoomHandler");
+        field.setAccessible(true);
+        return field.get(graph);
+      } catch (ReflectiveOperationException ignored) {
+        type = type.getSuperclass();
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Toggle the visibility of the file explorer panel (tree). When hidden, the tab folder is
+   * maximized. When shown, normal sash weights are restored.
+   */
+  public void toggleFileExplorerPanel() {
+    if (sash == null || sash.isDisposed()) {
+      return;
+    }
+
+    fileExplorerPanelVisible = !fileExplorerPanelVisible;
+
+    if (fileExplorerPanelVisible) {
+      sash.setMaximizedControl(null);
+      SashFormMemory.restore(sash, TREE_WIDTH_AUDIT_TYPE);
+    } else {
+      sash.setMaximizedControl(tabFolderWrapper);
+    }
+
+    // Shift the focus away from the perspective icon onto the active graph.
+    //
+    IHopFileTypeHandler activeHandler = getActiveFileTypeHandler();
+    if (activeHandler != null) {
+      if (activeHandler instanceof HopGuiPipelineGraph graph) {
+        graph.setFocus();
+      }
+      if (activeHandler instanceof HopGuiWorkflowGraph graph) {
+        graph.setFocus();
+      }
+    }
+  }
+
+  private void moveTabToFolder(CTabItem srcItem, CTabFolder dstFolder) {
+    String text = srcItem.getText();
+    Image image = srcItem.getImage();
+    String tooltip = srcItem.getToolTipText();
+    Font font = srcItem.getFont();
+    Object data = srcItem.getData();
+    boolean showClose = srcItem.getShowClose();
+    Control control = srcItem.getControl();
+
+    // Detach control from the old tab item before disposing it. This prevents CTabFolder from
+    // hiding the control during srcItem.dispose().
+    srcItem.setControl(null);
+    srcItem.dispose();
+
+    // Reparent the control to the destination folder (mirrors addPipeline where the graph is
+    // created with targetFolder as its parent).
+    control.setParent(dstFolder);
+    control.setData(KEY_TAB_FOLDER, dstFolder);
+
+    // Create the new tab item and wire it up — same order as addPipeline/addWorkflow.
+    CTabItem newItem = new CTabItem(dstFolder, SWT.CLOSE);
+    newItem.setText(text);
+    newItem.setImage(image);
+    newItem.setToolTipText(tooltip);
+    newItem.setFont(font);
+    newItem.setControl(control);
+    newItem.setData(data);
+    newItem.setShowClose(showClose);
+
+    for (TabItemHandler handler : items) {
+      if (handler.getTabItem() == srcItem) {
+        handler.setTabItem(newItem);
+        break;
+      }
+    }
+  }
+
+  /** Split the tab's folder to the right and move the tab into the new pane. */
+  private void splitOrMoveTab(CTabItem tab) {
+    splitAndMoveTab(tab, SWT.HORIZONTAL, true);
+  }
+
+  private void splitAndMoveTab(CTabItem tab, int orientation, boolean after) {
+    if (tab == null || tab.isDisposed()) {
+      return;
+    }
+    CTabFolder sourceFolder = tab.getParent();
+    CTabFolder targetFolder = splitFolder(sourceFolder, orientation, after);
+    joinTabToFolder(tab, targetFolder);
+  }
+
+  private void joinTabToFolder(CTabItem tab, CTabFolder targetFolder) {
+    if (tab == null || tab.isDisposed() || targetFolder == null || targetFolder.isDisposed()) {
+      return;
+    }
+    CTabFolder sourceFolder = tab.getParent();
+
+    moveTabToFolder(tab, targetFolder);
+    targetFolder.setSelection(targetFolder.getItemCount() - 1);
+    activeTabFolder = targetFolder;
+
+    reclaimFolder(sourceFolder);
+
+    if (sourceFolder != null && !sourceFolder.isDisposed()) {
+      sourceFolder.layout(true, true);
+    }
+    if (!targetFolder.isDisposed()) {
+      targetFolder.layout(true, true);
+    }
+
+    CTabItem sel = targetFolder.getSelection();
+    if (sel != null && sel.getControl() != null && !sel.getControl().isDisposed()) {
+      sel.getControl().setFocus();
+    }
+    if (EnvironmentUtils.getInstance().isWeb()) {
+      notifyZoomHandlerForActiveTab();
+      updateWebUrlForActiveTab();
+    }
+    updateGui();
+  }
+
+  @Override
+  public void onTabMovedBetweenFolders(CTabFolder sourceFolder, CTabFolder targetFolder) {
+    activeTabFolder = targetFolder;
+    if (EnvironmentUtils.getInstance().isWeb()) {
+      // A drop that empties the source pane wants to collapse it, but we are still inside the drop
+      // handler of the target pane's drag-and-drop request. Disposing the source pane (and with it
+      // its drag source) now makes RAP render a disposed widget at the end of that same request -
+      // "Widget is disposed". Collapse it on the next tick, once the drop request is done. The
+      // desktop disposes in place: native DnD does not revisit the source pane after the drop.
+      CTabFolder folderToReclaim = sourceFolder;
+      hopGui.getDisplay().asyncExec(() -> reclaimFolder(folderToReclaim));
+      notifyZoomHandlerForActiveTab();
+      updateWebUrlForActiveTab();
+    } else {
+      reclaimFolder(sourceFolder);
+    }
+  }
+
+  @Override
+  public void setDropTargetFolder(CTabFolder folder) {
+    if (isEditorTabFolder(folder)) {
+      activeTabFolder = folder;
+    }
+  }
+
+  private CTabItem draggedTabItem;
+
+  @Override
+  public void setDraggedTabItem(CTabItem tabItem) {
+    this.draggedTabItem = tabItem;
+  }
+
+  @Override
+  public CTabItem getDraggedTabItem() {
+    return draggedTabItem;
+  }
+
+  @Override
+  public CTabFolder resolveDropFolderForZone(CTabFolder targetFolder, int zone) {
+    // Only the docked layout tree supports splitting; detached windows stay single-pane in v1.
+    if (targetFolder == null || targetFolder.isDisposed() || !isDockedTabFolder(targetFolder)) {
+      return targetFolder;
+    }
+    return switch (zone) {
+      case DROP_ZONE_WEST -> splitFolder(targetFolder, SWT.HORIZONTAL, false);
+      case DROP_ZONE_EAST -> splitFolder(targetFolder, SWT.HORIZONTAL, true);
+      case DROP_ZONE_NORTH -> splitFolder(targetFolder, SWT.VERTICAL, false);
+      case DROP_ZONE_SOUTH -> splitFolder(targetFolder, SWT.VERTICAL, true);
+      default -> targetFolder;
+    };
+  }
+
+  /**
+   * Detach a tab into its own floating window. The tab's content is reparented (state preserved)
+   * into a single-pane folder hosted by a new {@link Shell}. Closing the window re-docks its tabs;
+   * emptying it closes the window. Tabs can also be dragged back and forth between windows.
+   */
+  private void detachTabToWindow(CTabItem tab) {
+    if (tab == null || tab.isDisposed()) {
+      return;
+    }
+    CTabFolder sourceFolder = tab.getParent();
+
+    Shell shell = new Shell(hopGui.getShell(), SWT.SHELL_TRIM);
+    shell.setText(Const.NVL(tab.getText(), ""));
+    shell.setImage(tab.getImage());
+    shell.setLayout(new FormLayout());
+
+    CTabFolder detached = createDetachedTabFolder(shell);
+    detachedFolders.add(detached);
+    shell.addDisposeListener(e -> detachedFolders.remove(detached));
+
+    moveTabToFolder(tab, detached);
+    detached.setSelection(detached.getItemCount() - 1);
+    activeTabFolder = detached;
+
+    // Collapse the docked source pane if the detach emptied it.
+    reclaimFolder(sourceFolder);
+
+    // The window's close box re-docks its tabs rather than discarding them.
+    shell.addListener(
+        SWT.Close,
+        e -> {
+          e.doit = false;
+          redockWindow(detached);
+        });
+
+    shell.setSize(900, 650);
+    shell.setLocation(
+        hopGui.getShell().getLocation().x + 60, hopGui.getShell().getLocation().y + 60);
+    shell.open();
+
+    CTabItem sel = detached.getSelection();
+    if (sel != null && sel.getControl() != null && !sel.getControl().isDisposed()) {
+      sel.getControl().setFocus();
+    }
+    updateGui();
+  }
+
+  /** Move every tab from a detached window back into the docked editor, then close the window. */
+  private void redockWindow(CTabFolder detached) {
+    if (detached == null || detached.isDisposed()) {
+      return;
+    }
+    List<CTabFolder> docked = getDockedTabFolders();
+    CTabFolder target = docked.isEmpty() ? null : docked.getFirst();
+    if (target != null) {
+      for (CTabItem item : detached.getItems()) {
+        moveTabToFolder(item, target);
+      }
+      activeTabFolder = target;
+    }
+    detachedFolders.remove(detached);
+    Shell shell = detached.getShell();
+    if (!shell.isDisposed()) {
+      shell.dispose();
+    }
+    updateGui();
+  }
+
+  /** Close an emptied detached window (its last tab was closed or dragged out). */
+  private void closeDetachedWindow(CTabFolder folder) {
+    detachedFolders.remove(folder);
+    if (activeTabFolder == folder) {
+      List<CTabFolder> docked = getDockedTabFolders();
+      activeTabFolder = docked.isEmpty() ? null : docked.getFirst();
+    }
+    Shell shell = folder.getShell();
+    if (shell != null && !shell.isDisposed()) {
+      // We may be inside the tab-close / drop event that emptied the folder; disposing the owning
+      // Shell synchronously mid-event is unsafe, so defer it to the next event-loop tick.
+      shell
+          .getDisplay()
+          .asyncExec(
+              () -> {
+                if (!shell.isDisposed()) {
+                  shell.dispose();
+                }
+              });
+    }
+  }
+
+  /**
+   * Build a single-pane tab folder for a detached window: close + focus + drag, but no splitting.
+   */
+  private CTabFolder createDetachedTabFolder(Composite parent) {
+    CTabFolder folder = new CTabFolder(parent, SWT.MULTI | SWT.BORDER);
+    folder.setLayoutData(new FormDataBuilder().fullSize().result());
+    PropsUi.setLook(folder, Props.WIDGET_STYLE_TAB);
+
+    folder.addListener(
+        SWT.Selection,
+        e -> {
+          activeTabFolder = folder;
+          updateGui();
+          CTabItem selection = folder.getSelection();
+          if (selection != null && selection.getData() instanceof IHopFileTypeHandler handler) {
+            selectInTree(handler.getFilename());
+          }
+        });
+    folder.addListener(SWT.FocusIn, e -> activeTabFolder = folder);
+    folder.addCTabFolder2Listener(
+        new CTabFolder2Adapter() {
+          @Override
+          public void close(CTabFolderEvent event) {
+            closeTab(event, (CTabItem) event.item);
+          }
+        });
+
+    new TabCloseHandler(this, folder);
+    new TabItemReorder(this, folder);
+    return folder;
+  }
+
+  /**
+   * Check if the file explorer panel is currently visible.
+   *
+   * @return true if the file explorer panel is visible, false otherwise
+   */
+  public boolean isFileExplorerPanelVisible() {
+    return fileExplorerPanelVisible;
+  }
+
+  /** Save the file explorer panel visibility state so it persists across restarts. */
+  public void saveExplorerStateOnShutdown() {
+    // When the perspective is disabled it was never initialized, so saving would only overwrite
+    // the state on disk with the field defaults.
+    //
+    if (hopGui == null) {
+      return;
+    }
+    try {
+      AuditStateMap stateMap = new AuditStateMap();
+      stateMap.add(
+          new AuditState(
+              STATE_PANEL_VISIBLE_KEY,
+              Map.of(STATE_PANEL_VISIBLE_PROP, Boolean.valueOf(fileExplorerPanelVisible))));
+      // Persist the recursive editor layout tree (splits + sash weights) so it survives a restart.
+      // Detached floating windows are not serialized: their tabs re-dock into the default pane.
+      Map<String, Object> layout = serializeEditorLayout();
+      if (layout != null) {
+        stateMap.add(
+            new AuditState(STATE_EDITOR_LAYOUT_KEY, Map.of(STATE_EDITOR_LAYOUT_ROOT, layout)));
+      }
+      AuditManager.getActive()
+          .saveAuditStateMap(HopNamespace.getNamespace(), EXPLORER_AUDIT_TYPE, stateMap);
+    } catch (Exception e) {
+      hopGui.getLog().logError("Error saving explorer perspective state", e);
+    }
+  }
+
+  /**
+   * Load saved file explorer panel visibility from saved audit state.
+   *
+   * @return the saved visibility, or null if no saved state exists
+   */
+  private Boolean restoreFileExplorerPanelVisibility() {
+    try {
+      AuditStateMap stateMap =
+          AuditManager.getActive()
+              .loadAuditStateMap(HopNamespace.getNamespace(), EXPLORER_AUDIT_TYPE);
+      AuditState state = stateMap.get(STATE_PANEL_VISIBLE_KEY);
+      if (state != null) {
+        Object visible = state.getStateMap().get(STATE_PANEL_VISIBLE_PROP);
+        if (visible instanceof Boolean) {
+          return (Boolean) visible;
+        }
+        if (visible != null) {
+          return Boolean.parseBoolean(visible.toString());
+        }
+      }
+    } catch (Exception e) {
+      hopGui.getLog().logError("Error restoring explorer perspective state", e);
+    }
+    return null;
+  }
+
+  /**
+   * Rebuild the docked editor layout tree (splits + sash weights) from saved audit state and
+   * populate {@link #folderByLeafId} so reopened files can be routed to their saved pane. Called
+   * before files are reopened (see {@code HopGuiAuditDelegate.openLastFiles}). Only rebuilds when
+   * the editor is empty, so it never restructures over live tabs (e.g. a mid-session project
+   * switch), and falls back to the single default pane when there is no saved layout.
+   */
+  public void applyRestoredEditorSplitState() {
+    if (tabFolderWrapper == null || tabFolderWrapper.isDisposed()) {
+      return;
+    }
+    if (!isEditorEmpty()) {
+      return;
+    }
+
+    folderByLeafId.clear();
+    Map<String, Object> layout = loadEditorLayout();
+
+    // No saved layout, or a single-pane layout: keep/reuse the default root folder.
+    if (layout == null || LAYOUT_TYPE_LEAF.equals(layout.get(LAYOUT_TYPE))) {
+      if (!(editorRoot instanceof CTabFolder) || editorRoot.isDisposed()) {
+        resetEditorToSinglePane();
+      }
+      folderByLeafId.put("L0", (CTabFolder) editorRoot);
+      return;
+    }
+
+    // Multi-pane layout: dispose the current (empty) tree and rebuild from the saved blob.
+    for (Control child : tabFolderWrapper.getChildren()) {
+      child.dispose();
+    }
+    int[] leafCounter = {0};
+    Control root = buildLayoutNode(layout, tabFolderWrapper, leafCounter);
+    root.setLayoutData(new FormDataBuilder().fullSize().result());
+    editorRoot = root;
+    List<CTabFolder> leaves = getDockedTabFolders();
+    activeTabFolder = leaves.isEmpty() ? null : leaves.getFirst();
+    tabFolderWrapper.layout(true, true);
+  }
+
+  /**
+   * After files have been reopened into their restored panes, drop any leaf that ended up empty
+   * (its file failed to open) so no ghost panes remain.
+   */
+  public void finishEditorLayoutRestore() {
+    if (tabFolderWrapper == null || tabFolderWrapper.isDisposed()) {
+      return;
+    }
+    collapseEmptyFolders();
+  }
+
+  /** Dispose the current editor tree and replace it with a single empty primary tab folder. */
+  private void resetEditorToSinglePane() {
+    for (Control child : tabFolderWrapper.getChildren()) {
+      child.dispose();
+    }
+    CTabFolder root = createSingleTabFolder(tabFolderWrapper, true);
+    editorRoot = root;
+    activeTabFolder = root;
+    tabFolderWrapper.layout(true, true);
+  }
+
+  /** Load the saved editor layout tree, or {@code null} when none is stored. */
+  private Map<String, Object> loadEditorLayout() {
+    try {
+      AuditStateMap stateMap =
+          AuditManager.getActive()
+              .loadAuditStateMap(HopNamespace.getNamespace(), EXPLORER_AUDIT_TYPE);
+      AuditState state = stateMap.get(STATE_EDITOR_LAYOUT_KEY);
+      if (state != null
+          && state.getStateMap().get(STATE_EDITOR_LAYOUT_ROOT) instanceof Map<?, ?> m) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> root = (Map<String, Object>) m;
+        return root;
+      }
+    } catch (Exception e) {
+      hopGui.getLog().logError("Error loading explorer editor layout", e);
+    }
+    return null;
+  }
+
+  /**
+   * Serialize the docked editor layout tree into nested maps/lists (Jackson-friendly for audit
+   * storage). Leaves are numbered "L0", "L1", ... in the same pre-order used by {@link
+   * #getLeafIdForTab(CTabItem)} and {@link #getDockedTabFolders()}. Returns {@code null} when there
+   * is nothing worth persisting (no editor tree yet).
+   */
+  private Map<String, Object> serializeEditorLayout() {
+    if (editorRoot == null || editorRoot.isDisposed()) {
+      return null;
+    }
+    return serializeLayoutNode(editorRoot, new int[] {0});
+  }
+
+  private Map<String, Object> serializeLayoutNode(Control node, int[] leafCounter) {
+    Map<String, Object> map = new LinkedHashMap<>();
+    if (node instanceof SashForm sashForm) {
+      map.put(LAYOUT_TYPE, LAYOUT_TYPE_SPLIT);
+      map.put(
+          LAYOUT_ORIENTATION,
+          sashForm.getOrientation() == SWT.VERTICAL
+              ? LAYOUT_ORIENTATION_VERTICAL
+              : LAYOUT_ORIENTATION_HORIZONTAL);
+      List<Map<String, Object>> children = new ArrayList<>();
+      for (Control child : nodeChildren(sashForm)) {
+        children.add(serializeLayoutNode(child, leafCounter));
+      }
+      map.put(LAYOUT_CHILDREN, children);
+      List<Integer> weights = new ArrayList<>();
+      for (int weight : sashForm.getWeights()) {
+        weights.add(weight);
+      }
+      map.put(LAYOUT_WEIGHTS, weights);
+    } else {
+      map.put(LAYOUT_TYPE, LAYOUT_TYPE_LEAF);
+      map.put(LAYOUT_LEAF_ID, "L" + leafCounter[0]++);
+    }
+    return map;
+  }
+
+  /**
+   * Rebuild a layout node (and its subtree) from the serialized form, registering each leaf in
+   * {@link #folderByLeafId}. Leaves are numbered in the same pre-order as serialization.
+   */
+  private Control buildLayoutNode(Map<String, Object> node, Composite parent, int[] leafCounter) {
+    if (LAYOUT_TYPE_SPLIT.equals(node.get(LAYOUT_TYPE))) {
+      int orientation =
+          LAYOUT_ORIENTATION_VERTICAL.equals(node.get(LAYOUT_ORIENTATION))
+              ? SWT.VERTICAL
+              : SWT.HORIZONTAL;
+      SashForm sashForm = new SashForm(parent, orientation);
+      sashForm.setLayoutData(new FormDataBuilder().fullSize().result());
+      PropsUi.setLook(sashForm);
+
+      Object childrenObj = node.get(LAYOUT_CHILDREN);
+      int childCount = 0;
+      if (childrenObj instanceof List<?> children) {
+        for (Object childObj : children) {
+          if (childObj instanceof Map<?, ?> childMap) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> child = (Map<String, Object>) childMap;
+            buildLayoutNode(child, sashForm, leafCounter);
+            childCount++;
+          }
+        }
+      }
+
+      if (node.get(LAYOUT_WEIGHTS) instanceof List<?> weightList
+          && weightList.size() == childCount
+          && childCount > 0) {
+        int[] weights = new int[childCount];
+        boolean valid = true;
+        for (int i = 0; i < childCount; i++) {
+          if (weightList.get(i) instanceof Number number) {
+            weights[i] = number.intValue();
+          } else {
+            valid = false;
+            break;
+          }
+        }
+        if (valid) {
+          sashForm.setWeights(weights);
+        }
+      }
+      return sashForm;
+    }
+
+    // Leaf: the first leaf (L0) carries the primary maximize toolbar, mirroring createTabFolder.
+    boolean primary = leafCounter[0] == 0;
+    CTabFolder folder = createSingleTabFolder(parent, primary);
+    folderByLeafId.put("L" + leafCounter[0], folder);
+    leafCounter[0]++;
+    return folder;
+  }
+
+  /**
+   * Load saved file explorer panel visibility for the current namespace and apply it. Call this
+   * after startup (e.g. from HopGui open() async block) and when the project changes
+   * (ProjectActivated), so the correct namespace is in effect.
+   */
+  public void applyRestoredState() {
+    if (sash == null || sash.isDisposed()) {
+      return;
+    }
+    Boolean savedVisibility = restoreFileExplorerPanelVisibility();
+    if (savedVisibility != null) {
+      fileExplorerPanelVisible = savedVisibility;
+      if (fileExplorerPanelVisible) {
+        sash.setMaximizedControl(null);
+        SashFormMemory.restore(sash, TREE_WIDTH_AUDIT_TYPE);
+      } else {
+        sash.setMaximizedControl(tabFolderWrapper);
+      }
+    }
+    applyRestoredEditorSplitState();
+    // Collapse any panes left empty (e.g. when reopening last files is disabled), so a saved
+    // multi-pane layout doesn't leave ghost empty panes behind.
+    finishEditorLayoutRestore();
+  }
+
+  public static class DetermineRootFolderExtension {
+    public HopGui hopGui;
+    public String rootFolder;
+    public String rootName;
+
+    public DetermineRootFolderExtension(HopGui hopGui, String rootFolder, String rootName) {
+      this.hopGui = hopGui;
+      this.rootFolder = rootFolder;
+      this.rootName = rootName;
+    }
+  }
+
+  private static class TreeItemFolder {
+    public TreeItem treeItem;
+    public String path;
+    public String name;
+    public IHopFileType fileType;
+    public int depth;
+    public boolean folder;
+    public boolean loaded;
+
+    public TreeItemFolder(
+        TreeItem treeItem,
+        String path,
+        String name,
+        IHopFileType fileType,
+        int depth,
+        boolean folder,
+        boolean loaded) {
+      this.treeItem = treeItem;
+      this.path = path;
+      this.name = name;
+      this.fileType = fileType;
+      this.depth = depth;
+      this.folder = folder;
+      this.loaded = loaded;
+    }
+  }
+}

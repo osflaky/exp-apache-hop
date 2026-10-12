@@ -1,0 +1,323 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.core;
+
+import com.google.common.util.concurrent.SettableFuture;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicReference;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hop.ai.advisor.AiAdvisorPluginType;
+import org.apache.hop.ai.provider.AiProviderPluginType;
+import org.apache.hop.core.auth.AuthenticationConsumerPluginType;
+import org.apache.hop.core.auth.AuthenticationProviderPluginType;
+import org.apache.hop.core.compress.CompressionPluginType;
+import org.apache.hop.core.config.HopConfig;
+import org.apache.hop.core.config.plugin.ConfigPluginType;
+import org.apache.hop.core.exception.HopException;
+import org.apache.hop.core.extension.ExtensionPointHandler;
+import org.apache.hop.core.extension.HopExtensionPoint;
+import org.apache.hop.core.logging.LogChannel;
+import org.apache.hop.core.notifications.NotificationProviderPluginType;
+import org.apache.hop.core.plugins.ActionPluginType;
+import org.apache.hop.core.plugins.HopServerPluginType;
+import org.apache.hop.core.plugins.IPluginType;
+import org.apache.hop.core.plugins.PartitionerPluginType;
+import org.apache.hop.core.plugins.PluginRegistry;
+import org.apache.hop.core.plugins.TransformEngineSupportPluginType;
+import org.apache.hop.core.plugins.TransformPluginType;
+import org.apache.hop.core.variables.DescribedVariable;
+import org.apache.hop.core.variables.VariableRegistry;
+import org.apache.hop.core.variables.VariableScope;
+import org.apache.hop.datastream.plugin.DataStreamPluginType;
+import org.apache.hop.execution.plugin.ExecutionInfoLocationPluginType;
+import org.apache.hop.execution.sampler.ExecutionDataSamplerPluginType;
+import org.apache.hop.hop.plugin.HopCommandPluginType;
+import org.apache.hop.imp.ImportPluginType;
+import org.apache.hop.lineage.hub.LineageHub;
+import org.apache.hop.lineage.plugin.LineageSinkPluginType;
+import org.apache.hop.metadata.plugin.MetadataPluginType;
+import org.apache.hop.pipeline.engine.PipelineEnginePluginType;
+import org.apache.hop.pipeline.transform.RowDistributionPluginType;
+import org.apache.hop.workflow.engine.WorkflowEnginePluginType;
+
+/**
+ * The HopEnvironment class contains settings and properties for all of Hop. Initialization of the
+ * environment is done by calling the init() method, which reads in properties file(s), registers
+ * plugins, etc. Initialization should be performed once at application startup; for example,
+ * HopUi's main() method calls HopEnvironment.init() in order to prepare the environment for usage
+ * by HopUi.
+ */
+public class HopEnvironment {
+
+  private static final Class<?> PKG = Const.class;
+
+  /** Indicates whether the Hop environment has been initialized. */
+  private static AtomicReference<SettableFuture<Boolean>> initialized = new AtomicReference<>(null);
+
+  /**
+   * Set on the thread that is executing {@link #init(List)} until that call completes. Nested
+   * {@code init()} / {@link #isInitialized()} from {@code HopEnvironmentAfterInit} (or anything it
+   * invokes) must not wait on {@code initialized}'s future: that future is only completed after
+   * AfterInit returns, so waiting deadlocks the same thread.
+   */
+  private static final ThreadLocal<Boolean> initializing = new ThreadLocal<>();
+
+  /**
+   * Initializes the Hop environment. This method performs the following operations:
+   *
+   * <p>- Creates a Hop "home" directory if it does not already exist - Reads in the hop.properties
+   * file - Initializes the logging back-end - Sets the console log level to debug - If specified by
+   * parameter, configures - Initializes the Lifecycle listeners
+   *
+   * @throws HopException Any errors that occur during initialization will throw a HopException.
+   */
+  public static void init() throws HopException {
+    init(getStandardPluginTypes());
+  }
+
+  public static List<IPluginType> getStandardPluginTypes() {
+    return Arrays.asList(
+        RowDistributionPluginType.getInstance(),
+        TransformPluginType.getInstance(),
+        TransformEngineSupportPluginType.getInstance(),
+        PartitionerPluginType.getInstance(),
+        ActionPluginType.getInstance(),
+        HopServerPluginType.getInstance(),
+        CompressionPluginType.getInstance(),
+        AuthenticationProviderPluginType.getInstance(),
+        AuthenticationConsumerPluginType.getInstance(),
+        PipelineEnginePluginType.getInstance(),
+        WorkflowEnginePluginType.getInstance(),
+        ConfigPluginType.getInstance(),
+        MetadataPluginType.getInstance(),
+        ImportPluginType.getInstance(),
+        ExecutionDataSamplerPluginType.getInstance(),
+        ExecutionInfoLocationPluginType.getInstance(),
+        LineageSinkPluginType.getInstance(),
+        HopCommandPluginType.getInstance(),
+        org.apache.hop.core.naming.NamingSchemeTypePluginType.getInstance(),
+        DataStreamPluginType.getInstance(),
+        NotificationProviderPluginType.getInstance(),
+        org.apache.hop.core.diagram.DiagramExporterPluginType.getInstance(),
+        AiProviderPluginType.getInstance(),
+        AiAdvisorPluginType.getInstance());
+  }
+
+  public static void init(List<IPluginType> pluginTypes) throws HopException {
+
+    SettableFuture<Boolean> ready;
+    if (initialized.compareAndSet(null, ready = SettableFuture.create())) {
+      initializing.set(true);
+      // Swaps out System Properties for a thread safe version.
+      // This is not that important since we're no longer using System properties
+      // However, plugins might still make use of it so keep it around
+      //
+      System.setProperties(ConcurrentMapProperties.convertProperties(System.getProperties()));
+
+      try {
+        silenceVerboseThirdPartyLoggers();
+
+        // This creates .hop and hop.properties...
+        //
+        if (!HopClientEnvironment.isInitialized()) {
+          HopClientEnvironment.init();
+        }
+
+        // Register the native types and the plugins for the various plugin types...
+        //
+        pluginTypes.forEach(PluginRegistry::addPluginType);
+        PluginRegistry.init();
+
+        org.apache.hop.core.diagram.DiagramExportService.getInstance()
+            .registerSubjectLoader(
+                new org.apache.hop.diagram.loader.PipelineDiagramSubjectLoader());
+        org.apache.hop.core.diagram.DiagramExportService.getInstance()
+            .registerSubjectLoader(
+                new org.apache.hop.diagram.loader.WorkflowDiagramSubjectLoader());
+
+        LineageHub.getInstance().environmentReady();
+
+        // Register the native variables and the variables from the various the plugins
+        //
+        VariableRegistry.init();
+
+        // If the HopConfig system properties is empty, initialize with the variables...
+        // or if new variables are added
+        //
+        HopConfig hopConfig = HopConfig.getInstance();
+        for (DescribedVariable describedVariable :
+            VariableRegistry.getInstance()
+                .getDescribedVariables(VariableScope.APPLICATION, VariableScope.ENGINE)) {
+          DescribedVariable variable = hopConfig.findDescribedVariable(describedVariable.getName());
+          if (variable == null) {
+            // Add the variable if it does not exist
+            hopConfig.setDescribedVariable(new DescribedVariable(describedVariable));
+          } else {
+            // Update the variable description
+            variable.setDescription(describedVariable.getDescription());
+          }
+        }
+
+        // Set the system configuration variables in System
+        // Let's try very hard to not do this anywhere else!
+        //
+        for (DescribedVariable describedVariable : hopConfig.getDescribedVariables()) {
+          if (StringUtils.isNotEmpty(describedVariable.getName())) {
+            String propName = describedVariable.getName();
+            // Don't override command-line system properties (e.g., -Dname=value)
+            if (!System.getProperties().containsKey(propName)) {
+              System.setProperty(propName, Const.NVL(describedVariable.getValue(), ""));
+            }
+          }
+        }
+
+        // Inform the outside world that we're ready with the init of the Hop Environment
+        // Others might want to register extra plugins that perhaps were not found automatically
+        //
+        ExtensionPointHandler.callExtensionPoint(
+            LogChannel.GENERAL,
+            null,
+            HopExtensionPoint.HopEnvironmentAfterInit.name(),
+            PluginRegistry.getInstance());
+
+        ready.set(true);
+      } catch (Throwable t) {
+        ready.setException(t);
+        // If it's a HopException, throw it, otherwise wrap it in a HopException
+        throw ((t instanceof HopException hopException) ? hopException : new HopException(t));
+      } finally {
+        initializing.remove();
+      }
+
+    } else {
+      // Same thread is already inside init() (typically HopEnvironmentAfterInit). Waiting on the
+      // future would deadlock: it is only completed after AfterInit returns.
+      if (Boolean.TRUE.equals(initializing.get())) {
+        return;
+      }
+      // A different thread is initializing
+      ready = initialized.get();
+      // Block until environment is initialized
+      try {
+        ready.get();
+      } catch (Throwable t) {
+        throw new HopException(t);
+      }
+    }
+  }
+
+  /**
+   * Alert all Lifecycle plugins that the Hop environment is being initialized.
+   *
+   * @throws HopException when a lifecycle listener throws an exception
+   */
+  private static void initLifecycleListeners() {
+    // Register a shutdown hook to invoke the listener's onExit() methods
+    Runtime.getRuntime()
+        .addShutdownHook(
+            new Thread() {
+              @Override
+              public void run() {
+                shutdown();
+              }
+            });
+  }
+
+  // Shutdown the Hop environment programmatically
+  public static void shutdown() {
+    LineageHub.getInstance().shutdown();
+  }
+
+  /**
+   * Checks if the Hop environment has been initialized.
+   *
+   * @return true if initialized, false otherwise
+   */
+  public static boolean isInitialized() {
+    // AfterInit runs before the init future is completed. Waiting here from that thread deadlocks.
+    if (Boolean.TRUE.equals(initializing.get())) {
+      return true;
+    }
+    Future<Boolean> future = initialized.get();
+    try {
+      return future != null && Boolean.TRUE.equals(future.get());
+    } catch (Throwable e) {
+      return false;
+    }
+  }
+
+  /** Loads the plugin registry. */
+  public void loadPluginRegistry() {
+    // Do Nothing
+  }
+
+  /** Sets the executor's user and Server information */
+  public static void setExecutionInformation(IExecutor executor) {
+    // Capture the executing user and server name...
+    executor.setExecutingUser(System.getProperty("user.name"));
+  }
+
+  public static void reset() {
+    LineageHub.getInstance().shutdown();
+    HopClientEnvironment.reset();
+    initialized.set(null);
+  }
+
+  /**
+   * Strong reference to prevent java.util.logging.LogManager from garbage-collecting the logger.
+   */
+  @SuppressWarnings("java:S3985")
+  private static final java.util.logging.Logger JUL_WIRE_LOGGER =
+      java.util.logging.Logger.getLogger("org.apache.hc.client5.http.wire");
+
+  /**
+   * Default verbose third-party loggers to a non-debug level to prevent dumping raw network bytes
+   * to the console while preserving explicitly configured debug settings.
+   */
+  private static void silenceVerboseThirdPartyLoggers() {
+    String wireLoggerName = "org.apache.hc.client5.http.wire";
+
+    // Silence JUL logger to prevent verbose byte dumps on backends printing via java.util.logging
+    try {
+      if (JUL_WIRE_LOGGER.getLevel() == null) {
+        JUL_WIRE_LOGGER.setLevel(java.util.logging.Level.WARNING);
+      }
+    } catch (Exception ignored) {
+      // Ignore if JUL cannot be configured
+    }
+
+    // Configure Log4j2 if present on the classpath, preserving any explicit configuration
+    try {
+      org.apache.logging.log4j.core.LoggerContext context =
+          org.apache.logging.log4j.core.LoggerContext.getContext(false);
+      org.apache.logging.log4j.core.config.Configuration configuration = context.getConfiguration();
+      org.apache.logging.log4j.core.config.LoggerConfig loggerConfig =
+          configuration.getLoggerConfig(wireLoggerName);
+      boolean isExplicitlyConfigured =
+          wireLoggerName.equals(loggerConfig.getName()) && loggerConfig.getExplicitLevel() != null;
+      if (!isExplicitlyConfigured) {
+        org.apache.logging.log4j.core.config.Configurator.setLevel(
+            wireLoggerName, org.apache.logging.log4j.Level.INFO);
+      }
+    } catch (LinkageError | Exception ignored) {
+      // Ignore if Log4j2 core is not available or configuration fails
+    }
+  }
+}

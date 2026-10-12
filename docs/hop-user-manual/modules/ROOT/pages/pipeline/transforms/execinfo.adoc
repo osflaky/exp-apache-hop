@@ -1,0 +1,125 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+:documentationPath: /pipeline/transforms/
+:language: en_US
+:description: The Execution information transform allows you to read or delete information from an execution information location.
+:page-engines: Hop Engine=yes, Single Threaded=yes, Native Spark=yes, Beam Spark=yes, Beam Flink=yes, Beam Dataflow=yes
+
+= image:transforms/icons/execinfo.svg[Execution information Icon, role="image-doc-icon", width=20%] Execution information
+
+== Description
+
+The Execution information transform allows you to read (or delete) information from an xref:metadata-types/execution-information-location.adoc[Execution Information Location].
+Depending on which operation you select, different input options will be enabled.
+The output of the transform will be different as well.
+This means that this transform always needs input-rows in order to produce output.
+
+**Example to delete 200 Execution Id’s:**
+First use Generate rows to create your fields and values to use (children: Boolean = true) and (limit: Integer = 200). Then use a first transform to get the ids (Operation: Get execution IDs), and a second connected transform to delete them (Operation: Delete execution). Optionally you can also delete by other fields such as date and ID. It can take a while to query the Execution information, so keep an eye on the Duration column.
+
+== Options
+
+[options="header"]
+|===
+|Option|Description
+
+|Transform name
+|Name of the transform; this name has to be unique in a single pipeline
+
+|Execution Information Location
+|Select the xref:metadata-types/execution-information-location.adoc[location] that you want to work with.
+
+|Operation type
+|Select the operation you want to perform.
+
+|Execution ID field
+|The input field that will contain the execution ID
+
+|Execution parent ID field
+|The input field that will contain the execution parent ID
+
+|Execution name field
+|The input field that will contain the execution name to look for
+
+|Execution type field
+|The input field that will contain the execution type to look for
+
+|Include children field
+|The input field that will contain the boolean which indicates to include children in the search
+
+|Limit field
+|The input field that will contain the limit with which to search
+
+|===
+
+== Operation types
+
+The transform always needs input rows. Which input fields are required, and which columns are added, depends on the operation.
+
+[options="header"]
+|===
+|Operation
+|Required input fields
+|Added output
+
+|Get execution IDs
+|Include children, Limit
+|`id`
+
+|Get execution and state
+|Execution ID
+|Execution and state columns (see below)
+
+|Find executions
+|Execution parent ID
+|One output row per child execution, with execution and state columns
+
+|Find last execution
+|Execution name, Execution type
+|Execution and state columns for the most recent matching run, or no row
+
+|Find previous successful execution
+|Execution name, Execution type
+|Execution and state columns for the most recent matching run that did *not* fail, or no row
+
+|Find child IDs
+|Execution parent ID, Execution type
+|`id`
+
+|Find parent ID
+|Execution ID
+|`id`
+
+|Get execution data
+|Execution ID, Execution parent ID
+|Collected data-profile rows
+
+|Delete execution
+|Execution ID
+|`deleted` (Boolean)
+|===
+
+Execution *type* is the `ExecutionType` name: `Pipeline`, `Workflow`, `Transform`, or `Action`.
+
+Find last execution / Find previous successful execution / Get execution and state add:
+
+`executionId`, `parentId`, `name`, `executionType`, `filename`, `executorXml`, `metadataJson`, `registrationDate`, `executionStartDate`, `runConfigurationName`, `logLevel`, `updateTime`, `loggingText`, `failed`, `statusDescription`, `executionEndDate`.
+
+If no execution matches, the transform writes no output row for that input.
+
+*Find previous successful execution* is the operation to use for incremental extracts: it answers “when did this workflow or pipeline last succeed?” so a xref:pipeline/transforms/tableinput.adoc[Table Input] can filter on a timestamp or increasing ID. How to wire that (or write the watermark yourself on the success path) is in xref:how-to-guides/cdc-filtered-selection.adoc[CDC: filtered selection].
+

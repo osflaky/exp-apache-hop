@@ -1,0 +1,1423 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.databases.postgresql;
+
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Types;
+import java.util.List;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.RowMetaAndData;
+import org.apache.hop.core.database.BaseDatabaseMeta;
+import org.apache.hop.core.database.Database;
+import org.apache.hop.core.database.DatabaseMeta;
+import org.apache.hop.core.database.DatabaseMetaPlugin;
+import org.apache.hop.core.database.DriverDownload;
+import org.apache.hop.core.database.IDatabase;
+import org.apache.hop.core.database.types.ColumnContext;
+import org.apache.hop.core.database.types.ColumnTypeRules;
+import org.apache.hop.core.database.types.DatabaseColumn;
+import org.apache.hop.core.database.types.DatabaseTypes;
+import org.apache.hop.core.database.types.IDatabaseTypeRule;
+import org.apache.hop.core.database.types.IValueBinding;
+import org.apache.hop.core.database.types.ServerInfo;
+import org.apache.hop.core.database.types.StandardJdbcTypeMapper;
+import org.apache.hop.core.database.validation.ColumnValueConstraints;
+import org.apache.hop.core.database.validation.StringLengthUnit;
+import org.apache.hop.core.exception.HopDatabaseException;
+import org.apache.hop.core.exception.HopValueException;
+import org.apache.hop.core.gui.plugin.GuiPlugin;
+import org.apache.hop.core.row.IValueMeta;
+import org.apache.hop.core.util.Utils;
+
+/** Contains PostgreSQL specific information through static final members */
+@DatabaseMetaPlugin(
+    type = "POSTGRESQL",
+    typeDescription = "PostgreSQL",
+    image = "postgresql.svg",
+    documentationUrl = "/database/databases/postgresql.html",
+    classLoaderGroup = "postgres-db")
+@GuiPlugin(id = "GUI-PostgreSQLDatabaseMeta")
+public class PostgreSqlDatabaseMeta extends BaseDatabaseMeta implements IDatabase {
+
+  /**
+   * Postgres takes JSON and JSONB as a typed object rather than a string. Other databases reject
+   * {@link Types#OTHER}, which is why this cannot be the neutral handling.
+   */
+  private static final IValueBinding JSON_BINDING =
+      new IValueBinding() {
+        @Override
+        public Object read(
+            IDatabase database, IValueMeta valueMeta, ResultSet resultSet, int index) {
+          throw new UnsupportedOperationException("This binding only writes values");
+        }
+
+        @Override
+        public void write(
+            IDatabase database,
+            IValueMeta valueMeta,
+            PreparedStatement preparedStatement,
+            int index,
+            Object value)
+            throws SQLException, HopValueException {
+          Object json = valueMeta.getNativeDataType(value);
+          if (json == null) {
+            preparedStatement.setNull(index, Types.OTHER);
+          } else {
+            preparedStatement.setObject(index, json, Types.OTHER);
+          }
+        }
+      };
+
+  /**
+   * Postgres has column types, uuid and inet among them, that the driver will not take a plain
+   * string for, and will not take a null for at all without being told which type is meant. So the
+   * neutral handling of those values, which writes them as strings, cannot serve here.
+   *
+   * <p>Leaving the type unspecified hands the resolution to the server, which reads the string as
+   * whatever the column is: uuid or inet on Postgres, character varying on a Redshift that has
+   * neither.
+   */
+  private static final IValueBinding UNSPECIFIED_STRING_BINDING =
+      new IValueBinding() {
+        @Override
+        public Object read(
+            IDatabase database, IValueMeta valueMeta, ResultSet resultSet, int index) {
+          throw new UnsupportedOperationException("This binding only writes values");
+        }
+
+        @Override
+        public void write(
+            IDatabase database,
+            IValueMeta valueMeta,
+            PreparedStatement preparedStatement,
+            int index,
+            Object value)
+            throws SQLException, HopValueException {
+          String string = valueMeta.getString(value);
+          if (string == null) {
+            preparedStatement.setNull(index, Types.OTHER);
+          } else {
+            preparedStatement.setObject(index, string, Types.OTHER);
+          }
+        }
+      };
+
+  /**
+   * Everything except the vector rules. Visible so a dialect that derives from Postgres can prepend
+   * its own and keep these, and split out so that a derived dialect whose vector type is its own
+   * does not also inherit pgvector's. CrateDB takes these: its FLOAT_VECTOR answers a vector with a
+   * dimension, and without the split a vector without one would fall through to VECTOR, which
+   * CrateDB has not got.
+   */
+  public static final List<IDatabaseTypeRule> POSTGRES_BASE_TYPE_RULES =
+      DatabaseTypes.rules()
+          // The driver reports the widest a double can hold rather than a declared size.
+          .read(Types.DOUBLE)
+          .where(
+              (variables, databaseMeta, column) ->
+                  StandardJdbcTypeMapper.numericScale(column) >= 16
+                      && StandardJdbcTypeMapper.numericLength(column) >= 16)
+          .as(IValueMeta.TYPE_NUMBER, -1, -1)
+          // A numeric with no declared size means arbitrary precision.
+          .read(Types.NUMERIC)
+          .where(
+              (variables, databaseMeta, column) ->
+                  StandardJdbcTypeMapper.numericLength(column) == 0
+                      && StandardJdbcTypeMapper.numericScale(column) == 0)
+          .as(IValueMeta.TYPE_BIGNUMBER, -1, -1)
+          // An address is Types.OTHER, which the standard mapping takes as a string, so without
+          // this the value type Hop has for addresses never sees the column.
+          .readNative("INET")
+          .as(IValueMeta.TYPE_INET)
+          // Non-legacy applications are advised to use JSONB rather than JSON.
+          .write(IValueMeta.TYPE_JSON)
+          .as("JSONB")
+          .write(IValueMeta.TYPE_UUID)
+          .as("UUID")
+          .write(IValueMeta.TYPE_INET)
+          .as("INET")
+          .bind(IValueMeta.TYPE_JSON, JSON_BINDING)
+          .bind(IValueMeta.TYPE_UUID, UNSPECIFIED_STRING_BINDING)
+          .bind(IValueMeta.TYPE_INET, UNSPECIFIED_STRING_BINDING)
+          // An integer with no declared length is a Long, not a double precision. Issue #4174.
+          .rule(ColumnTypeRules.UNSIZED_INTEGER_AS_LONG)
+          .build();
+
+  /**
+   * pgvector's type. Sized when the dimension is known, because only a sized column can carry an
+   * index; unsized otherwise, which pgvector accepts and which still holds vectors, unlike the text
+   * column a vector falls back to on a database without the extension.
+   */
+  private static final List<IDatabaseTypeRule> VECTOR_RULES =
+      DatabaseTypes.rules()
+          .write(IValueMeta.TYPE_VECTOR)
+          .as(v -> v.getLength() > 0 ? "VECTOR(" + v.getLength() + ")" : "VECTOR")
+          .rule(ColumnTypeRules.vectorColumn("VECTOR"))
+          // The same binding UUID and INET use, and for the same reason. A vector's text form is
+          // what pgvector's input function reads, but the driver sends a String as character
+          // varying, and PostgreSQL will not coerce that into a vector: "column is of type vector
+          // but expression is of type character varying". Sending it as an unspecified type lets
+          // the server apply the column's own input function, so the value lands in a vector
+          // column and, when there is no extension and the column is text, in a text one.
+          .bind(IValueMeta.TYPE_VECTOR, UNSPECIFIED_STRING_BINDING)
+          .build();
+
+  /** The whole set, vector included, as PostgreSQL itself uses them. */
+  public static final List<IDatabaseTypeRule> POSTGRES_TYPE_RULES =
+      DatabaseTypes.rules().include(VECTOR_RULES).include(POSTGRES_BASE_TYPE_RULES).build();
+
+  @Override
+  public List<IDatabaseTypeRule> getTypeRules() {
+    return POSTGRES_TYPE_RULES;
+  }
+
+  private static final int GB_LIMIT = 1_073_741_824;
+
+  /** The largest precision PostgreSQL accepts in a NUMERIC(p, s) declaration. */
+  private static final int MAX_NUMERIC_PRECISION = 1000;
+
+  public static final String CONST_ALTER_TABLE = "ALTER TABLE ";
+
+  @Override
+  public boolean isPostgresVariant() {
+    return true;
+  }
+
+  /**
+   * pgvector is an extension, not a version: the same server has the type in one database and not
+   * in the next, so there is no release to compare against. The driver answers it directly, because
+   * it reads its type list from the catalog of the database it is connected to - an installed
+   * extension is in there, and on a database without it the name is simply absent.
+   *
+   * <p>With no connection the type stands, which is what makes a CREATE TABLE generated offline
+   * still say VECTOR. Connected to a database without the extension, the column falls back to text
+   * the way any unclaimed type does.
+   */
+  @Override
+  public boolean isColumnTypeAvailable(String columnType) {
+    if (VECTOR_TYPE_NAME.equals(columnType)) {
+      ServerInfo serverInfo = getServerInfo();
+      return serverInfo == null || serverInfo.hasTypeName(VECTOR_TYPE_NAME);
+    }
+    return true;
+  }
+
+  private static final String VECTOR_TYPE_NAME = "VECTOR";
+
+  /**
+   * @return The extra option separator in database URL for this platform
+   */
+  @Override
+  public String getExtraOptionSeparator() {
+    return "&";
+  }
+
+  /**
+   * @return This indicator separates the normal URL from the options
+   */
+  @Override
+  public String getExtraOptionIndicator() {
+    return "?";
+  }
+
+  @Override
+  public int[] getAccessTypeList() {
+    return new int[] {DatabaseMeta.TYPE_ACCESS_NATIVE};
+  }
+
+  @Override
+  public int getDefaultDatabasePort() {
+    if (getAccessType() == DatabaseMeta.TYPE_ACCESS_NATIVE) {
+      return 5432;
+    }
+    return -1;
+  }
+
+  @Override
+  public String getDriverClass() {
+    return "org.postgresql.Driver";
+  }
+
+  @Override
+  public DriverDownload getDriverDownload() {
+    // Only offer the PostgreSQL driver for databases that actually use it. Subclasses that use a
+    // different JDBC driver (CrateDB, Redshift, ...) override getDriverClass() and declare their
+    // own.
+    if (!"org.postgresql.Driver".equals(getDriverClass())) {
+      return null;
+    }
+    return DriverDownload.builder()
+        .mavenCoordinate("org.postgresql:postgresql")
+        .defaultVersion("42.7.11")
+        .licenseCategory("A")
+        .licenseName("BSD-2-Clause")
+        .licenseUrl("https://jdbc.postgresql.org/about/license/")
+        .vendor("PostgreSQL Global Development Group")
+        .vendorUrl("https://jdbc.postgresql.org/")
+        .build();
+  }
+
+  @Override
+  public String getURL(String hostname, String port, String databaseName) {
+    return "jdbc:postgresql://" + hostname + ":" + port + "/" + databaseName;
+  }
+
+  /**
+   * Checks whether or not the command setFetchSize() is supported by the JDBC driver...
+   *
+   * @return true is setFetchSize() is supported!
+   */
+  @Override
+  public boolean isFetchSizeSupported() {
+    return true;
+  }
+
+  /**
+   * @return true if the database supports bitmap indexes
+   */
+  @Override
+  public boolean isSupportsBitmapIndex() {
+    return false;
+  }
+
+  /**
+   * @return true if the database supports synonyms
+   */
+  @Override
+  public boolean isSupportsSynonyms() {
+    return false;
+  }
+
+  @Override
+  public boolean isSupportsSequences() {
+    return true;
+  }
+
+  @Override
+  public boolean isSupportsSequenceNoMaxValueOption() {
+    return true;
+  }
+
+  /**
+   * Support for the serial field is only fake in PostgreSQL. You can't get back the value after the
+   * inserts (getGeneratedKeys) through JDBC calls. Therefor it's wiser to use the built-in sequence
+   * support directly, not the auto increment features.
+   */
+  @Override
+  public boolean isSupportsAutoInc() {
+    return true;
+  }
+
+  @Override
+  public String getLimitClause(int nrRows) {
+    return " limit " + nrRows;
+  }
+
+  @Override
+  public String getSqlQueryFields(String tableName) {
+    return "SELECT * FROM " + tableName + getLimitClause(1);
+  }
+
+  @Override
+  public String getSqlViewDefinition(String schemaName, String viewName) {
+    if (Utils.isEmpty(viewName)) {
+      return null;
+    }
+    StringBuilder sql = new StringBuilder();
+    sql.append("SELECT pg_catalog.pg_get_viewdef(c.oid, true) ");
+    sql.append("FROM pg_catalog.pg_class c ");
+    sql.append("JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace ");
+    sql.append("WHERE c.relkind IN ('v', 'm') AND c.relname = ").append(quoteSqlString(viewName));
+    if (!Utils.isEmpty(schemaName)) {
+      sql.append(" AND n.nspname = ").append(quoteSqlString(schemaName));
+    }
+    return sql.toString();
+  }
+
+  @Override
+  public String getSqlTableExists(String tableName) {
+    return getSqlQueryFields(tableName);
+  }
+
+  @Override
+  public String getSqlColumnExists(String columnname, String tableName) {
+    return getSqlQueryColumnFields(columnname, tableName);
+  }
+
+  public String getSqlQueryColumnFields(String columnname, String tableName) {
+    return "SELECT " + columnname + " FROM " + tableName + getLimitClause(1);
+  }
+
+  @Override
+  public String getSqlListOfSequences() {
+    return "SELECT relname AS sequence_name FROM pg_catalog.pg_statio_all_sequences";
+  }
+
+  /**
+   * Get the SQL to get the next value of a sequence. (PostgreSQL version)
+   *
+   * @param sequenceName The sequence name
+   * @return the SQL to get the next value of a sequence.
+   */
+  @Override
+  public String getSqlNextSequenceValue(String sequenceName) {
+    return "SELECT nextval('" + sequenceName + "')";
+  }
+
+  /**
+   * Get the SQL to get the next value of a sequence. (PostgreSQL version)
+   *
+   * @param sequenceName The sequence name
+   * @return the SQL to get the next value of a sequence.
+   */
+  @Override
+  public String getSqlCurrentSequenceValue(String sequenceName) {
+    return "SELECT currval('" + sequenceName + "')";
+  }
+
+  /**
+   * Check if a sequence exists.
+   *
+   * @param sequenceName The sequence to check
+   * @return The SQL to get the name of the sequence back from the databases data dictionary
+   */
+  @Override
+  public String getSqlSequenceExists(String sequenceName) {
+    return "SELECT relname AS sequence_name FROM pg_catalog.pg_statio_all_sequences WHERE relname = '"
+        + sequenceName.toLowerCase()
+        + "'";
+  }
+
+  /**
+   * Generates the SQL statement to add a column to the specified table
+   *
+   * @param tableName The table to add
+   * @param v The column defined as a value
+   * @param tk the name of the technical key field
+   * @param useAutoinc whether or not this field uses auto increment
+   * @param pk the name of the primary key field
+   * @param semicolon whether or not to add a semi-colon behind the statement.
+   * @return the SQL statement to add a column to the specified table
+   */
+  @Override
+  public String getAddColumnStatement(
+      String tableName, IValueMeta v, String tk, boolean useAutoinc, String pk, boolean semicolon) {
+    return CONST_ALTER_TABLE
+        + tableName
+        + " ADD COLUMN "
+        + getColumnDefinition(v, tk, pk, useAutoinc, true, false, ColumnContext.Purpose.ADD_COLUMN);
+  }
+
+  /**
+   * Generates the SQL statement to drop a column from the specified table
+   *
+   * @param tableName The table to add
+   * @param v The column defined as a value
+   * @param tk the name of the technical key field
+   * @param useAutoinc whether or not this field uses auto increment
+   * @param pk the name of the primary key field
+   * @param semicolon whether or not to add a semi-colon behind the statement.
+   * @return the SQL statement to drop a column from the specified table
+   */
+  @Override
+  public String getDropColumnStatement(
+      String tableName, IValueMeta v, String tk, boolean useAutoinc, String pk, boolean semicolon) {
+    return CONST_ALTER_TABLE + tableName + " DROP COLUMN " + v.getName();
+  }
+
+  /**
+   * Generates the SQL statement to modify a column in the specified table
+   *
+   * @param tableName The table to add
+   * @param v The column defined as a value
+   * @param tk the name of the technical key field
+   * @param useAutoinc whether or not this field uses auto increment
+   * @param pk the name of the primary key field
+   * @param semicolon whether or not to add a semi-colon behind the statement.
+   * @return the SQL statement to modify a column in the specified table
+   */
+  @Override
+  public String getModifyColumnStatement(
+      String tableName, IValueMeta v, String tk, boolean useAutoinc, String pk, boolean semicolon) {
+    String retval = "";
+
+    IValueMeta tmpColumn = v.clone();
+
+    String tmpName = v.getName();
+    boolean isQuoted = tmpName.startsWith(getStartQuote()) && tmpName.endsWith(getEndQuote());
+    if (isQuoted) {
+      // remove the quotes first.
+      //
+      tmpName = tmpName.substring(1, tmpName.length() - 1);
+    }
+
+    tmpName += "_KTL";
+
+    // put the quotes back if needed.
+    //
+    if (isQuoted) {
+      tmpName = getStartQuote() + tmpName + getEndQuote();
+    }
+    tmpColumn.setName(tmpName);
+
+    // Create a new tmp column
+    retval +=
+        getAddColumnStatement(tableName, tmpColumn, tk, useAutoinc, pk, semicolon) + ";" + Const.CR;
+    // copy the old data over to the tmp column
+    retval +=
+        "UPDATE " + tableName + " SET " + tmpColumn.getName() + "=" + v.getName() + ";" + Const.CR;
+    // drop the old column
+    retval += getDropColumnStatement(tableName, v, tk, useAutoinc, pk, semicolon) + ";" + Const.CR;
+    // rename the temp column to replace the removed column
+    retval +=
+        CONST_ALTER_TABLE
+            + tableName
+            + " RENAME "
+            + tmpColumn.getName()
+            + " TO "
+            + v.getName()
+            + ";"
+            + Const.CR;
+    return retval;
+  }
+
+  @Override
+  public String getFieldDefinition(
+      IValueMeta v, String tk, String pk, boolean useAutoinc, boolean addFieldName, boolean addCr) {
+    String retval = "";
+
+    String fieldname = v.getName();
+    if (v.getLength() == DatabaseMeta.CLOB_LENGTH) {
+      v.setLength(getMaxTextFieldLength());
+    }
+    int length = v.getLength();
+    int precision = v.getPrecision();
+
+    if (addFieldName) {
+      retval += fieldname + " ";
+    }
+
+    int type = v.getType();
+    switch (type) {
+      case IValueMeta.TYPE_TIMESTAMP, IValueMeta.TYPE_DATE:
+        retval += "TIMESTAMP";
+        break;
+      case IValueMeta.TYPE_BOOLEAN:
+        if (isSupportsBooleanDataType()) {
+          retval += "BOOLEAN";
+        } else {
+          retval += "CHAR(1)";
+        }
+        break;
+      case IValueMeta.TYPE_NUMBER, IValueMeta.TYPE_INTEGER, IValueMeta.TYPE_BIGNUMBER:
+        if (fieldname.equalsIgnoreCase(tk)
+            || // Technical key
+            fieldname.equalsIgnoreCase(pk) // Primary key
+        ) {
+          retval += "BIGSERIAL";
+        } else {
+          if (length > 0) {
+            if (precision > 0 || length > 18) {
+              // Numeric(p, s): Hop length is the total number of significant digits. PostgreSQL
+              // before 15 rejects s > p, so widen p when a field was authored with scale larger
+              // than length.
+              int numericPrecision = Math.max(length, precision);
+              if (numericPrecision > MAX_NUMERIC_PRECISION) {
+                // PostgreSQL refuses a declared precision above 1000 outright: "NUMERIC precision
+                // 1073741824 must be between 1 and 1000". A length that large only ever arrives
+                // from the CLOB_LENGTH marker, which means unbounded, and an unconstrained NUMERIC
+                // is exactly that: it holds 131072 digits before the point, far past anything a
+                // Hop value carries.
+                retval += "NUMERIC";
+              } else {
+                retval += "NUMERIC(" + numericPrecision + ", " + precision + ")";
+              }
+            } else {
+              if (length > 9) {
+                retval += "BIGINT";
+              } else {
+                if (length < 5) {
+                  retval += "SMALLINT";
+                } else {
+                  retval += "INTEGER";
+                }
+              }
+            }
+
+          } else {
+            retval += "DOUBLE PRECISION";
+          }
+        }
+        break;
+      case IValueMeta.TYPE_STRING:
+        if (length < 1 || length >= DatabaseMeta.CLOB_LENGTH) {
+          retval += "TEXT";
+        } else {
+          retval += "VARCHAR(" + length + ")";
+        }
+        break;
+      case IValueMeta.TYPE_BINARY:
+        retval += "BYTEA";
+        break;
+      default:
+        retval += " UNKNOWN";
+        break;
+    }
+
+    if (addCr) {
+      retval += Const.CR;
+    }
+
+    return retval;
+  }
+
+  /*
+   * (non-Javadoc)
+   *
+   * @see org.apache.hop.core.database.IDatabase#getSqlListOfProcedures()
+   */
+  @Override
+  public String getSqlListOfProcedures() {
+    return "select proname "
+        + "from pg_proc, pg_user "
+        + "where pg_user.usesysid = pg_proc.proowner "
+        + "and upper(pg_user.usename) = '"
+        + getUsername().toUpperCase()
+        + "' "
+        + "order by proname";
+  }
+
+  /*
+   * (non-Javadoc)
+   *
+   * @see org.apache.hop.core.database.IDatabase#getReservedWords()
+   */
+  @Override
+  public String[] getReservedWords() {
+    return new String[] {
+      // http://www.postgresql.org/docs/8.1/static/sql-keywords-appendix.html
+      // added also non-reserved key words because there is progress from the Postgre developers to
+      // add them
+      "A",
+      "ABORT",
+      "ABS",
+      "ABSOLUTE",
+      "ACCESS",
+      "ACTION",
+      "ADA",
+      "ADD",
+      "ADMIN",
+      "AFTER",
+      "AGGREGATE",
+      "ALIAS",
+      "ALL",
+      "ALLOCATE",
+      "ALSO",
+      "ALTER",
+      "ALWAYS",
+      "ANALYSE",
+      "ANALYZE",
+      "AND",
+      "ANY",
+      "ARE",
+      "ARRAY",
+      "AS",
+      "ASC",
+      "ASENSITIVE",
+      "ASSERTION",
+      "ASSIGNMENT",
+      "ASYMMETRIC",
+      "AT",
+      "ATOMIC",
+      "ATTRIBUTE",
+      "ATTRIBUTES",
+      "AUTHORIZATION",
+      "AVG",
+      "BACKWARD",
+      "BEFORE",
+      "BEGIN",
+      "BERNOULLI",
+      "BETWEEN",
+      "BIGINT",
+      "BINARY",
+      "BIT",
+      "BITVAR",
+      "BIT_LENGTH",
+      "BLOB",
+      "BOOLEAN",
+      "BOTH",
+      "BREADTH",
+      "BY",
+      "C",
+      "CACHE",
+      "CALL",
+      "CALLED",
+      "CARDINALITY",
+      "CASCADE",
+      "CASCADED",
+      "CASE",
+      "CAST",
+      "CATALOG",
+      "CATALOG_NAME",
+      "CEIL",
+      "CEILING",
+      "CHAIN",
+      "CHAR",
+      "CHARACTER",
+      "CHARACTERISTICS",
+      "CHARACTERS",
+      "CHARACTER_LENGTH",
+      "CHARACTER_SET_CATALOG",
+      "CHARACTER_SET_NAME",
+      "CHARACTER_SET_SCHEMA",
+      "CHAR_LENGTH",
+      "CHECK",
+      "CHECKED",
+      "CHECKPOINT",
+      "CLASS",
+      "CLASS_ORIGIN",
+      "CLOB",
+      "CLOSE",
+      "CLUSTER",
+      "COALESCE",
+      "COBOL",
+      "COLLATE",
+      "COLLATION",
+      "COLLATION_CATALOG",
+      "COLLATION_NAME",
+      "COLLATION_SCHEMA",
+      "COLLECT",
+      "COLUMN",
+      "COLUMN_NAME",
+      "COMMAND_FUNCTION",
+      "COMMAND_FUNCTION_CODE",
+      "COMMENT",
+      "COMMIT",
+      "COMMITTED",
+      "COMPLETION",
+      "CONDITION",
+      "CONDITION_NUMBER",
+      "CONNECT",
+      "CONNECTION",
+      "CONNECTION_NAME",
+      "CONSTRAINT",
+      "CONSTRAINTS",
+      "CONSTRAINT_CATALOG",
+      "CONSTRAINT_NAME",
+      "CONSTRAINT_SCHEMA",
+      "CONSTRUCTOR",
+      "CONTAINS",
+      "CONTINUE",
+      "CONVERSION",
+      "CONVERT",
+      "COPY",
+      "CORR",
+      "CORRESPONDING",
+      "COUNT",
+      "COVAR_POP",
+      "COVAR_SAMP",
+      "CREATE",
+      "CREATEDB",
+      "CREATEROLE",
+      "CREATEUSER",
+      "CROSS",
+      "CSV",
+      "CUBE",
+      "CUME_DIST",
+      "CURRENT",
+      "CURRENT_DATE",
+      "CURRENT_DEFAULT_TRANSFORM_GROUP",
+      "CURRENT_PATH",
+      "CURRENT_ROLE",
+      "CURRENT_TIME",
+      "CURRENT_TIMESTAMP",
+      "CURRENT_TRANSFORM_GROUP_FOR_TYPE",
+      "CURRENT_USER",
+      "CURSOR",
+      "CURSOR_NAME",
+      "CYCLE",
+      "DATA",
+      "DATABASE",
+      "DATE",
+      "DATETIME_INTERVAL_CODE",
+      "DATETIME_INTERVAL_PRECISION",
+      "DAY",
+      "DEALLOCATE",
+      "DEC",
+      "DECIMAL",
+      "DECLARE",
+      "DEFAULT",
+      "DEFAULTS",
+      "DEFERRABLE",
+      "DEFERRED",
+      "DEFINED",
+      "DEFINER",
+      "DEGREE",
+      "DELETE",
+      "DELIMITER",
+      "DELIMITERS",
+      "DENSE_RANK",
+      "DEPTH",
+      "DEREF",
+      "DERIVED",
+      "DESC",
+      "DESCRIBE",
+      "DESCRIPTOR",
+      "DESTROY",
+      "DESTRUCTOR",
+      "DETERMINISTIC",
+      "DIAGNOSTICS",
+      "DICTIONARY",
+      "DISABLE",
+      "DISCONNECT",
+      "DISPATCH",
+      "DISTINCT",
+      "DO",
+      "DOMAIN",
+      "DOUBLE",
+      "DROP",
+      "DYNAMIC",
+      "DYNAMIC_FUNCTION",
+      "DYNAMIC_FUNCTION_CODE",
+      "EACH",
+      "ELEMENT",
+      "ELSE",
+      "ENABLE",
+      "ENCODING",
+      "ENCRYPTED",
+      "END",
+      "END-EXEC",
+      "EQUALS",
+      "ESCAPE",
+      "EVERY",
+      "EXCEPT",
+      "EXCEPTION",
+      "EXCLUDE",
+      "EXCLUDING",
+      "EXCLUSIVE",
+      "EXEC",
+      "EXECUTE",
+      "EXISTING",
+      "EXISTS",
+      "EXP",
+      "EXPLAIN",
+      "EXTERNAL",
+      "EXTRACT",
+      "FALSE",
+      "FETCH",
+      "FILTER",
+      "FINAL",
+      "FIRST",
+      "FLOAT",
+      "FLOOR",
+      "FOLLOWING",
+      "FOR",
+      "FORCE",
+      "FOREIGN",
+      "FORTRAN",
+      "FORWARD",
+      "FOUND",
+      "FREE",
+      "FREEZE",
+      "FROM",
+      "FULL",
+      "FUNCTION",
+      "FUSION",
+      "G",
+      "GENERAL",
+      "GENERATED",
+      "GET",
+      "GLOBAL",
+      "GO",
+      "GOTO",
+      "GRANT",
+      "GRANTED",
+      "GREATEST",
+      "GROUP",
+      "GROUPING",
+      "HANDLER",
+      "HAVING",
+      "HEADER",
+      "HIERARCHY",
+      "HOLD",
+      "HOST",
+      "HOUR",
+      "IDENTITY",
+      "IGNORE",
+      "ILIKE",
+      "IMMEDIATE",
+      "IMMUTABLE",
+      "IMPLEMENTATION",
+      "IMPLICIT",
+      "IN",
+      "INCLUDING",
+      "INCREMENT",
+      "INDEX",
+      "INDICATOR",
+      "INFIX",
+      "INHERIT",
+      "INHERITS",
+      "INITIALIZE",
+      "INITIALLY",
+      "INNER",
+      "INOUT",
+      "INPUT",
+      "INSENSITIVE",
+      "INSERT",
+      "INSTANCE",
+      "INSTANTIABLE",
+      "INSTEAD",
+      "INT",
+      "INTEGER",
+      "INTERSECT",
+      "INTERSECTION",
+      "INTERVAL",
+      "INTO",
+      "INVOKER",
+      "IS",
+      "ISNULL",
+      "ISOLATION",
+      "ITERATE",
+      "JOIN",
+      "K",
+      "KEY",
+      "KEY_MEMBER",
+      "KEY_TYPE",
+      "LANCOMPILER",
+      "LANGUAGE",
+      "LARGE",
+      "LAST",
+      "LATERAL",
+      "LEADING",
+      "LEAST",
+      "LEFT",
+      "LENGTH",
+      "LESS",
+      "LEVEL",
+      "LIKE",
+      "LIMIT",
+      "LISTEN",
+      "LN",
+      "LOAD",
+      "LOCAL",
+      "LOCALTIME",
+      "LOCALTIMESTAMP",
+      "LOCATION",
+      "LOCATOR",
+      "LOCK",
+      "LOGIN",
+      "LOWER",
+      "M",
+      "MAP",
+      "MATCH",
+      "MATCHED",
+      "MAX",
+      "MAXVALUE",
+      "MEMBER",
+      "MERGE",
+      "MESSAGE_LENGTH",
+      "MESSAGE_OCTET_LENGTH",
+      "MESSAGE_TEXT",
+      "METHOD",
+      "MIN",
+      "MINUTE",
+      "MINVALUE",
+      "MOD",
+      "MODE",
+      "MODIFIES",
+      "MODIFY",
+      "MODULE",
+      "MONTH",
+      "MORE",
+      "MOVE",
+      "MULTISET",
+      "MUMPS",
+      "NAME",
+      "NAMES",
+      "NATIONAL",
+      "NATURAL",
+      "NCHAR",
+      "NCLOB",
+      "NESTING",
+      "NEW",
+      "NEXT",
+      "NO",
+      "NOCREATEDB",
+      "NOCREATEROLE",
+      "NOCREATEUSER",
+      "NOINHERIT",
+      "NOLOGIN",
+      "NONE",
+      "NORMALIZE",
+      "NORMALIZED",
+      "NOSUPERUSER",
+      "NOT",
+      "NOTHING",
+      "NOTIFY",
+      "NOTNULL",
+      "NOWAIT",
+      "NULL",
+      "NULLABLE",
+      "NULLIF",
+      "NULLS",
+      "NUMBER",
+      "NUMERIC",
+      "OBJECT",
+      "OCTETS",
+      "OCTET_LENGTH",
+      "OF",
+      "OFF",
+      "OFFSET",
+      "OIDS",
+      "OLD",
+      "ON",
+      "ONLY",
+      "OPEN",
+      "OPERATION",
+      "OPERATOR",
+      "OPTION",
+      "OPTIONS",
+      "OR",
+      "ORDER",
+      "ORDERING",
+      "ORDINALITY",
+      "OTHERS",
+      "OUT",
+      "OUTER",
+      "OUTPUT",
+      "OVER",
+      "OVERLAPS",
+      "OVERLAY",
+      "OVERRIDING",
+      "OWNER",
+      "PAD",
+      "PARAMETER",
+      "PARAMETERS",
+      "PARAMETER_MODE",
+      "PARAMETER_NAME",
+      "PARAMETER_ORDINAL_POSITION",
+      "PARAMETER_SPECIFIC_CATALOG",
+      "PARAMETER_SPECIFIC_NAME",
+      "PARAMETER_SPECIFIC_SCHEMA",
+      "PARTIAL",
+      "PARTITION",
+      "PASCAL",
+      "PASSWORD",
+      "PATH",
+      "PERCENTILE_CONT",
+      "PERCENTILE_DISC",
+      "PERCENT_RANK",
+      "PLACING",
+      "PLI",
+      "POSITION",
+      "POSTFIX",
+      "POWER",
+      "PRECEDING",
+      "PRECISION",
+      "PREFIX",
+      "PREORDER",
+      "PREPARE",
+      "PREPARED",
+      "PRESERVE",
+      "PRIMARY",
+      "PRIOR",
+      "PRIVILEGES",
+      "PROCEDURAL",
+      "PROCEDURE",
+      "PUBLIC",
+      "QUOTE",
+      "RANGE",
+      "RANK",
+      "READ",
+      "READS",
+      "REAL",
+      "RECHECK",
+      "RECURSIVE",
+      "REF",
+      "REFERENCES",
+      "REFERENCING",
+      "REGR_AVGX",
+      "REGR_AVGY",
+      "REGR_COUNT",
+      "REGR_INTERCEPT",
+      "REGR_R2",
+      "REGR_SLOPE",
+      "REGR_SXX",
+      "REGR_SXY",
+      "REGR_SYY",
+      "REINDEX",
+      "RELATIVE",
+      "RELEASE",
+      "RENAME",
+      "REPEATABLE",
+      "REPLACE",
+      "RESET",
+      "RESTART",
+      "RESTRICT",
+      "RESULT",
+      "RETURN",
+      "RETURNED_CARDINALITY",
+      "RETURNED_LENGTH",
+      "RETURNED_OCTET_LENGTH",
+      "RETURNED_SQLSTATE",
+      "RETURNS",
+      "REVOKE",
+      "RIGHT",
+      "ROLE",
+      "ROLLBACK",
+      "ROLLUP",
+      "ROUTINE",
+      "ROUTINE_CATALOG",
+      "ROUTINE_NAME",
+      "ROUTINE_SCHEMA",
+      "ROW",
+      "ROWS",
+      "ROW_COUNT",
+      "ROW_NUMBER",
+      "RULE",
+      "SAVEPOINT",
+      "SCALE",
+      "SCHEMA",
+      "SCHEMA_NAME",
+      "SCOPE",
+      "SCOPE_CATALOG",
+      "SCOPE_NAME",
+      "SCOPE_SCHEMA",
+      "SCROLL",
+      "SEARCH",
+      "SECOND",
+      "SECTION",
+      "SECURITY",
+      "SELECT",
+      "SELF",
+      "SENSITIVE",
+      "SEQUENCE",
+      "SERIALIZABLE",
+      "SERVER_NAME",
+      "SESSION",
+      "SESSION_USER",
+      "SET",
+      "SETOF",
+      "SETS",
+      "SHARE",
+      "SHOW",
+      "SIMILAR",
+      "SIMPLE",
+      "SIZE",
+      "SMALLINT",
+      "SOME",
+      "SOURCE",
+      "SPACE",
+      "SPECIFIC",
+      "SPECIFICTYPE",
+      "SPECIFIC_NAME",
+      "SQL",
+      "SQLCODE",
+      "SQLERROR",
+      "SQLEXCEPTION",
+      "SQLSTATE",
+      "SQLWARNING",
+      "SQRT",
+      "STABLE",
+      "START",
+      "STATE",
+      "STATEMENT",
+      "STATIC",
+      "STATISTICS",
+      "STDDEV_POP",
+      "STDDEV_SAMP",
+      "STDIN",
+      "STDOUT",
+      "STORAGE",
+      "STRICT",
+      "STRUCTURE",
+      "STYLE",
+      "SUBCLASS_ORIGIN",
+      "SUBLIST",
+      "SUBMULTISET",
+      "SUBSTRING",
+      "SUM",
+      "SUPERUSER",
+      "SYMMETRIC",
+      "SYSID",
+      "SYSTEM",
+      "SYSTEM_USER",
+      "TABLE",
+      "TABLESAMPLE",
+      "TABLESPACE",
+      "TABLE_NAME",
+      "TEMP",
+      "TEMPLATE",
+      "TEMPORARY",
+      "TERMINATE",
+      "THAN",
+      "THEN",
+      "TIES",
+      "TIME",
+      "TIMESTAMP",
+      "TIMEZONE_HOUR",
+      "TIMEZONE_MINUTE",
+      "TO",
+      "TOAST",
+      "TOP_LEVEL_COUNT",
+      "TRAILING",
+      "TRANSACTION",
+      "TRANSACTIONS_COMMITTED",
+      "TRANSACTIONS_ROLLED_BACK",
+      "TRANSACTION_ACTIVE",
+      "TRANSFORM",
+      "TRANSFORMS",
+      "TRANSLATE",
+      "TRANSLATION",
+      "TREAT",
+      "TRIGGER",
+      "TRIGGER_CATALOG",
+      "TRIGGER_NAME",
+      "TRIGGER_SCHEMA",
+      "TRIM",
+      "TRUE",
+      "TRUNCATE",
+      "TRUSTED",
+      "TYPE",
+      "UESCAPE",
+      "UNBOUNDED",
+      "UNCOMMITTED",
+      "UNDER",
+      "UNENCRYPTED",
+      "UNION",
+      "UNIQUE",
+      "UNKNOWN",
+      "UNLISTEN",
+      "UNNAMED",
+      "UNNEST",
+      "UNTIL",
+      "UPDATE",
+      "UPPER",
+      "USAGE",
+      "USER",
+      "USER_DEFINED_TYPE_CATALOG",
+      "USER_DEFINED_TYPE_CODE",
+      "USER_DEFINED_TYPE_NAME",
+      "USER_DEFINED_TYPE_SCHEMA",
+      "USING",
+      "VACUUM",
+      "VALID",
+      "VALIDATOR",
+      "VALUE",
+      "VALUES",
+      "VARCHAR",
+      "VARIABLE",
+      "VARYING",
+      "VAR_POP",
+      "VAR_SAMP",
+      "VERBOSE",
+      "VIEW",
+      "VOLATILE",
+      "WHEN",
+      "WHENEVER",
+      "WHERE",
+      "WIDTH_BUCKET",
+      "WINDOW",
+      "WITH",
+      "WITHIN",
+      "WITHOUT",
+      "WORK",
+      "WRITE",
+      "YEAR",
+      "ZONE"
+    };
+  }
+
+  /**
+   * @param tableNames The names of the tables to lock
+   * @return The SQL commands to lock database tables for write purposes.
+   */
+  @Override
+  public String getSqlLockTables(String[] tableNames) {
+    String sql = "LOCK TABLE ";
+    for (int i = 0; i < tableNames.length; i++) {
+      if (i > 0) {
+        sql += ", ";
+      }
+      sql += tableNames[i] + " ";
+    }
+    sql += "IN ACCESS EXCLUSIVE MODE;" + Const.CR;
+
+    return sql;
+  }
+
+  /**
+   * @param tableName The name of the table to unlock
+   * @return The SQL command to unlock a database table.
+   */
+  @Override
+  public String getSqlUnlockTables(String[] tableName) {
+    return null; // commit unlocks everything!
+  }
+
+  /**
+   * @return true if the database defaults to naming tables and fields in uppercase. True for most
+   *     databases except for stubborn stuff like PostgreSQL ;-)
+   */
+  @Override
+  public boolean isDefaultingToUppercase() {
+    return false;
+  }
+
+  @Override
+  public String getExtraOptionsHelpText() {
+    return "http://jdbc.postgresql.org/documentation/83/connect.html#connection-parameters";
+  }
+
+  /**
+   * @return true if the database supports error handling (recovery of failure) while doing batch
+   *     updates.
+   */
+  @Override
+  public boolean IsSupportsErrorHandlingOnBatchUpdates() {
+    return false;
+  }
+
+  /**
+   * PG needs the extra E in front of the string before it allows you to quote it. Imagine that.
+   *
+   * @param string
+   * @return A string that is properly quoted for use in a SQL statement (insert, update, delete,
+   *     etc)
+   */
+  @Override
+  public String quoteSqlString(String string) {
+    string = string.replace("'", "''");
+    string = string.replace("\\n", "\\\\n");
+    string = string.replace("\\r", "\\\\r");
+    return "E'" + string + "'";
+  }
+
+  @Override
+  public boolean isRequiresCastToVariousForIsNull() {
+    return true;
+  }
+
+  /**
+   * @return true if the database supports the use of safe-points and if it is appropriate to ever
+   *     use it (default to false)
+   */
+  @Override
+  public boolean isUseSafePoints() {
+    return true;
+  }
+
+  @Override
+  public int getMaxVARCHARLength() {
+    return GB_LIMIT;
+  }
+
+  @Override
+  public int getMaxTextFieldLength() {
+    return GB_LIMIT;
+  }
+
+  @Override
+  public void addDefaultOptions() {
+    setSupportsBooleanDataType(true);
+    setSupportsTimestampDataType(true);
+  }
+
+  @Override
+  public String getDatabaseCharacterSet(Database database) throws HopDatabaseException {
+    if (database == null) {
+      return "UTF8";
+    }
+    try {
+      RowMetaAndData row = database.getOneRow("SHOW server_encoding");
+      if (row != null && row.getData() != null && row.getRowMeta() != null) {
+        String encoding = row.getRowMeta().getString(row.getData(), 0);
+        if (!Utils.isEmpty(encoding)) {
+          return encoding;
+        }
+      }
+    } catch (Exception e) {
+      // Fall through to UTF8; validation still runs with a sensible default.
+    }
+    return "UTF8";
+  }
+
+  @Override
+  public void enrichColumnValueConstraints(
+      ColumnValueConstraints spec, DatabaseColumn column, String characterSet) {
+    ColumnValueConstraints.enrichFromJdbc(spec, column);
+    if (spec == null || column == null) {
+      return;
+    }
+    String nativeType = nativeTypeKey(column.getNativeTypeName());
+    switch (nativeType) {
+      case "varchar", "character varying" -> {
+        spec.setLengthUnit(StringLengthUnit.CHARACTERS);
+        spec.setRejectNulChar(true);
+      }
+      case "bpchar", "char", "character" -> {
+        spec.setLengthUnit(StringLengthUnit.CHARACTERS);
+        spec.setRejectNulChar(true);
+      }
+      case "text", "citext" -> {
+        spec.setStringMaxLength(-1);
+        spec.setRejectNulChar(true);
+      }
+      case "uuid" -> spec.setUuid(true);
+      case "json", "jsonb" -> spec.setJson(true);
+      case "int2", "smallint", "smallserial", "serial2" -> {
+        spec.setIntegerMin(-32768L);
+        spec.setIntegerMax(32767L);
+      }
+      case "int4", "integer", "int", "serial", "serial4" -> {
+        spec.setIntegerMin((long) Integer.MIN_VALUE);
+        spec.setIntegerMax((long) Integer.MAX_VALUE);
+      }
+      case "int8", "bigint", "bigserial", "serial8" -> {
+        spec.setIntegerMin(Long.MIN_VALUE);
+        spec.setIntegerMax(Long.MAX_VALUE);
+      }
+      case "numeric", "decimal" -> {
+        if (column.getPrecision() <= 0) {
+          spec.setNumericPrecision(-1);
+          spec.setNumericScale(-1);
+        } else {
+          spec.setNumericPrecision(column.getPrecision());
+          spec.setNumericScale(Math.max(column.getScale(), 0));
+        }
+      }
+      default -> {
+        // JDBC defaults from enrichFromJdbc already applied.
+      }
+    }
+  }
+
+  private static String nativeTypeKey(String nativeTypeName) {
+    if (Utils.isEmpty(nativeTypeName)) {
+      return "";
+    }
+    String name = nativeTypeName.trim().toLowerCase(java.util.Locale.ROOT);
+    int paren = name.indexOf('(');
+    if (paren > 0) {
+      name = name.substring(0, paren).trim();
+    }
+    return name;
+  }
+}

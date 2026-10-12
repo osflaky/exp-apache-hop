@@ -1,0 +1,90 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.pipeline.transforms.fileinput.text;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.util.Date;
+import org.apache.hop.core.HopEnvironment;
+import org.apache.hop.core.fileinput.InputFile;
+import org.apache.hop.core.logging.ILoggingObject;
+import org.apache.hop.junit.rules.RestoreHopEngineEnvironmentExtension;
+import org.apache.hop.pipeline.transforms.mock.TransformMockHelper;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+
+class PDI_2875_Test {
+  private static TransformMockHelper<TextFileInputMeta, TextFileInputData> smh;
+  private static final String VAR_NAME = "VAR";
+  private static final String EXPRESSION = "${" + VAR_NAME + "}";
+
+  @RegisterExtension
+  static RestoreHopEngineEnvironmentExtension env = new RestoreHopEngineEnvironmentExtension();
+
+  @BeforeAll
+  static void setUp() throws Exception {
+    HopEnvironment.init();
+    smh =
+        new TransformMockHelper<>("CsvInputTest", TextFileInputMeta.class, TextFileInputData.class);
+    when(smh.logChannelFactory.create(any(), any(ILoggingObject.class)))
+        .thenReturn(smh.iLogChannel);
+    when(smh.pipeline.isRunning()).thenReturn(true);
+  }
+
+  @AfterAll
+  static void cleanUp() {
+    smh.cleanUp();
+  }
+
+  private TextFileInputMeta getMeta() {
+    TextFileInputMeta meta = new TextFileInputMeta();
+    InputFile f1 = new InputFile();
+    f1.setFileMask("file1.txt");
+    meta.getFileInput().getInputFiles().add(f1);
+    InputFile f2 = new InputFile();
+    f2.setFileMask("file2.txt");
+    meta.getFileInput().getInputFiles().add(f2);
+
+    meta.getContent().setFileFormat("unix");
+    meta.getContent().setFileType("CSV");
+    meta.getErrorHandling().setLineNumberFilesDestinationDirectory(EXPRESSION);
+    meta.getErrorHandling().setErrorFilesDestinationDirectory(EXPRESSION);
+    meta.getErrorHandling().setWarningFilesDestinationDirectory(EXPRESSION);
+
+    return meta;
+  }
+
+  @Test
+  void testVariableSubstitution() {
+    doReturn(new Date()).when(smh.pipeline).getExecutionStartDate();
+    TextFileInputData data = new TextFileInputData();
+    TextFileInputMeta meta = getMeta();
+    TextFileInput transform =
+        spy(new TextFileInput(smh.transformMeta, meta, data, 0, smh.pipelineMeta, smh.pipeline));
+    transform.setVariable(VAR_NAME, "value");
+    transform.init();
+    verify(transform, times(2)).resolve(EXPRESSION);
+  }
+}

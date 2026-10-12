@@ -1,0 +1,28 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+:description: Driving Hop from your own Java code: initializing the API, loading metadata, and running pipelines and workflows.
+[[Sdk-Index]]
+= SDK
+
+Hop is a set of Java libraries before it is a GUI or a command line tool, so a pipeline or workflow can be executed from your own application.
+
+* xref:sdk/hop-sdk.adoc[The Hop SDK] — initializing the API, plugin folders, metadata providers, variables, and running pipelines and workflows.
+
+Related:
+
+* xref:{page-component-version}@manual::hop-server/json-api.adoc[The Hop Server JSON API] — the same capability over HTTP, when embedding the libraries is not an option.
+* xref:architecture/execution-model.adoc[How a pipeline and a workflow run] — what the SDK is driving underneath.

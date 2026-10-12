@@ -1,0 +1,181 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+
+[[data-types]]
+== Data types
+
+As a best practice for producing consistent, predictable outcomes when working with your data in Apache Hop, you must consider how the Apache Hop engine processes different data types and field metadata in transformations and jobs.
+
+NOTE: As a rule, data is never modified by metadata inside of Apache Hop. Data is only modified when Apache Hop writes to files or similar objects, but not to databases.
+
+Apache Hop data types map internally to Java data types, so the Java behavior of these data types applies to the associated fields, parameters, and variables used in your workflows and pipelines. The following table describes these mappings.
+
+[options="header", width="90%", cols="1,1,3"]
+|===
+|Apache Hop|Java data type|Description
+|BigNumber|BigDecimal|An arbitrary unlimited precision number.
+|Binary|Byte[]|An array of bytes that contain any type of binary data.
+|Boolean|Boolean|A boolean value true or false.
+|Date|Date|A date-time value with millisecond precision.
+|Integer|Long|A signed long 64-bit integer.
+|Internet|Address|InetAddress	An Internet Protocol (IP) address.
+|Number|Double|A double precision floating point value.
+|String|String|A variable unlimited length text encoded in UTF-8 (Unicode).
+|Timestamp|Timestamp|Allows the specification of fractional seconds to a precision of nanoseconds.
+|===
+
+NOTE: Apache Hop also comes with a number of additional complex data types (e.g. Avro, JSON, Graph) that have no one-on-one mapping to Java data types. These data types only work with specific transforms and can't be used in general-purpose transforms.
+
+=== Conversions and comparisons
+
+*Nulls and sort order*
+
+- Null handling and sort behavior follow Java comparison semantics for the mapped type, unless noted below.
+
+*String parsing/formatting*
+
+- When converting from a String to another type, Hop uses the format settings defined in the transform metadata (for example, date masks, decimal symbols, and grouping characters).
+- When converting from another type to a String, Hop applies the same metadata-based format.
+
+Be explicit about formats when working with String types.
+A common issue is the decimal separator, which differs between environments: an EU locale typically uses `,`, a US locale uses `.`.
+
+See xref:pipeline/formatting-values.adoc[Formatting numbers and dates] for Format, Length, Precision, Decimal, Group and Currency.
+
+=== Timestamp
+
+A Timestamp value can be created from a Date, String, Number, or another Timestamp.
+
+*Conversions*
+
+- *Date -> Timestamp*: Represents the same instant; fractional seconds default to `0`.
+- *String -> Timestamp*: Parsed using the specified date mask (for example, `yyyy-MM-dd HH:mm:ss`).
+- *Number -> Timestamp*: Interpreted as **nanoseconds since the epoch**.
+
+=== UUID
+
+UUID values map to java UUID object that stores them as 16-byte type.
+Storing a UUID with the String type uses 32-byte.
+The difference in storage is noticeable in many situations like inserting in a database with native UUID support.
+
+When using MongoDB, Hop writes UUIDs using the **STANDARD** representation, which corresponds to BSON Binary subtype `4`.
+
+*Sorting*
+
+Databases may order UUID columns by their raw binary value (as is the case in PostgreSQL).
+Hop, however, compares UUIDs by their two 64-bit halves as signed longs — first the most significant bits (MSB), then the least significant bits (LSB).
+These ordering methods can differ.
+To ensure consistent results, perform all sorting either within Hop or entirely in the database.
+
+*Gotchas*
+
+Writing a UUID to a database without native support as a UUID type (e.g. MySQL) will fail.
+Convert them to String before writing.
+
+=== JSON
+
+The JSON type in Hop follows the official JSON standard: https://www.json.org/json-en.html.
+It is treated as an *unordered* set of key/value pairs.
+This means that JSON values may behave differently from their String representations. For example, consider these two JSON objects:
+
+```json
+{ "a": 1, "b": 2 }
+```
+```json
+{ "b": 2, "a": 1 }
+```
+
+When treated as String, they are different.
+When treated as JSON, they are considered equal.
+Because JSON comparison in Hop performs structural checks, it is generally more robust — but also slightly slower — than string comparison.
+
+*Sorting*
+
+The way Hop sorts JSON values resembles how PostgreSQL sorts JSONB values.
+Keys are sorted alphabetically, and values are compared in the following type order:
+
+```
+NULL < MISSING < BINARY < STRING < NUMBER < BOOLEAN < ARRAY < OBJECT
+```
+
+Arrays are compared element by element; if all compared elements are equal, the longer array is considered greater.
+
+*MongoDB*
+
+The JSON type supports all standard JSON values when reading or writing to MongoDB.
+Values that are part of MongoDB’s extended JSON (for example, Date objects) are not supported.
+To fully support MongoDB-specific BSON values, use the String type instead.
+
+=== Vector
+
+The Vector type holds a dense floating point vector, as produced by an embedding model and consumed by a vector store.
+Values are stored as a `float[]`.
+
+The canonical text form is a bracketed, comma separated list of numbers:
+
+```
+[0.1,0.2,0.3]
+```
+
+That form is both valid JSON and the literal syntax pgvector accepts, so a vector survives a round trip through a text file, a Data Grid, a JSON document or a database column without a conversion step in between.
+
+*Conversions*
+
+Vector converts to and from String using the canonical text form above.
+Conversion from other types is not supported: convert to String first if an intermediate type is involved.
+
+*Databases*
+
+When Hop generates DDL, a vector field becomes the database's own vector column wherever there is one:
+
+[cols="3*",options="header"]
+|===
+| Database | Dimension known | Dimension unknown
+| PostgreSQL | `VECTOR(n)` | `VECTOR`
+| Oracle 23ai and later | `VECTOR(n, FLOAT32)` | `VECTOR(*, *)`
+| SQL Server 2025 and later | `VECTOR(n)` | text
+| MySQL 9 and later | `VECTOR(n)` | text
+| CrateDB | `FLOAT_VECTOR(n)` | text
+| DuckDB | `FLOAT[n]` | `FLOAT[]`
+|===
+
+Whether the type is available is decided per server rather than per database product.
+Oracle and SQL Server grew their vector type at a known release, so the dialect compares the version the driver reports.
+On PostgreSQL the type comes from the pgvector extension, which is installed per database, so the dialect looks for the type in the list the driver reports instead of comparing versions.
+A connection to a database without the extension therefore writes a text column, and so does a server older than the release that introduced the type.
+Generating DDL without a connection keeps the native type, because an unknown server is not treated as a server that lacks it.
+
+A database with no vector type of its own writes a text column, which holds the canonical form above.
+That is also what a vector without a dimension falls back to where the native type has no unsized spelling.
+
+Hop sends the value in whatever form the database accepts, which is not always the text form:
+PostgreSQL needs it as an unspecified type so the server applies the column's own input function, MySQL takes its storage format of one little endian float32 per dimension, and CrateDB takes a float array.
+Oracle, SQL Server and DuckDB accept the text form as it stands.
+None of this is configurable, and none of it changes what a pipeline looks like.
+
+*Dimensions*
+
+The field's `length` carries the number of dimensions, the way it carries the size of a String.
+A length of zero or less means the dimension is unspecified.
+
+Hop never pads or truncates a vector to match a declared length.
+An embedding resized to fit would still return results from a vector store, and those results would be wrong, so a mismatch is left for the store to reject.
+
+*Gotchas*
+
+The type does not itself enforce the number of dimensions.
+A vector store will reject a value whose length does not match the column it is written to, so the dimensions of the embedding model and of the target column have to be kept aligned by the pipeline author.

@@ -1,0 +1,43 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+[[GettingStarted]]
+:imagesdir: ../../assets/images
+:page-pagination:
+:page-pagination-no-back:
+:description: The Apache Hop Getting Started guide walks new Hop users through the Hop concepts and the bare necessities to get started building workflows and pipelines.
+
+= Getting Started
+
+This guide walks you through the Hop basics.
+
+It is built around one small example that you'll carry from chapter to chapter: a pipeline that creates and writes data, a workflow that runs it and handles failure, and a project that holds both.
+By the end you'll have built and run something real, and you'll know where to look for everything else.
+
+Set aside about an hour.
+All you need is a machine with Java on it.
+
+This is what we'll cover:
+
+. xref:getting-started/hop-what-is-hop.adoc[What is Hop?] - what the platform is for
+. xref:getting-started/hop-download-install.adoc[Download & Install] - get it running
+. xref:getting-started/hop-concepts.adoc[Concepts] - the vocabulary
+. xref:getting-started/hop-gui.adoc[Hop Gui overview] - find your way around
+. xref:getting-started/hop-gui-pipelines.adoc[Your first pipeline] - build, preview and run it
+. xref:getting-started/hop-gui-workflows.adoc[Your first workflow] - orchestrate it
+. xref:getting-started/hop-projects.adoc[Projects and environments] - make it portable
+. xref:getting-started/hop-tools.adoc[The Hop toolbox] - run it without the GUI
+. xref:getting-started/hop-next-steps.adoc[Next Steps] - where to go from here

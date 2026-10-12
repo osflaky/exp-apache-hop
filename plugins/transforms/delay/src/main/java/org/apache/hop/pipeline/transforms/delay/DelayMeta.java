@@ -1,0 +1,227 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.pipeline.transforms.delay;
+
+import java.util.List;
+import lombok.Getter;
+import lombok.Setter;
+import org.apache.hop.core.CheckResult;
+import org.apache.hop.core.ICheckResult;
+import org.apache.hop.core.annotations.Transform;
+import org.apache.hop.core.exception.HopTransformException;
+import org.apache.hop.core.row.IRowMeta;
+import org.apache.hop.core.util.Utils;
+import org.apache.hop.core.variables.IVariables;
+import org.apache.hop.i18n.BaseMessages;
+import org.apache.hop.metadata.api.HopMetadataProperty;
+import org.apache.hop.metadata.api.IHopMetadataProvider;
+import org.apache.hop.pipeline.PipelineMeta;
+import org.apache.hop.pipeline.transform.BaseTransformMeta;
+import org.apache.hop.pipeline.transform.TransformMeta;
+
+@Transform(
+    id = "Delay",
+    image = "delay.svg",
+    name = "i18n::Delay.Name",
+    description = "i18n::Delay.Description",
+    categoryDescription = "i18n:org.apache.hop.pipeline.transform:BaseTransform.Category.Utility",
+    keywords = "i18n::DelayMeta.keyword",
+    documentationUrl = "/pipeline/transforms/delay.html")
+@Getter
+@Setter
+public class DelayMeta extends BaseTransformMeta<Delay, DelayData> {
+  private static final Class<?> PKG = DelayMeta.class;
+
+  @HopMetadataProperty(key = "timeout", injectionKeyDescription = "Delay.Injection.Timeout")
+  private String timeout;
+
+  @HopMetadataProperty(
+      key = "timeout_field",
+      injectionKeyDescription = "Delay.Injection.TimeoutField")
+  private String timeoutField;
+
+  @HopMetadataProperty(key = "scaletime", injectionKeyDescription = "Delay.Injection.Scaletime")
+  private String scaletime;
+
+  @HopMetadataProperty(
+      key = "scaletime_from_field",
+      injectionKeyDescription = "Delay.Injection.ScaleTimeFromField")
+  private boolean scaleTimeFromField;
+
+  @HopMetadataProperty(
+      key = "scaletime_field",
+      injectionKeyDescription = "Delay.Injection.ScaleTimeField")
+  private String scaleTimeField;
+
+  private static final String DEFAULT_SCALE_TIME = "seconds";
+
+  private static final String[] SCALE_TIME_CODE = {
+    "milliseconds", DEFAULT_SCALE_TIME, "minutes", "hours"
+  };
+
+  public DelayMeta() {
+    super(); // allocate BaseTransformMeta
+  }
+
+  public void setTimeoutField(String timeoutField) {
+    this.timeoutField = Utils.isEmpty(timeoutField) ? null : timeoutField;
+  }
+
+  public void setScaleTimeCode(int scaleTimeIndex) {
+    scaletime =
+        switch (scaleTimeIndex) {
+            // milliseconds
+          case 0 -> SCALE_TIME_CODE[0];
+            // minutes
+          case 2 -> SCALE_TIME_CODE[2];
+            // hours
+          case 3 -> SCALE_TIME_CODE[3];
+            // seconds
+          default -> SCALE_TIME_CODE[1];
+        };
+  }
+
+  public int getScaleTimeCode() {
+    // DEFAULT: seconds
+    int retval = 1;
+    if (scaletime == null) {
+      return retval;
+    }
+
+    if (scaletime.equals(SCALE_TIME_CODE[0])) {
+      retval = 0;
+    } else if (scaletime.equals(SCALE_TIME_CODE[2])) {
+      retval = 2;
+    } else if (scaletime.equals(SCALE_TIME_CODE[3])) {
+      retval = 3;
+    }
+    return retval;
+  }
+
+  public void setScaleTimeField(String scaleTimeField) {
+    this.scaleTimeField = Utils.isEmpty(scaleTimeField) ? null : scaleTimeField;
+  }
+
+  @Override
+  public void setDefault() {
+    // default one second
+    timeout = "1";
+    // defaults to "seconds"
+    scaletime = DEFAULT_SCALE_TIME;
+    timeoutField = null;
+    scaleTimeFromField = false;
+    scaleTimeField = null;
+  }
+
+  @Override
+  public void getFields(
+      IRowMeta rowMeta,
+      String origin,
+      IRowMeta[] info,
+      TransformMeta nextTransform,
+      IVariables variables,
+      IHopMetadataProvider metadataProvider)
+      throws HopTransformException {
+    // Not needed for this Transform
+  }
+
+  @Override
+  public void check(
+      List<ICheckResult> remarks,
+      PipelineMeta pipelineMeta,
+      TransformMeta transformMeta,
+      IRowMeta prev,
+      String[] input,
+      String[] output,
+      IRowMeta info,
+      IVariables variables,
+      IHopMetadataProvider metadataProvider) {
+    CheckResult cr;
+    String errorMessage = "";
+
+    if (Utils.isEmpty(timeout) && Utils.isEmpty(timeoutField)) {
+      errorMessage = BaseMessages.getString(PKG, "DelayMeta.CheckResult.TimeOutMissing");
+      cr = new CheckResult(ICheckResult.TYPE_RESULT_ERROR, errorMessage, transformMeta);
+    } else {
+      errorMessage = BaseMessages.getString(PKG, "DelayMeta.CheckResult.TimeOutOk");
+      cr = new CheckResult(ICheckResult.TYPE_RESULT_OK, errorMessage, transformMeta);
+    }
+    remarks.add(cr);
+
+    if (prev == null || prev.isEmpty()) {
+      cr =
+          new CheckResult(
+              ICheckResult.TYPE_RESULT_WARNING,
+              BaseMessages.getString(PKG, "DelayMeta.CheckResult.NotReceivingFields"),
+              transformMeta);
+    } else {
+      cr =
+          new CheckResult(
+              ICheckResult.TYPE_RESULT_OK,
+              BaseMessages.getString(
+                  PKG, "DelayMeta.CheckResult.TransformRecevingData", prev.size() + ""),
+              transformMeta);
+    }
+    remarks.add(cr);
+
+    // See if we have input streams leading to this transform!
+    if (input.length > 0) {
+      cr =
+          new CheckResult(
+              ICheckResult.TYPE_RESULT_OK,
+              BaseMessages.getString(PKG, "DelayMeta.CheckResult.TransformRecevingData2"),
+              transformMeta);
+    } else {
+      cr =
+          new CheckResult(
+              ICheckResult.TYPE_RESULT_ERROR,
+              BaseMessages.getString(
+                  PKG, "DelayMeta.CheckResult.NoInputReceivedFromOtherTransforms"),
+              transformMeta);
+    }
+    remarks.add(cr);
+
+    if (prev != null && !prev.isEmpty()) {
+      if (!Utils.isEmpty(timeoutField) && prev.indexOfValue(timeoutField) < 0) {
+        remarks.add(
+            new CheckResult(
+                ICheckResult.TYPE_RESULT_ERROR,
+                BaseMessages.getString(
+                    PKG, "DelayMeta.CheckResult.TimeoutFieldNotFound", timeoutField),
+                transformMeta));
+      }
+
+      if (scaleTimeFromField) {
+        if (Utils.isEmpty(scaleTimeField)) {
+          remarks.add(
+              new CheckResult(
+                  ICheckResult.TYPE_RESULT_ERROR,
+                  BaseMessages.getString(PKG, "DelayMeta.CheckResult.ScaleTimeFieldMissing"),
+                  transformMeta));
+        } else if (prev.indexOfValue(scaleTimeField) < 0) {
+          remarks.add(
+              new CheckResult(
+                  ICheckResult.TYPE_RESULT_ERROR,
+                  BaseMessages.getString(
+                      PKG, "DelayMeta.CheckResult.ScaleTimeFieldNotFound", scaleTimeField),
+                  transformMeta));
+        }
+      }
+    }
+  }
+}

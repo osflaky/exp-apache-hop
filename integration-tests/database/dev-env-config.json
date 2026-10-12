@@ -1,0 +1,44 @@
+{
+  "variables": [
+    {
+      "name": "sample-var2",
+      "value": "ProvaDev2",
+      "description": ""
+    },
+    {
+      "name": "sample-var1",
+      "value": "ProvaDev1",
+      "description": ""
+    },
+    {
+      "name": "DATABASE_NAME",
+      "value": "unit-test-db",
+      "description": ""
+    },
+    {
+      "name": "MYSQL_USER",
+      "value": "root",
+      "description": ""
+    },
+    {
+      "name": "MYSQL_PASSWORD",
+      "value": "my-secret-pw",
+      "description": ""
+    },
+    {
+      "name": "MYSQL_HOST",
+      "value": "mysql",
+      "description": ""
+    },
+    {
+      "name": "MYSQL_PORT",
+      "value": "3306",
+      "description": ""
+    },
+    {
+      "name": "MYSQL_DATABASE",
+      "value": "sys",
+      "description": ""
+    }
+  ]
+}

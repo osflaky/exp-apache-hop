@@ -1,0 +1,51 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.pipeline.transforms.missing;
+
+import java.util.ArrayList;
+import java.util.List;
+import lombok.Getter;
+import lombok.Setter;
+import org.apache.hop.metadata.api.IMissingPlugin;
+import org.apache.hop.pipeline.transform.BaseTransformMeta;
+
+/**
+ * Stands in for a transform whose plugin isn't installed. It keeps the XML of the original
+ * transform untouched so that opening and saving the pipeline doesn't destroy the configuration of
+ * that transform.
+ */
+@Getter
+@Setter
+public class Missing extends BaseTransformMeta<MissingTransform, MissingData>
+    implements IMissingPlugin {
+  private String transformName;
+  private String missingPluginId;
+  private List<String> preservedXml = new ArrayList<>();
+
+  public Missing(String transformName, String missingPluginId) {
+    this.transformName = transformName;
+    this.missingPluginId = missingPluginId;
+  }
+
+  @Override
+  public Object clone() {
+    Missing clone = (Missing) super.clone();
+    clone.preservedXml = new ArrayList<>(preservedXml);
+    return clone;
+  }
+}

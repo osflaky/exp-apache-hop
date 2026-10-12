@@ -1,0 +1,526 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.workflow.actions.folderscompare;
+
+import java.io.BufferedInputStream;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import lombok.Getter;
+import lombok.Setter;
+import org.apache.commons.vfs2.FileObject;
+import org.apache.commons.vfs2.FileSelectInfo;
+import org.apache.commons.vfs2.FileSelector;
+import org.apache.commons.vfs2.FileType;
+import org.apache.hop.core.ICheckResult;
+import org.apache.hop.core.Result;
+import org.apache.hop.core.annotations.Action;
+import org.apache.hop.core.exception.HopFileException;
+import org.apache.hop.core.io.CountingInputStream;
+import org.apache.hop.core.util.Utils;
+import org.apache.hop.core.variables.IVariables;
+import org.apache.hop.core.vfs.HopVfs;
+import org.apache.hop.i18n.BaseMessages;
+import org.apache.hop.metadata.api.HopMetadataProperty;
+import org.apache.hop.metadata.api.IHopMetadataProvider;
+import org.apache.hop.workflow.WorkflowMeta;
+import org.apache.hop.workflow.action.ActionBase;
+import org.apache.hop.workflow.action.IAction;
+import org.apache.hop.workflow.action.validator.AbstractFileValidator;
+import org.apache.hop.workflow.action.validator.ActionValidatorUtils;
+import org.apache.hop.workflow.action.validator.AndValidator;
+import org.apache.hop.workflow.action.validator.ValidatorContext;
+
+/**
+ * This defines a 'folder compare' action. It will compare 2 folders, and will either follow the
+ * true flow upon the files being the same or the false flow otherwise.
+ */
+@Action(
+    id = "FOLDERS_COMPARE",
+    name = "i18n::ActionFoldersCompare.Name",
+    description = "i18n::ActionFoldersCompare.Description",
+    image = "FoldersCompare.svg",
+    categoryDescription = "i18n:org.apache.hop.workflow:ActionCategory.Category.FileManagement",
+    keywords = "i18n::ActionFoldersCompare.keyword",
+    documentationUrl = "/workflow/actions/comparefolders.html")
+@Getter
+@Setter
+public class ActionFoldersCompare extends ActionBase implements Cloneable, IAction {
+  private static final Class<?> PKG = ActionFoldersCompare.class;
+  private static final String CONST_SPACE_SHORT = "      ";
+  private static final String CONST_IS_A_FILE = "ActionFoldersCompare.Log.IsAFile";
+  private static final String CONST_IS_A_FOLDER = "ActionFoldersCompare.Log.IsAFolder";
+  private static final String CONST_IS_UNKNOWN_FILE_TYPE =
+      "ActionFoldersCompare.Log.IsUnknownFileType";
+  private static final String CONST_FILENAME1 = "filename1";
+  private static final String CONST_FILENAME2 = "filename2";
+
+  @HopMetadataProperty(key = "include_subfolders")
+  private boolean includeSubFolders;
+
+  @HopMetadataProperty(key = "compare_filecontent")
+  private boolean compareFileContent;
+
+  @HopMetadataProperty(key = "compare_filesize")
+  private boolean compareFileSize;
+
+  @HopMetadataProperty(key = "compareonly")
+  private String compareOnly;
+
+  @HopMetadataProperty(key = "wildcard")
+  private String wildcard;
+
+  @HopMetadataProperty(key = "filename1")
+  private String filename1;
+
+  @HopMetadataProperty(key = "filename2")
+  private String filename2;
+
+  public ActionFoldersCompare(String n) {
+    super(n, "");
+    includeSubFolders = false;
+    compareFileSize = false;
+    compareFileContent = false;
+    compareOnly = "all";
+    wildcard = null;
+    filename1 = null;
+    filename2 = null;
+  }
+
+  public ActionFoldersCompare() {
+    this("");
+  }
+
+  public String getRealWildcard() {
+    return resolve(getWildcard());
+  }
+
+  public String getRealFilename1() {
+    return resolve(getFilename1());
+  }
+
+  public String getRealFilename2() {
+    return resolve(getFilename2());
+  }
+
+  /**
+   * Check whether 2 files have the same contents.
+   *
+   * @param file1 first file to compare
+   * @param file2 second file to compare
+   * @param result result to add bytes read to (for data volume tracking)
+   * @return true if files are equal, false if they are not
+   * @throws HopFileException upon IO problems
+   */
+  protected boolean equalFileContents(FileObject file1, FileObject file2, Result result)
+      throws HopFileException {
+    // Really read the contents and do comparisons.
+    try (CountingInputStream in1 =
+            new CountingInputStream(
+                new BufferedInputStream(
+                    HopVfs.getInputStream(HopVfs.getFilename(file1), getVariables())));
+        CountingInputStream in2 =
+            new CountingInputStream(
+                new BufferedInputStream(
+                    HopVfs.getInputStream(HopVfs.getFilename(file2), getVariables())))) {
+
+      int b1;
+      int b2;
+      while (true) {
+        b1 = in1.read();
+        b2 = in2.read();
+        if (b1 == -1 || b2 == -1) {
+          break;
+        }
+        if (b1 != b2) {
+          return false;
+        }
+      }
+      result.setBytesReadThisAction(
+          result.getBytesReadThisAction() + in1.getCount() + in2.getCount());
+      // Both streams must be at EOF for files to be equal
+      return b1 == -1 && b2 == -1;
+    } catch (IOException e) {
+      throw new HopFileException(e);
+    }
+  }
+
+  @Override
+  public Result execute(Result result, int nr) {
+    result.setResult(false);
+    boolean ok = true;
+
+    String realFilename1 = getRealFilename1();
+    String realFilename2 = getRealFilename2();
+
+    FileObject folder1 = null;
+    FileObject folder2 = null;
+    FileObject filefolder1 = null;
+    FileObject filefolder2 = null;
+
+    try {
+      if (filename1 != null && filename2 != null) {
+        // Get Folders/Files to compare
+        folder1 = HopVfs.getFileObject(realFilename1, getVariables());
+        folder2 = HopVfs.getFileObject(realFilename2, getVariables());
+
+        if (folder1.exists() && folder2.exists()) {
+          if (!folder1.getType().equals(folder2.getType())) {
+            // pb...we try to compare file with folder !!!
+            logError(
+                BaseMessages.getString(PKG, "ActionFoldersCompare.Log.CanNotCompareFilesFolders"));
+
+            if (folder1.getType() == FileType.FILE) {
+              logError(BaseMessages.getString(PKG, CONST_IS_A_FILE, realFilename1));
+            } else if (folder1.getType() == FileType.FOLDER) {
+              logError(BaseMessages.getString(PKG, CONST_IS_A_FOLDER, realFilename1));
+            } else {
+              logError(BaseMessages.getString(PKG, CONST_IS_UNKNOWN_FILE_TYPE, realFilename1));
+            }
+
+            if (folder2.getType() == FileType.FILE) {
+              logError(BaseMessages.getString(PKG, CONST_IS_A_FILE, realFilename2));
+            } else if (folder2.getType() == FileType.FOLDER) {
+              logError(BaseMessages.getString(PKG, CONST_IS_A_FOLDER, realFilename2));
+            } else {
+              logError(BaseMessages.getString(PKG, CONST_IS_UNKNOWN_FILE_TYPE, realFilename2));
+            }
+
+          } else {
+            if (folder1.getType() == FileType.FILE) {
+              // simply compare 2 files ..
+              result.setResult(equalFileContents(folder1, folder2, result));
+            } else if (folder1.getType() == FileType.FOLDER) {
+              // We compare 2 folders ...
+
+              FileObject[] list1 = folder1.findFiles(new TextFileSelector(folder1.toString()));
+              FileObject[] list2 = folder2.findFiles(new TextFileSelector(folder2.toString()));
+
+              int lenList1 = list1.length;
+              int lenList2 = list2.length;
+
+              if (isDetailed()) {
+                logDetailed(
+                    BaseMessages.getString(
+                        PKG,
+                        "ActionFoldersCompare.Log.FolderContains",
+                        realFilename1,
+                        "" + lenList1));
+                logDetailed(
+                    BaseMessages.getString(
+                        PKG,
+                        "ActionFoldersCompare.Log.FolderContains",
+                        realFilename2,
+                        "" + lenList2));
+              }
+              if (lenList1 == lenList2) {
+
+                HashMap<String, String> collection1 = new HashMap<>();
+                HashMap<String, String> collection2 = new HashMap<>();
+
+                for (FileObject object : list1) {
+                  // Put files list1 in TreeMap collection1
+                  collection1.put(object.getName().getBaseName(), object.toString());
+                }
+
+                for (FileObject fileObject : list2) {
+                  // Put files list2 in TreeMap collection2
+                  collection2.put(fileObject.getName().getBaseName(), fileObject.toString());
+                }
+
+                // Let's now fetch Folder1
+                // and for each entry, we will search it in Folder2
+                // if the entry exists... we will compare file entry (file or folder?)
+                // if the 2 entry are file (not folder), we will compare content
+                Set<Map.Entry<String, String>> entrees = collection1.entrySet();
+
+                for (Map.Entry<String, String> entree : entrees) {
+                  if (!collection2.containsKey(entree.getKey())) {
+                    ok = false;
+                    if (isDetailed()) {
+                      logDetailed(
+                          BaseMessages.getString(
+                              PKG,
+                              "ActionFoldersCompare.Log.FileCanNotBeFoundIn",
+                              entree.getKey(),
+                              realFilename2));
+                    }
+                  } else {
+                    if (isDebug()) {
+                      logDebug(
+                          BaseMessages.getString(
+                              PKG,
+                              "ActionFoldersCompare.Log.FileIsFoundIn",
+                              entree.getKey(),
+                              realFilename2));
+                    }
+
+                    filefolder1 = HopVfs.getFileObject(entree.getValue(), getVariables());
+                    filefolder2 =
+                        HopVfs.getFileObject(collection2.get(entree.getKey()), getVariables());
+
+                    if (!filefolder2.getType().equals(filefolder1.getType())) {
+                      // The file1 exist in the folder2..but they don't have the same type
+                      ok = false;
+                      if (isDetailed()) {
+                        logDetailed(
+                            BaseMessages.getString(
+                                PKG,
+                                "ActionFoldersCompare.Log.FilesNotSameType",
+                                filefolder1.toString(),
+                                filefolder2.toString()));
+                      }
+
+                      if (filefolder1.getType() == FileType.FILE) {
+                        logError(
+                            BaseMessages.getString(PKG, CONST_IS_A_FILE, filefolder1.toString()));
+                      } else if (filefolder1.getType() == FileType.FOLDER) {
+                        logError(
+                            BaseMessages.getString(PKG, CONST_IS_A_FOLDER, filefolder1.toString()));
+                      } else {
+                        logError(
+                            BaseMessages.getString(
+                                PKG, CONST_IS_UNKNOWN_FILE_TYPE, filefolder1.toString()));
+                      }
+
+                      if (filefolder2.getType() == FileType.FILE) {
+                        logError(
+                            BaseMessages.getString(PKG, CONST_IS_A_FILE, filefolder2.toString()));
+                      } else if (filefolder2.getType() == FileType.FOLDER) {
+                        logError(
+                            BaseMessages.getString(PKG, CONST_IS_A_FOLDER, filefolder2.toString()));
+                      } else {
+                        logError(
+                            BaseMessages.getString(
+                                PKG, CONST_IS_UNKNOWN_FILE_TYPE, filefolder2.toString()));
+                      }
+
+                    } else {
+                      // Files are the same type ...
+                      if (filefolder2.getType() == FileType.FILE) {
+                        // Let's compare file size
+                        if (compareFileSize) {
+                          long filefolder1Size = filefolder1.getContent().getSize();
+                          long filefolder2Size = filefolder2.getContent().getSize();
+                          if (filefolder1Size != filefolder2Size) {
+                            ok = false;
+                            if (isDetailed()) {
+                              logDetailed(
+                                  BaseMessages.getString(
+                                      PKG,
+                                      "ActionFoldersCompare.Log.FilesNotSameSize",
+                                      filefolder1.toString(),
+                                      filefolder2.toString()));
+                              logDetailed(
+                                  BaseMessages.getString(
+                                      PKG,
+                                      "ActionFoldersCompare.Log.SizeFileIs",
+                                      filefolder1.toString(),
+                                      "" + filefolder1Size));
+                              logDetailed(
+                                  BaseMessages.getString(
+                                      PKG,
+                                      "ActionFoldersCompare.Log.SizeFileIs",
+                                      filefolder2.toString(),
+                                      "" + filefolder2Size));
+                            }
+                          }
+                        }
+
+                        if (ok
+                            && compareFileContent
+                            && !equalFileContents(filefolder1, filefolder2, result)) {
+                          // Let's compare files content..
+                          ok = false;
+                          if (isDetailed()) {
+                            logDetailed(
+                                BaseMessages.getString(
+                                    PKG,
+                                    "ActionFoldersCompare.Log.FilesNotSameContent",
+                                    filefolder1.toString(),
+                                    filefolder2.toString()));
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+
+                result.setResult(ok);
+              } else {
+                // The 2 folders don't have the same files number
+                if (isDetailed()) {
+                  logDetailed(
+                      BaseMessages.getString(
+                          PKG,
+                          "ActionFoldersCompare.Log.FoldersDifferentFiles",
+                          realFilename1,
+                          realFilename2));
+                }
+              }
+            }
+            // else: File type unknown !!
+          }
+
+        } else {
+          if (!folder1.exists()) {
+            logError(
+                BaseMessages.getString(PKG, "ActionFileCompare.Log.FileNotExist", realFilename1));
+          }
+          if (!folder2.exists()) {
+            logError(
+                BaseMessages.getString(PKG, "ActionFileCompare.Log.FileNotExist", realFilename2));
+          }
+          result.setResult(false);
+          result.setNrErrors(1);
+        }
+      } else {
+        logError(BaseMessages.getString(PKG, "ActionFoldersCompare.Log.Need2Files"));
+      }
+    } catch (Exception e) {
+      result.setResult(false);
+      result.setNrErrors(1);
+      logError(
+          BaseMessages.getString(
+              PKG,
+              "ActionFoldersCompare.Log.ErrorComparing",
+              realFilename2,
+              realFilename2,
+              e.getMessage()));
+    } finally {
+      try {
+        if (folder1 != null) {
+          folder1.close();
+          folder1 = null;
+        }
+        if (folder2 != null) {
+          folder2.close();
+          folder2 = null;
+        }
+        if (filefolder1 != null) {
+          filefolder1.close();
+          filefolder1 = null;
+        }
+        if (filefolder2 != null) {
+          filefolder2.close();
+          filefolder2 = null;
+        }
+      } catch (IOException e) {
+        // Ignore errors
+      }
+    }
+
+    return result;
+  }
+
+  private class TextFileSelector implements FileSelector {
+    String sourceFolder = null;
+
+    public TextFileSelector(String sourcefolderin) {
+      if (!Utils.isEmpty(sourcefolderin)) {
+        sourceFolder = sourcefolderin;
+      }
+    }
+
+    @Override
+    public boolean includeFile(FileSelectInfo info) {
+      if (info.getFile().toString().equals(sourceFolder)) {
+        return false;
+      }
+
+      boolean returncode = false;
+      try {
+        // Pass over the Base folder itself
+        String shortFilename = info.getFile().getName().getBaseName();
+
+        if (info.getFile().getParent().equals(info.getBaseFolder())) {
+          // In the Base Folder...
+          if ((info.getFile().getType() == FileType.FILE && compareOnly.equals("only_files"))
+              || (info.getFile().getType() == FileType.FOLDER && compareOnly.equals("only_folders"))
+              || (getFileWildcard(shortFilename) && compareOnly.equals("specify"))
+              || (compareOnly.equals("all"))) {
+            returncode = true;
+          }
+        } else {
+          // Not in the Base Folder... Only if include sub folders
+
+          if ((includeSubFolders
+                  && (info.getFile().getType() == FileType.FILE && compareOnly.equals("only_files"))
+              || (info.getFile().getType() == FileType.FOLDER && compareOnly.equals("only_folders"))
+              || (getFileWildcard(shortFilename) && compareOnly.equals("specify"))
+              || (compareOnly.equals("all")))) {
+            returncode = true;
+          }
+        }
+      } catch (Exception e) {
+        logError(
+            "Error while finding files ... in ["
+                + info.getFile().toString()
+                + "]. Exception :"
+                + e.getMessage());
+      }
+      return returncode;
+    }
+
+    @Override
+    public boolean traverseDescendents(FileSelectInfo info) {
+      return info.getDepth() == 0 || includeSubFolders;
+    }
+  }
+
+  /**
+   * @param selectedFile The selected file
+   * @return True if the selected file matches the wildcard
+   */
+  private boolean getFileWildcard(String selectedFile) {
+    Pattern pattern;
+    boolean getIt = true;
+
+    if (!Utils.isEmpty(wildcard)) {
+      pattern = Pattern.compile(wildcard);
+      // First see if the file matches the regular expression!
+      Matcher matcher = pattern.matcher(selectedFile);
+      getIt = matcher.matches();
+    }
+
+    return getIt;
+  }
+
+  @Override
+  public boolean isEvaluation() {
+    return true;
+  }
+
+  @Override
+  public void check(
+      List<ICheckResult> remarks,
+      WorkflowMeta workflowMeta,
+      IVariables variables,
+      IHopMetadataProvider metadataProvider) {
+    ValidatorContext ctx = new ValidatorContext();
+    AbstractFileValidator.putVariableSpace(ctx, getVariables());
+    AndValidator.putValidators(
+        ctx, ActionValidatorUtils.notNullValidator(), ActionValidatorUtils.fileExistsValidator());
+    ActionValidatorUtils.andValidator().validate(this, CONST_FILENAME1, remarks, ctx);
+    ActionValidatorUtils.andValidator().validate(this, CONST_FILENAME2, remarks, ctx);
+  }
+}

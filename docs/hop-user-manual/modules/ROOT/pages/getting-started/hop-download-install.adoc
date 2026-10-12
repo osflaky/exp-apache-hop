@@ -1,0 +1,147 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+[[DownloadInstall]]
+:imagesdir: ../../assets/images
+:page-pagination:
+:description: Getting Started (2/9): installing Hop is download, unzip, start. This page also covers the Java requirement, the Docker images, and the one configuration step worth doing before you begin.
+
+= Download and install Hop
+
+Hop is designed to be as easy and accessible to use as possible.
+There is no installer and no server to set up: download, unzip, start.
+
+== Check your Java
+
+Hop is self-contained. The only thing it needs is a Java runtime.
+
+The official Java version for Hop is **21**.
+
+[source,shell]
+----
+java -version
+----
+
+You should see something like:
+
+[source,shell]
+----
+openjdk version "21.0.10" 2026-01-20
+OpenJDK Runtime Environment (build 21.0.10)
+OpenJDK 64-Bit Server VM (build 21.0.10, mixed mode, sharing)
+----
+
+If that command is not found, or reports an older version, install a Java 21 runtime first.
+See xref:supported-jvms.adoc[Supported Java Versions] for which runtimes are known to work, and which one to avoid.
+
+== Download and unzip
+
+Download the client from the https://hop.apache.org/download/[Apache Hop downloads page] and unzip it to a folder of your choice.
+
+That folder is your Hop installation.
+Everything you need is in it:
+
+[options="header"]
+|===
+|What|Where
+|The launcher scripts|`hop`, `hop.bat` and the individual `hop-*.sh` / `hop-*.bat` scripts
+|Configuration|`config/`
+|Plugins|`plugins/`
+|Projects created for you|`config/projects/default` and `config/projects/samples`
+|===
+
+== One step worth doing now
+
+By default Hop keeps its configuration inside the installation folder.
+That means an upgrade - a new unzip - leaves your projects and settings behind in the old folder.
+
+Point Hop at a user-level configuration folder instead, once, before you start:
+
+[tabs]
+====
+Windows::
++
+--
+[source,shell]
+----
+hop.bat setup apply --defaults
+----
+--
+
+Linux, macOS::
++
+--
+[source,shell]
+----
+./hop setup apply --defaults
+----
+--
+====
+
+Restart Hop afterwards.
+You can do the same thing from the GUI later with *Tools -> Configure Hop environment...*.
+
+See xref:hop-tools/hop-setup.adoc[Hop Setup] for what it changes and how to undo it.
+
+== Start Hop Gui
+
+[tabs]
+====
+Windows::
++
+--
+[source,shell]
+----
+hop-gui.bat
+----
+--
+
+Linux, macOS::
++
+--
+[source,shell]
+----
+./hop-gui.sh
+----
+--
+====
+
+The first start takes a little longer than the ones after it, because Hop scans and registers its plugins.
+
+== Other ways to run Hop
+
+Unzipping the client is the right way to start, but it is not the only option:
+
+[options="header",cols="25%,45%,30%"]
+|===
+|Option|When you'd use it|Read more
+
+|Docker - `apache/hop`
+|Running pipelines and workflows in a container, and Hop Server. This is how most production deployments run.
+|xref:docker-container.adoc[Hop in Docker]
+
+|Docker - `apache/hop-web`
+|Hop Gui in a browser, for shared or hosted development environments.
+|xref:hop-web-docker.adoc[Hop Web in Docker]
+
+|Hop Web
+|The same Hop Gui, running in a browser instead of on your desktop.
+|xref:hop-gui/hop-web.adoc[Hop Web]
+|===
+
+TIP: xref:installation-configuration.adoc[Installation and Configuration] covers system requirements, memory settings and the environment variables Hop reads at startup.
+
+Now that Hop is running, let's look at the words Hop uses for things.

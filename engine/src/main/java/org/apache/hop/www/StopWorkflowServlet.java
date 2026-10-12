@@ -1,0 +1,191 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.www;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
+
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.Serial;
+import java.net.URLEncoder;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.annotations.HopServerServlet;
+import org.apache.hop.core.util.Utils;
+import org.apache.hop.core.xml.XmlHandler;
+import org.apache.hop.i18n.BaseMessages;
+import org.apache.hop.workflow.WorkflowMeta;
+import org.apache.hop.workflow.engine.IWorkflowEngine;
+import org.owasp.encoder.Encode;
+
+@HopServerServlet(id = "stopWorkflow", name = "Stop a workflow")
+public class StopWorkflowServlet extends BaseHttpServlet implements IHopServerPlugin {
+  private static final Class<?> PKG = StopWorkflowServlet.class;
+  @Serial private static final long serialVersionUID = 3634806745372015720L;
+  public static final String CONTEXT_PATH = "/hop/stopWorkflow";
+
+  public StopWorkflowServlet() {}
+
+  public StopWorkflowServlet(WorkflowMap workflowMap) {
+    super(workflowMap);
+  }
+
+  @Override
+  public void doGet(HttpServletRequest request, HttpServletResponse response)
+      throws ServletException, IOException {
+    if (isJettyMode() && !request.getContextPath().startsWith(CONTEXT_PATH)) {
+      return;
+    }
+
+    if (log.isDebug()) {
+      logDebug(BaseMessages.getString(PKG, "StopWorkflowServlet.log.StopWorkflowRequested"));
+    }
+
+    String workflowName = request.getParameter("name");
+    String id = request.getParameter("id");
+    boolean useXML = "Y".equalsIgnoreCase(request.getParameter("xml"));
+    boolean useJson = isJsonRequest(request);
+
+    PrintWriter out = getSafeWriter(response);
+    if (out == null) {
+      return;
+    }
+    try {
+      if (useXML) {
+        response.setContentType("text/xml");
+        response.setCharacterEncoding(Const.UTF_8);
+        out.print(XmlHandler.getXmlHeader(Const.UTF_8));
+      } else if (useJson) {
+        response.setContentType("application/json");
+        response.setCharacterEncoding(Const.UTF_8);
+      } else {
+        response.setContentType("text/html;charset=UTF-8");
+        out.println("<HTML>");
+        out.println("<HEAD>");
+        out.println("<TITLE>Stop workflow</TITLE>");
+        out.println(
+            "<META http-equiv=\"Refresh\" content=\"2;url="
+                + convertContextPath(GetWorkflowStatusServlet.CONTEXT_PATH)
+                + "?name="
+                + URLEncoder.encode(workflowName, UTF_8)
+                + "\">");
+        out.println("<META http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\">");
+        out.println("</HEAD>");
+        out.println("<BODY>");
+      }
+
+      // ID is optional...
+      //
+      IWorkflowEngine<WorkflowMeta> workflow;
+      HopServerObjectEntry entry;
+      if (Utils.isEmpty(id)) {
+        // get the first workflow that matches...
+        //
+        entry = getWorkflowMap().getFirstHopServerObjectEntry(workflowName);
+        if (entry == null) {
+          workflow = null;
+        } else {
+          id = entry.getId();
+          workflow = getWorkflowMap().getWorkflow(entry);
+        }
+      } else {
+        // Take the ID into account!
+        //
+        entry = new HopServerObjectEntry(workflowName, id);
+        workflow = getWorkflowMap().getWorkflow(entry);
+      }
+
+      if (workflow != null) {
+        workflow.stopExecution();
+
+        String message =
+            BaseMessages.getString(
+                PKG, "WorkflowStatusServlet.Log.WorkflowStopRequested", workflowName);
+        if (useXML) {
+          out.println(new WebResult(WebResult.STRING_OK, message).getXml());
+        } else if (useJson) {
+          out.println(new WebResult(WebResult.STRING_OK, message).getJson());
+        } else {
+          out.println("<H1>" + Encode.forHtml(message) + "</H1>");
+          out.println(
+              "<a href=\""
+                  + convertContextPath(GetWorkflowStatusServlet.CONTEXT_PATH)
+                  + "?name="
+                  + URLEncoder.encode(workflowName, UTF_8)
+                  + "&id="
+                  + URLEncoder.encode(id, UTF_8)
+                  + "\">"
+                  + BaseMessages.getString(PKG, "WorkflowStatusServlet.BackToWorkflowStatusPage")
+                  + "</a><p>");
+        }
+      } else {
+        String message =
+            BaseMessages.getString(
+                PKG, "StopWorkflowServlet.Log.CoundNotFindWorkflow", workflowName);
+        if (useXML) {
+          out.println(new WebResult(WebResult.STRING_ERROR, message).getXml());
+        } else if (useJson) {
+          out.println(new WebResult(WebResult.STRING_ERROR, message).getJson());
+        } else {
+          out.println("<H1>" + Encode.forHtml(message) + "</H1>");
+          out.println(
+              "<a href=\""
+                  + convertContextPath(GetStatusServlet.CONTEXT_PATH)
+                  + "\">"
+                  + BaseMessages.getString(PKG, "PipelineStatusServlet.BackToStatusPage")
+                  + "</a><p>");
+          response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+        }
+      }
+    } catch (Exception ex) {
+      if (useXML) {
+        out.println(new WebResult(WebResult.STRING_ERROR, Const.getStackTracker(ex)).getXml());
+      } else if (useJson) {
+        out.println(new WebResult(WebResult.STRING_ERROR, Const.getStackTracker(ex)).getJson());
+      } else {
+        out.println("<p>");
+        out.println("<pre>");
+        out.println(Encode.forHtml(Const.getStackTracker(ex)));
+        out.println("</pre>");
+        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+      }
+    }
+
+    if (!useXML && !useJson) {
+      out.println("<p>");
+      out.println("</BODY>");
+      out.println("</HTML>");
+    }
+  }
+
+  public String toString() {
+    return "Stop workflow";
+  }
+
+  @Override
+  public String getService() {
+    return CONTEXT_PATH + " (" + toString() + ")";
+  }
+
+  @Override
+  public String getContextPath() {
+    return CONTEXT_PATH;
+  }
+}

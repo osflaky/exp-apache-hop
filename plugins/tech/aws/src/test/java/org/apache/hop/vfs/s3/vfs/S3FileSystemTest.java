@@ -1,0 +1,183 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.hop.vfs.s3.vfs;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import org.apache.commons.vfs2.FileName;
+import org.apache.commons.vfs2.FileSystemOptions;
+import org.apache.commons.vfs2.FileType;
+import org.apache.commons.vfs2.UserAuthenticationData;
+import org.apache.commons.vfs2.UserAuthenticator;
+import org.apache.commons.vfs2.impl.DefaultFileSystemConfigBuilder;
+import org.apache.hop.core.HopEnvironment;
+import org.apache.hop.core.util.StorageUnitConverter;
+import org.apache.hop.vfs.s3.s3.vfs.S3FileName;
+import org.apache.hop.vfs.s3.s3.vfs.S3FileProvider;
+import org.apache.hop.vfs.s3.s3.vfs.S3FileSystem;
+import org.apache.hop.vfs.s3.s3common.S3CommonFileSystemConfigBuilder;
+import org.apache.hop.vfs.s3.s3common.S3HopProperty;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+/** Unit tests for S3FileSystem */
+class S3FileSystemTest {
+
+  S3FileSystem fileSystem;
+  S3FileName fileName;
+
+  @BeforeAll
+  static void initHop() throws Exception {
+    HopEnvironment.init();
+  }
+
+  @BeforeEach
+  void setUp() {
+    fileName = new S3FileName(S3FileNameTest.SCHEME, "/", "", FileType.FOLDER);
+    fileSystem = new S3FileSystem(fileName, new FileSystemOptions());
+  }
+
+  @Test
+  void testCreateFile() throws Exception {
+    assertNotNull(
+        fileSystem.createFile(
+            new S3FileName("s3", "bucketName", "/bucketName/key", FileType.FILE)));
+  }
+
+  @Test
+  void testGetS3Service() {
+    assertNotNull(fileSystem.getS3Client());
+
+    FileSystemOptions options = new FileSystemOptions();
+    UserAuthenticator authenticator = mock(UserAuthenticator.class);
+    UserAuthenticationData authData = mock(UserAuthenticationData.class);
+    when(authenticator.requestAuthentication(S3FileProvider.AUTHENTICATOR_TYPES))
+        .thenReturn(authData);
+    when(authData.getData(UserAuthenticationData.USERNAME)).thenReturn("username".toCharArray());
+    when(authData.getData(UserAuthenticationData.PASSWORD)).thenReturn("password".toCharArray());
+    DefaultFileSystemConfigBuilder.getInstance().setUserAuthenticator(options, authenticator);
+
+    fileSystem = new S3FileSystem(fileName, options);
+    assertNotNull(fileSystem.getS3Client());
+  }
+
+  @Test
+  void getPartSize() {
+
+    S3FileSystem s3FileSystem = getTestInstance();
+    s3FileSystem.storageUnitConverter = new StorageUnitConverter();
+    S3HopProperty s3HopProperty = mock(S3HopProperty.class);
+    when(s3HopProperty.getPartSize()).thenReturn("6MB");
+    s3FileSystem.s3HopProperty = s3HopProperty;
+
+    // TEST 1: Below max
+    assertEquals(6 * 1024 * 1024, s3FileSystem.getPartSize());
+
+    // TEst 2: above max
+    when(s3HopProperty.getPartSize()).thenReturn("600GB");
+    assertEquals(Integer.MAX_VALUE, s3FileSystem.getPartSize());
+  }
+
+  @Test
+  void testParsePartSize() {
+    S3FileSystem s3FileSystem = getTestInstance();
+    s3FileSystem.storageUnitConverter = new StorageUnitConverter();
+    long _5MBLong = 5L * 1024L * 1024L;
+    long _124MBLong = 124L * 1024L * 1024L;
+    long _5GBLong = 5L * 1024L * 1024L * 1024L;
+    long _12GBLong = 12L * 1024L * 1024L * 1024L;
+
+    // TEST 1: below minimum
+    assertEquals(_5MBLong, s3FileSystem.parsePartSize("1MB"));
+
+    // TEST 2: at minimum
+    assertEquals(_5MBLong, s3FileSystem.parsePartSize("5MB"));
+
+    // TEST 3: between minimum and maximum
+    assertEquals(_124MBLong, s3FileSystem.parsePartSize("124MB"));
+
+    // TEST 4: at maximum
+    assertEquals(_5GBLong, s3FileSystem.parsePartSize("5GB"));
+
+    // TEST 5: above maximum
+    assertEquals(_12GBLong, s3FileSystem.parsePartSize("12GB"));
+  }
+
+  @Test
+  void testConvertToInt() {
+    S3FileSystem s3FileSystem = getTestInstance();
+
+    // TEST 1: below int max
+    assertEquals(10, s3FileSystem.convertToInt(10L));
+
+    // TEST 2: at int max
+    assertEquals(Integer.MAX_VALUE, s3FileSystem.convertToInt(Integer.MAX_VALUE));
+
+    // TEST 3: above int max
+    assertEquals(Integer.MAX_VALUE, s3FileSystem.convertToInt(5L * 1024L * 1024L * 1024L));
+  }
+
+  @Test
+  void testConvertToLong() {
+    S3FileSystem s3FileSystem = getTestInstance();
+    long _10MBLong = 10L * 1024L * 1024L;
+    s3FileSystem.storageUnitConverter = new StorageUnitConverter();
+    assertEquals(_10MBLong, s3FileSystem.convertToLong("10MB"));
+  }
+
+  @Test
+  void testCacheTtlFromOptions() {
+    FileSystemOptions options = new FileSystemOptions();
+    S3CommonFileSystemConfigBuilder config = new S3CommonFileSystemConfigBuilder(options);
+    config.setCacheTtlSeconds("15");
+
+    S3FileSystem fs = new S3FileSystem(fileName, options);
+    assertNotNull(fs);
+  }
+
+  @Test
+  void testCacheTtlDefaultWhenNotSet() {
+    S3FileSystem fs = new S3FileSystem(fileName, new FileSystemOptions());
+    assertNotNull(fs);
+  }
+
+  @Test
+  void testCacheTtlWithNullOptions() {
+    S3FileSystem fs = new S3FileSystem(fileName, null);
+    assertNotNull(fs);
+  }
+
+  @Test
+  void testCacheTtlWithInvalidValue() {
+    FileSystemOptions options = new FileSystemOptions();
+    S3CommonFileSystemConfigBuilder config = new S3CommonFileSystemConfigBuilder(options);
+    config.setCacheTtlSeconds("notanumber");
+
+    S3FileSystem fs = new S3FileSystem(fileName, options);
+    assertNotNull(fs);
+  }
+
+  public S3FileSystem getTestInstance() {
+    FileName rootName = mock(FileName.class);
+    FileSystemOptions fileSystemOptions = new FileSystemOptions();
+    return new S3FileSystem(rootName, fileSystemOptions);
+  }
+}

@@ -1,0 +1,253 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.www;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import jakarta.servlet.ServletOutputStream;
+import jakarta.servlet.WriteListener;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
+import org.apache.hop.core.exception.HopRuntimeException;
+import org.apache.hop.core.logging.ILogChannel;
+import org.apache.hop.core.variables.IVariables;
+import org.apache.hop.core.variables.Variables;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+class BaseHttpServletTest {
+
+  private BaseHttpServlet servlet;
+
+  @BeforeEach
+  void setUp() {
+    servlet = new BaseHttpServlet();
+    servlet.setLog(mock(ILogChannel.class));
+  }
+
+  @Test
+  void getServletVariablesReadsLiveConfigAfterReplacement() {
+    PipelineMap pipelineMap = new PipelineMap();
+    HopServerConfig config = new HopServerConfig();
+    IVariables first = new Variables();
+    first.setVariable("PROJECT_HOME", "/tmp/project-a");
+    config.setVariables(first);
+    pipelineMap.setHopServerConfig(config);
+
+    servlet.setup(pipelineMap, null);
+    assertEquals("/tmp/project-a", servlet.getServletVariables().getVariable("PROJECT_HOME"));
+
+    IVariables second = new Variables();
+    second.setVariable("PROJECT_HOME", "/tmp/project-b");
+    config.setVariables(second);
+    assertEquals("/tmp/project-b", servlet.getServletVariables().getVariable("PROJECT_HOME"));
+  }
+
+  @Test
+  void copyServletVariablesDoesNotMutateServerSpace() {
+    PipelineMap pipelineMap = new PipelineMap();
+    HopServerConfig config = new HopServerConfig();
+    IVariables serverVars = new Variables();
+    serverVars.setVariable("PROJECT_HOME", "/tmp/project");
+    config.setVariables(serverVars);
+    pipelineMap.setHopServerConfig(config);
+
+    servlet.setup(pipelineMap, null);
+    IVariables copy = servlet.copyServletVariables();
+    copy.setVariable("FOO", "bar");
+
+    assertEquals("/tmp/project", copy.getVariable("PROJECT_HOME"));
+    assertEquals("bar", copy.getVariable("FOO"));
+    assertNull(config.getVariables().getVariable("FOO"));
+    assertEquals("/tmp/project", config.getVariables().getVariable("PROJECT_HOME"));
+  }
+
+  @Test
+  void getServerConfigPrefersPipelineMapOverField() {
+    HopServerConfig fieldConfig = new HopServerConfig();
+    servlet.setServerConfig(fieldConfig);
+
+    PipelineMap pipelineMap = new PipelineMap();
+    HopServerConfig mapConfig = new HopServerConfig();
+    pipelineMap.setHopServerConfig(mapConfig);
+    servlet.setPipelineMap(pipelineMap);
+
+    assertEquals(mapConfig, servlet.getServerConfig());
+  }
+
+  @Test
+  void supportGraphicEnvironmentGetterSetter() {
+    assertFalse(servlet.isSupportGraphicEnvironment());
+    servlet.setSupportGraphicEnvironment(true);
+    assertTrue(servlet.isSupportGraphicEnvironment());
+  }
+
+  @Test
+  void convertContextPathJettyVsNonJetty() {
+    servlet.setJettyMode(true);
+    assertEquals("/hop/status", servlet.convertContextPath("/hop/status"));
+    servlet.setJettyMode(false);
+    assertEquals("status", servlet.convertContextPath("/hop/status"));
+  }
+
+  @Test
+  void isJsonRequestDetectsParameter() {
+    HttpServletRequest request = mock(HttpServletRequest.class);
+    when(request.getParameter("json")).thenReturn("Y");
+    assertTrue(servlet.isJsonRequest(request));
+    when(request.getParameter("json")).thenReturn("n");
+    assertFalse(servlet.isJsonRequest(request));
+  }
+
+  @Test
+  void sendSafeErrorWhenCommittedOnlySetsStatus() throws IOException {
+    HttpServletResponse response = mock(HttpServletResponse.class);
+    when(response.isCommitted()).thenReturn(true);
+    servlet.sendSafeError(response, HttpServletResponse.SC_BAD_REQUEST, "bad");
+    verify(response).setStatus(HttpServletResponse.SC_BAD_REQUEST);
+    verify(response, org.mockito.Mockito.never()).sendError(anyInt(), anyString());
+  }
+
+  @Test
+  void sendSafeErrorFallsBackToSetStatusWhenSendErrorThrows() throws IOException {
+    HttpServletResponse response = mock(HttpServletResponse.class);
+    when(response.isCommitted()).thenReturn(false);
+    doThrow(new IOException("broken")).when(response).sendError(anyInt(), anyString());
+    servlet.sendSafeError(response, HttpServletResponse.SC_CONFLICT, "msg");
+    verify(response).setStatus(HttpServletResponse.SC_CONFLICT);
+  }
+
+  @Test
+  void writeXmlOrJsonApiErrorWritesXmlToOutputStream() throws IOException {
+    HttpServletResponse response = mock(HttpServletResponse.class);
+    when(response.isCommitted()).thenReturn(false);
+    doNothing().when(response).resetBuffer();
+    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    ServletOutputStream sos =
+        new ServletOutputStream() {
+          @Override
+          public boolean isReady() {
+            return true;
+          }
+
+          @Override
+          public void setWriteListener(WriteListener writeListener) {}
+
+          @Override
+          public void write(int b) throws IOException {
+            baos.write(b);
+          }
+        };
+    when(response.getOutputStream()).thenReturn(sos);
+
+    servlet.writeXmlOrJsonApiError(
+        response, null, true, false, "unit test", new IllegalStateException("cause"));
+
+    verify(response).setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+    String body = baos.toString(StandardCharsets.UTF_8);
+    assertTrue(body.contains(WebResult.STRING_ERROR));
+    assertTrue(body.contains("Unable to complete request."));
+  }
+
+  @Test
+  void writeXmlOrJsonApiErrorUsesWriterWhenProvided() throws IOException {
+    HttpServletResponse response = mock(HttpServletResponse.class);
+    when(response.isCommitted()).thenReturn(false);
+    doNothing().when(response).resetBuffer();
+    StringWriter sw = new StringWriter();
+    PrintWriter writer = new PrintWriter(sw);
+
+    servlet.writeXmlOrJsonApiError(
+        response, writer, false, true, "unit test json", new HopRuntimeException("x"));
+    writer.flush();
+
+    verify(response).setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+    assertTrue(sw.toString().contains(WebResult.STRING_ERROR));
+  }
+
+  @Test
+  void getSafeWriterReturnsNullAndSendsErrorWhenGetWriterThrows() throws IOException {
+    HttpServletResponse response = mock(HttpServletResponse.class);
+    when(response.isCommitted()).thenReturn(false);
+    when(response.getWriter()).thenThrow(new IOException("no writer"));
+    doNothing()
+        .when(response)
+        .sendError(eq(HttpServletResponse.SC_INTERNAL_SERVER_ERROR), anyString());
+
+    assertNull(servlet.getSafeWriter(response));
+    verify(response).sendError(eq(HttpServletResponse.SC_INTERNAL_SERVER_ERROR), anyString());
+  }
+
+  @Test
+  void getSafeWriterReturnsWriter() throws IOException {
+    HttpServletResponse response = mock(HttpServletResponse.class);
+    PrintWriter pw = new PrintWriter(new StringWriter());
+    when(response.getWriter()).thenReturn(pw);
+    assertNotNull(servlet.getSafeWriter(response));
+  }
+
+  private String staticPathFor(String requestUri, String contextPath) {
+    HttpServletRequest request = mock(HttpServletRequest.class);
+    when(request.getRequestURI()).thenReturn(requestUri);
+    return servlet.getStaticPath(request, contextPath);
+  }
+
+  @Test
+  void getStaticPathIsRootBasedForARootDeployment() {
+    assertEquals("/static", staticPathFor("/hop-server/status", "/hop-server/status"));
+  }
+
+  @Test
+  void getStaticPathKeepsTheDeploymentPrefix() {
+    assertEquals(
+        "/hop/ui/static", staticPathFor("/hop/ui/hop-server/status", "/hop-server/status"));
+  }
+
+  @Test
+  void getStaticPathHandlesAMissingRequestUri() {
+    assertEquals("/static", staticPathFor(null, "/hop-server/status"));
+  }
+
+  @Test
+  void getStaticPathDropsAPrefixThatIsNotAPlainPath() {
+    // The request URI is client controlled: a prefix that could break out of an HTML attribute
+    // must never make it into the response.
+    assertEquals(
+        "/static",
+        staticPathFor("/\"><script>alert(1)</script>/hop-server/status", "/hop-server/status"));
+    assertEquals("/static", staticPathFor("/a b/hop-server/status", "/hop-server/status"));
+    assertEquals("/static", staticPathFor("/a'x/hop-server/status", "/hop-server/status"));
+  }
+}

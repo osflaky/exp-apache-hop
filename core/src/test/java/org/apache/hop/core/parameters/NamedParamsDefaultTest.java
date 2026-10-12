@@ -1,0 +1,133 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.hop.core.parameters;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.spy;
+
+import org.apache.hop.core.variables.Variables;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+/** Unit test for {@link INamedParameters} */
+class NamedParamsDefaultTest {
+  INamedParameters namedParams;
+
+  @BeforeEach
+  void setUp() {
+    namedParams = spy(new NamedParameters());
+  }
+
+  @Test
+  void testParameters() throws Exception {
+    assertNull(namedParams.getParameterValue("var1"));
+    assertNull(namedParams.getParameterDefault("var1"));
+    assertNull(namedParams.getParameterDescription("var1"));
+
+    namedParams.setParameterValue("var1", "y");
+    // Values for new parameters must be added by addParameterDefinition
+    assertNull(namedParams.getParameterValue("var1"));
+    assertNull(namedParams.getParameterDefault("var1"));
+    assertNull(namedParams.getParameterDescription("var1"));
+
+    namedParams.addParameterDefinition("var2", "z", "My Description");
+    assertEquals("", namedParams.getParameterValue("var2"));
+    assertEquals("z", namedParams.getParameterDefault("var2"));
+    assertEquals("My Description", namedParams.getParameterDescription("var2"));
+    namedParams.setParameterValue("var2", "y");
+    assertEquals("y", namedParams.getParameterValue("var2"));
+    assertEquals("z", namedParams.getParameterDefault("var2"));
+
+    // clearParameters() just clears their values, not their presence
+    namedParams.clearParameterValues();
+    assertEquals("", namedParams.getParameterValue("var2"));
+
+    // eraseParameters() clears the list of parameters
+    namedParams.removeAllParameters();
+    assertNull(namedParams.getParameterValue("var1"));
+
+    // test activateParameters()
+    Variables variables = new Variables();
+
+    namedParams.addParameterDefinition("var1", "A", "Variable 1");
+    namedParams.setParameterValue("var1", "AAA");
+    namedParams.addParameterDefinition("var2", null, "Variable 2");
+    namedParams.setParameterValue("var2", "BBB");
+    namedParams.addParameterDefinition("var3", "CCC", "Variable 2");
+    namedParams.setParameterValue("var3", null);
+
+    namedParams.activateParameters(variables);
+    assertEquals("AAA", variables.getVariable("var1"));
+    assertEquals("BBB", variables.getVariable("var2"));
+    assertEquals("CCC", variables.getVariable("var3"));
+  }
+
+  @Test
+  void testActivateParametersNonEmptyDefaultWinsOverExistingVariable() throws Exception {
+    // Issue #8084: a declared parameter isolates its owner from an unrelated, same-named
+    // variable that happens to sit in the caller's scope. Nothing was passed to my-param, so
+    // its own default applies - not the value some other pipeline left behind on the workflow.
+    Variables variables = new Variables();
+    variables.setVariable("my-param", "producer-value");
+
+    namedParams.addParameterDefinition("my-param", "consumer-default", "Own default");
+    namedParams.addParameterDefinition("ONLY_DEFAULT", "from-default", "No prior variable");
+
+    namedParams.activateParameters(variables);
+
+    assertEquals("consumer-default", variables.getVariable("my-param"));
+    assertEquals("from-default", variables.getVariable("ONLY_DEFAULT"));
+  }
+
+  @Test
+  void testActivateParametersEmptyDefaultDoesNotAdoptExistingVariable() throws Exception {
+    // Empty parameter default means unset: do not silently keep a same-named parent variable
+    // (integration tests main-0004 / main-0006).
+    Variables variables = new Variables();
+    variables.setVariable("TEST_PARAM", "from-parent-variable");
+
+    namedParams.addParameterDefinition("TEST_PARAM", "", "Empty default");
+
+    namedParams.activateParameters(variables);
+
+    assertEquals("", variables.getVariable("TEST_PARAM"));
+  }
+
+  @Test
+  void testActivateParametersExplicitValueWinsOverExistingVariable() throws Exception {
+    Variables variables = new Variables();
+    variables.setVariable("HOSTNAME", "http");
+
+    namedParams.addParameterDefinition("HOSTNAME", "localhost", "HTTP host");
+    namedParams.setParameterValue("HOSTNAME", "explicit-host");
+
+    namedParams.activateParameters(variables);
+
+    assertEquals("explicit-host", variables.getVariable("HOSTNAME"));
+  }
+
+  @Test
+  void testAddParameterDefinitionWithException() throws DuplicateParamException {
+    namedParams.addParameterDefinition("key", "value", "description");
+
+    assertThrows(
+        DuplicateParamException.class,
+        () -> namedParams.addParameterDefinition("key", "value", "description"));
+  }
+}

@@ -1,0 +1,166 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+:imagesdir: ../assets/images
+
+= Configuration Perspective
+
+Icon: image:icons/gear.svg[width="24px"]
+
+Keyboard shortcut: `CTRL-Shift-C`
+
+== Description
+
+The configuration perspective offers a central location for all Apache Hop configuration options.
+
+== Usage
+
+The configuration perspective groups configuration options in the following tabs:
+
+* **General** options control the behavior of Apache Hop and Hop Gui.
+* **Look &amp; Feel** control how Hop Gui looks like on your desktop or in your browser.
+* **Plugin** options provide configuration options to control the behavior of your available Apache Hop plugins (including Explorer, xref:hop-gui/perspective-search.adoc[Search] limits, and xref:hop-gui/perspective-ai-advisor.adoc[AI Assistant] enablement).
+* **System variables** allows you to set and configure Apache Hop global variables.
+
+== Detailed configuration tabs overview
+
+=== General
+
+The General configuration tab allows you to configure the core Apache Hop options.
+
+[%header, width=90%, cols="2,5,1"]
+|===
+|Option|Description|Default
+|Hop configuration filename
+a|the location where Apache Hop will store the configuration file. This configuration file will contain your project and environment information and global variables.
+
+TIP: set the environment variable `HOP_CONFIG_FOLDER` to set this location dynamically to allow easy switching between different Apache Hop versions and installations. xref:protips/index.adoc[read more]
+|`<INSTALLATION_PATH>/config/hop-config.json`
+
+|Preview data batch size
+a|number of rows that will be shown when previewing through the Pipeline run toolbar or from transform preview dialogs.
+
+INFO: this setting complements the preview option that is used in the xref:pipeline/pipeline-run-configurations/native-local-pipeline-engine.adoc[native local pipeline run configuration], which can be accessed through the image:transforms/icons/datagrid.svg[data grid, width="16px"]  `preview data` icon in the bottom right corner of transforms after a successful run.
+|1000
+
+|Use database cache|enable caching for relational databases|yes
+
+|Open last file at startup|reopen the last used files and select the last used file when Hop GUI starts|yes
+
+|Autosave changed files|Automatically save changed workflow and pipelines files|yes
+
+|Automatically split hops
+a|Automatically split hops when a new transform or action is dropped on a hop.
+
+TIP: Hops will be shown in bold when a transform or action can be dropped on it
+|yes
+
+|Show Copy or Distribute Dialog|Show a pop-up dialog to ask the user to confirm whether data should be copied or distributed (round-robin) to subsequent transforms in a pipeline|yes
+
+|Ask user when exiting|Show a pop-up dialog to let the user confirm before exiting Hop GUI|yes
+
+|Clear customer parameters (transforms/plugins|Deletes all custom flags and parameters in the dialogs of the transforms and plugins|on click
+
+|Auto collapse palette tree|Collapse or expand the categories in the context dialog|no (expanded)
+
+|Display tooltips|Show tooltips where available in Hop GUI|yes
+
+|Show help tooltips|Show help tooltips where available in Hop GUI|yes
+
+|Use double click on canvas?
+|double-click instead of single click on e.g. transform and action dialogs.
+
+enabled: double-click on a transform or action icon to open its properties. A single click on the icon opens the context dialog.
+disabled (default): (single) click on a transform or action icon to open the context dialog. (single) click on a transform or action name to open its properties.
+
+See xref:hop-gui/canvas-mouse.adoc[Canvas mouse gestures] for every click in both modes.
+|no
+
+|Use right click for the context dialog
+|A right click (Ctrl-click or two-finger click on macOS) opens the context dialog of whatever is under the pointer, and a left click never does: it selects, clears the selection, or presses a badge. Names and badges keep opening their editors on a left click.
+
+See xref:hop-gui/canvas-mouse.adoc[Canvas mouse gestures] for every click in both modes.
+|no
+
+|Use menus instead of the context dialog
+|Transforms, actions, hops and notes show their actions in a pop-up menu with a submenu per category instead of the xref:hop-gui/hop-gui-popup-dialog.adoc[context dialog]. A click on the empty canvas keeps the context dialog while the xref:hop-gui/hop-gui-popup-dialog.adoc#palette-tree[palette tree] is hidden, since that is where new transforms and actions are searched for; with the palette shown the empty canvas gets a menu of the pipeline/workflow actions too. The click that opens the menu is the same one that opens the context dialog (left click, or right click with the option above).
+|no
+
+|Draw border around names on canvas?
+|If this option is enabled, a border will be drawn around the names of transforms and actions on the canvas.
+|no
+
+|Use global bookmarks in the file dialog|Bookmarks in the file dialog are global (across projects) by default. Enable to make them project-specific|yes
+
+|===
+
+=== Look & Feel
+
+The `Look & Feel` configuration options allow you to configure various aspects of Hop GUI's behavior.
+
+[%header, width=90%, cols="2,5,1"]
+|===
+|Option|Description|Default
+|Fixed width font|the fixed-width font for SQL, scripts, logs, and similar editors|platform default (Consolas / Monaco / Monospace)
+|Font on workspace|the font for transform and action names on the canvas. Notes that do not set their own font also use this.|system font
+|Icon size in workspace|the default size for action and transform icons in workflows and pipelines|32
+|Line width on workspace|line width to use for hops in workflows and actions|1
+|Dialog middle percentage|percentage to use to determine a dialog's position|35
+|UI zoom level|default zoom level to use for workflows and pipelines in Hop GUI|100%
+|Canvas Grid Size|default grid size to use for workflows and pipelines in the Hop GUI editor |16
+|Show Canvas Grid|show the grid (dotted) for workflows and pipelines in Hop GUI |no
+|Hide the menu bar|Do not show the menu bar. If enabled (default), the menu options are available from the Apache Hop icon in Hop GUI's upper left corner. |yes
+|Show a toolbar above tables|Show a toolbar with options to cut/copy/paste, move lines up/down, navigate to a column, manage xref:pipeline/run-preview-debug-pipeline.adoc#table-views[table views] etc in table grids (e.g. in preview dialogs, transform configuration options)|yes
+|Allow dialogs to open on any screen (macOS only)|Off: transform, action and metadata dialogs follow the Hop window and stay above it. On: they open as windows of their own that you can move to another screen. The macOS section only appears on macOS.|no
+|Dark mode|use dark mode. On Hop Web and Windows you can toggle this; on macOS and other desktop platforms it follows the operating system theme. Changing it in Hop Web reloads the page to apply the theme. |N/A
+|Preferred Language
+a|the default language to use in Hop GUI.
+
+TIP: Check the https://hop.apache.org/community/contribution-guides/translation-contribution-guide/[Translation Contribution Guide] to translate Apache Hop to your native language.|English (US)
+|===
+
+=== Plugins
+
+The plugins tab contains configuration options that are provided by the various plugins in Apache Hop.
+
+The following plugins are available by default:
+
+* xref:vfs/azure-blob-storage-vfs.adoc#_configuration[Azure Blob Storage] VFS configuration options.
+* xref:vfs/dropbox-vfs.adoc#_configuration[Dropbox] VFS configuration options.
+* **Explorer perspective**: Configuration options for the file explorer perspective:
+  ** The initial depth to load not lazily: Controls how many folder levels are loaded immediately when opening folders.
+  ** The maximum file size to load: Sets the maximum file size (in MB) that will be loaded when opening files.
+  ** Show file explorer panel by default: When enabled, the file explorer panel (project tree) is shown by default when opening the explorer perspective. When disabled, the panel starts hidden.
+  ** Open help pages in: Where Hop GUI opens documentation from Help buttons and F1. *External browser* (default) uses the system browser. *Hop GUI tab* opens an HTML tab in the File Explorer perspective. *Dialog window* opens a modeless help window on top of the current dialog or main window so you can keep editing.
++
+image::hop-gui/configuration-perspective-open-help-pages-in.png[Open help pages in,width="90%"]
+* xref:technology/google/index.adoc[Google Cloud] configuration options (service account JSON key file).
+* xref:vfs/google-drive-vfs.adoc#_configuration[Google Drive] VFS configuration options.
+* xref:projects/index.adoc[Project] configuration options
+* Welcome Dialog: specify whether to show or hide the welcome dialog when Hop GUI starts.
+* **File validation**: when enabled (the default), saving a pipeline or workflow warns if a transform or action references a relational database connection that is not in the project metadata. You can still save. Connection names that still contain a variable such as `+'${CONNECTION}'+` after the current environment is applied are skipped, because the name cannot be decided at design time. The same check also runs when you Verify a pipeline or workflow. Hop does not try to open a JDBC connection as part of this check.
++
+image::hop-gui/configuration-perspective-file-validation-validate-database-connections-when-saving.png[Validate database connections when saving,width="90%"]
++
+The warning lists the missing connections. *Yes* saves anyway, *No* cancels the save. Check *Don't run this check when saving* to turn the option off; you can turn it back on here.
++
+image::hop-gui/validate-database-connections-on-save-warning-dialog.png[Database connections save warning,width="90%"]
+
+=== System Variables
+
+The System Variables tab contains the available system variables in Hop GUI.
+
+Check the xref:variables.adoc[Variables documentation] for more information about the available variables and their default values.

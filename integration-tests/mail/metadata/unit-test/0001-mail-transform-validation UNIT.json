@@ -1,0 +1,56 @@
+{
+  "database_replacements": [],
+  "autoOpening": true,
+  "description": "",
+  "persist_filename": "",
+  "test_type": "UNIT_TEST",
+  "variableValues": [],
+  "basePath": "",
+  "golden_data_sets": [
+    {
+      "field_mappings": [
+        {
+          "transform_field": "fromMailbox",
+          "data_set_field": "fromMailbox"
+        },
+        {
+          "transform_field": "fromDomain",
+          "data_set_field": "fromDomain"
+        },
+        {
+          "transform_field": "toMailbox",
+          "data_set_field": "toMailbox"
+        },
+        {
+          "transform_field": "toDomain",
+          "data_set_field": "toDomain"
+        },
+        {
+          "transform_field": "contentFrom",
+          "data_set_field": "contentFrom"
+        },
+        {
+          "transform_field": "contentTo",
+          "data_set_field": "contentTo"
+        },
+        {
+          "transform_field": "contentSubject",
+          "data_set_field": "contentSubject"
+        },
+        {
+          "transform_field": "body",
+          "data_set_field": "body"
+        }
+      ],
+      "field_order": [
+        "body"
+      ],
+      "data_set_name": "0001-mail-transform-golden",
+      "transform_name": "Result"
+    }
+  ],
+  "input_data_sets": [],
+  "name": "0001-mail-transform-validation UNIT",
+  "trans_test_tweaks": [],
+  "pipeline_filename": ""
+}

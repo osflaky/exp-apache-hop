@@ -1,0 +1,82 @@
+////
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+  http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+////
+:documentationPath: /pipeline/transforms/
+:language: en_US
+:description: The Get Subfolder Names transform gets subfolder names from a directory.
+:page-engines: Hop Engine=yes, Single Threaded=yes, Native Spark=yes, Beam Spark=maybe, Beam Flink=maybe, Beam Dataflow=maybe
+
+= image:transforms/icons/getsubfolders.svg[Get SubFolder names transform Icon, role="image-doc-icon"] Get SubFolder names
+
+== Description
+
+The `Get Subfolder Names` transform recursively traverses one or more directories and outputs a row for every subfolder found.
+This includes all nested subfolders at any depth, not just the immediate children.
+
+The input directories can be configured statically in the transform's Folder tab, or provided dynamically from a field in a previous transform.
+Each subfolder produces one output row with metadata fields describing the folder.
+
+== Options
+
+=== Folder tab
+
+[options="header"]
+|===
+|Option|Description
+|Transform name|Name of this transform as it appears in the pipeline workspace
+|Accept foldername from field?|Allows a foldername to be passed as a field.
+|Foldername field|The field which contains the folder name.
+|Selected directories|The directories from which to get the subfolders.
+|Browse|Uses the local file browser to get a path.
+|Add|Adds the path defined in the Directory field.
+|Delete|Deletes the path
+|Edit|Change the path
+|===
+
+=== Settings tab
+
+[options="header"]
+|===
+|Option|Description
+|Include rownum in output?|Allows the row number to be added to the output.
+|Rownum fieldname|The field which contains the row number.
+|Limit|Limits the output rows.
+|===
+
+
+== Output fields
+[options="header"]
+|===
+|Field|Type|Description
+|`folderName`|String|Full path of the subfolder
+|`short_folderName`|String|Base name of the subfolder (last path segment)
+|`path`|String|Full path of the subfolder's parent directory
+|`ishidden`|Boolean|Whether the subfolder is hidden
+|`isreadable`|Boolean|Whether the subfolder is readable
+|`iswriteable`|Boolean|Whether the subfolder is writeable
+|`lastmodifiedtime`|Date|Last modified timestamp of the subfolder
+|`uri`|String|Full URI of the subfolder
+|`rooturi`|String|Root URI of the file system
+|`children`|Integer|Number of direct children (files and folders) in the subfolder
+|===
+
+== Cloud storage (VFS)
+This transform works with any file system supported through Apache Hop's VFS integration, including local file systems, S3, Azure Blob Storage, Google Cloud Storage, Google Drive, Dropbox and others.
+When working with cloud storage, be aware of the following:
+
+* The input directory must point to an actual folder, not a scheme root. For example, use `s3://my-bucket/my-folder` rather than `s3://` or `s3://my-bucket`.
+* Some metadata fields (`ishidden`, `isreadable`, `iswriteable`, `lastmodifiedtime`, `children`) may not be available for all cloud storage providers. When a value can't be determined, the field will be `null`. For example, `lastmodifiedtime` may not be available for virtual folders on S3 or MinIO.
+* The transform traverses the full folder tree recursively. On cloud storage with deeply nested or very large folder structures, this may result in a high number of API calls and slow performance.

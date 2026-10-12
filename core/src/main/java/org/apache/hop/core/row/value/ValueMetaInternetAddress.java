@@ -1,0 +1,580 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hop.core.row.value;
+
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.net.InetAddress;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Types;
+import java.util.Date;
+import org.apache.hop.core.Const;
+import org.apache.hop.core.database.DatabaseMeta;
+import org.apache.hop.core.database.IDatabase;
+import org.apache.hop.core.exception.HopDatabaseException;
+import org.apache.hop.core.exception.HopValueException;
+import org.apache.hop.core.row.IValueMeta;
+import org.apache.hop.core.util.Utils;
+import org.apache.hop.core.variables.IVariables;
+
+@ValueMetaPlugin(
+    id = "10",
+    name = "Internet Address",
+    description = "Internet Address",
+    image = "images/inet.svg")
+public class ValueMetaInternetAddress extends ValueMetaDate {
+  private static final String CONST_SPECIFIED = " specified.";
+  private static final String CONST_UNKNOWN_TYPE = " : Unknown storage type ";
+
+  @Override
+  public int compare(Object data1, Object data2) throws HopValueException {
+    InetAddress inet1 = getInternetAddress(data1);
+    InetAddress inet2 = getInternetAddress(data2);
+    int cmp = 0;
+    if (inet1 == null) {
+      if (inet2 == null) {
+        cmp = 0;
+      } else {
+        cmp = -1;
+      }
+    } else if (inet2 == null) {
+      cmp = 1;
+    } else {
+      BigDecimal bd1 = getBigNumber(inet1);
+      BigDecimal bd2 = getBigNumber(inet2);
+      cmp = bd1.compareTo(bd2);
+    }
+    if (isSortedDescending()) {
+      return -cmp;
+    } else {
+      return cmp;
+    }
+  }
+
+  public ValueMetaInternetAddress() {
+    this(null);
+  }
+
+  public ValueMetaInternetAddress(String name) {
+    super(name, IValueMeta.TYPE_INET);
+  }
+
+  public InetAddress getInternetAddress(Object object) throws HopValueException {
+    if (object == null) {
+      return null;
+    }
+
+    switch (type) {
+      case TYPE_INET:
+        return switch (storageType) {
+          case STORAGE_TYPE_NORMAL -> (InetAddress) object;
+          case STORAGE_TYPE_BINARY_STRING ->
+              (InetAddress) convertBinaryStringToNativeType((byte[]) object);
+          case STORAGE_TYPE_INDEXED -> (InetAddress) index[((Integer) object)];
+          default ->
+              throw new HopValueException(
+                  this + CONST_UNKNOWN_TYPE + storageType + CONST_SPECIFIED);
+        };
+      case TYPE_STRING:
+        return switch (storageType) {
+          case STORAGE_TYPE_NORMAL -> convertStringToInternetAddress((String) object);
+          case STORAGE_TYPE_BINARY_STRING ->
+              convertStringToInternetAddress(
+                  (String) convertBinaryStringToNativeType((byte[]) object));
+          case STORAGE_TYPE_INDEXED ->
+              convertStringToInternetAddress((String) index[(Integer) object]);
+          default ->
+              throw new HopValueException(
+                  this + CONST_UNKNOWN_TYPE + storageType + CONST_SPECIFIED);
+        };
+      case TYPE_NUMBER:
+        return switch (storageType) {
+          case STORAGE_TYPE_NORMAL -> convertNumberToInternetAddress((Double) object);
+          case STORAGE_TYPE_BINARY_STRING ->
+              convertNumberToInternetAddress(
+                  (Double) convertBinaryStringToNativeType((byte[]) object));
+          case STORAGE_TYPE_INDEXED ->
+              convertNumberToInternetAddress((Double) index[(Integer) object]);
+          default ->
+              throw new HopValueException(
+                  this + CONST_UNKNOWN_TYPE + storageType + CONST_SPECIFIED);
+        };
+      case TYPE_INTEGER:
+        return switch (storageType) {
+          case STORAGE_TYPE_NORMAL -> convertIntegerToInternetAddress((Long) object);
+          case STORAGE_TYPE_BINARY_STRING ->
+              convertIntegerToInternetAddress(
+                  (Long) convertBinaryStringToNativeType((byte[]) object));
+          case STORAGE_TYPE_INDEXED ->
+              convertIntegerToInternetAddress((Long) index[(Integer) object]);
+          default ->
+              throw new HopValueException(
+                  this + CONST_UNKNOWN_TYPE + storageType + CONST_SPECIFIED);
+        };
+      case TYPE_BIGNUMBER:
+        return switch (storageType) {
+          case STORAGE_TYPE_NORMAL -> convertBigNumberToInternetAddress((BigDecimal) object);
+          case STORAGE_TYPE_BINARY_STRING ->
+              convertBigNumberToInternetAddress(
+                  (BigDecimal) convertBinaryStringToNativeType((byte[]) object));
+          case STORAGE_TYPE_INDEXED ->
+              convertBigNumberToInternetAddress((BigDecimal) index[(Integer) object]);
+          default ->
+              throw new HopValueException(
+                  this + CONST_UNKNOWN_TYPE + storageType + CONST_SPECIFIED);
+        };
+      case TYPE_BOOLEAN:
+        throw new HopValueException(
+            this + " : I don't know how to convert a boolean to a Internet address.");
+      case TYPE_BINARY:
+        throw new HopValueException(
+            this + " : I don't know how to convert a binary value to Internet address.");
+      case TYPE_SERIALIZABLE:
+        throw new HopValueException(
+            this + " : I don't know how to convert a serializable value to Internet address.");
+
+      default:
+        throw new HopValueException(this + " : Unknown type " + type + CONST_SPECIFIED);
+    }
+  }
+
+  @Override
+  public Date getDate(Object object) throws HopValueException {
+    throw new HopValueException(
+        toStringMeta() + ": it's not possible to convert from Internet Address to a date");
+  }
+
+  @Override
+  public Long getInteger(Object object) throws HopValueException {
+    InetAddress address = getInternetAddress(object);
+    if (address == null) {
+      return null;
+    }
+    long total = 0L;
+    byte[] addr = address.getAddress();
+
+    if (addr.length > 8) {
+      throw new HopValueException(
+          "Unable to convert Internet Address v6 to an Integer: "
+              + getString(object)
+              + " (The precision is too high to be contained in a long integer value)");
+    }
+
+    for (int i = 0; i < addr.length; i++) {
+      total += (addr[i] & 0xFF) * ((long) Math.pow(256, (addr.length - 1 - i)));
+    }
+
+    return total;
+  }
+
+  @Override
+  public Double getNumber(Object object) throws HopValueException {
+    Long l = getInteger(object);
+    if (l == null) {
+      return null;
+    }
+
+    return l.doubleValue();
+  }
+
+  @Override
+  public BigDecimal getBigNumber(Object object) throws HopValueException {
+    InetAddress address = getInternetAddress(object);
+    if (null == address) {
+      return null;
+    }
+    BigInteger bi = BigInteger.ZERO;
+    byte[] addr = address.getAddress();
+
+    for (byte aByte : addr) {
+      bi = bi.shiftLeft(8).add(BigInteger.valueOf(aByte & 0xFF));
+    }
+
+    return new BigDecimal(bi);
+  }
+
+  @Override
+  public Boolean getBoolean(Object object) throws HopValueException {
+    throw new HopValueException(
+        toStringMeta() + ": it's not possible to convert from an Internet Address to a Boolean");
+  }
+
+  @Override
+  public String getString(Object object) throws HopValueException {
+    return convertInternetAddressToString(getInternetAddress(object));
+  }
+
+  @Override
+  public byte[] getBinaryString(Object object) throws HopValueException {
+    if (isStorageBinaryString() && identicalFormat) {
+      return (byte[]) object; // shortcut it directly for better performance.
+    }
+    if (object == null) {
+      return null;
+    }
+    return switch (storageType) {
+      case STORAGE_TYPE_NORMAL -> convertStringToBinaryString(getString(object));
+      case STORAGE_TYPE_BINARY_STRING ->
+          convertStringToBinaryString(
+              getString(
+                  convertStringToInternetAddress(convertBinaryStringToString((byte[]) object))));
+      case STORAGE_TYPE_INDEXED ->
+          convertStringToBinaryString(
+              convertInternetAddressToString((InetAddress) index[((Integer) object)]));
+      default ->
+          throw new HopValueException(this + CONST_UNKNOWN_TYPE + storageType + CONST_SPECIFIED);
+    };
+  }
+
+  protected InetAddress convertBigNumberToInternetAddress(BigDecimal bd) throws HopValueException {
+    if (bd == null) {
+      return null;
+    }
+    return convertIntegerToInternetAddress(bd.longValue());
+  }
+
+  protected InetAddress convertNumberToInternetAddress(Double d) throws HopValueException {
+    if (d == null) {
+      return null;
+    }
+    long nanos = d.longValue();
+
+    return convertIntegerToInternetAddress(nanos);
+  }
+
+  protected InetAddress convertIntegerToInternetAddress(Long l) throws HopValueException {
+    if (l == null) {
+      return null;
+    }
+
+    byte[] addr;
+    if (l >= Math.pow(256, 4)) {
+      addr = new byte[16];
+    } else {
+      addr = new byte[4];
+    }
+
+    for (int i = 0; i < addr.length; i++) {
+      long mask = 0xFFL << (i * 8);
+      addr[addr.length - 1 - i] = (byte) ((l & mask) >> (8 * i));
+    }
+
+    try {
+      return InetAddress.getByAddress(addr);
+    } catch (Exception e) {
+      throw new HopValueException("Unable to convert an Integer to an internet address", e);
+    }
+  }
+
+  protected synchronized InetAddress convertStringToInternetAddress(String string)
+      throws HopValueException {
+    // See if trimming needs to be performed before conversion
+    //
+    string = Const.trimToType(string, getTrimType());
+
+    if (Utils.isEmpty(string)) {
+      return null;
+    }
+
+    try {
+      return InetAddress.getByName(string);
+    } catch (Exception e) {
+      throw new HopValueException(
+          this + " : couldn't convert string [" + string + "] to an internet address", e);
+    }
+  }
+
+  protected synchronized String convertInternetAddressToString(InetAddress inetAddress) {
+
+    if (inetAddress == null) {
+      return null;
+    }
+
+    return inetAddress.getHostAddress();
+  }
+
+  @Override
+  public Object convertDataFromString(
+      String pol, IValueMeta convertMeta, String nullIf, String ifNull, int trimType)
+      throws HopValueException {
+    // null handling and conversion of value to null
+    //
+    String nullValue = nullIf;
+    if (nullValue == null) {
+      nullValue =
+          switch (convertMeta.getType()) {
+            case IValueMeta.TYPE_BOOLEAN -> Const.NULL_BOOLEAN;
+            case IValueMeta.TYPE_STRING -> Const.NULL_STRING;
+            case IValueMeta.TYPE_BIGNUMBER -> Const.NULL_BIGNUMBER;
+            case IValueMeta.TYPE_NUMBER -> Const.NULL_NUMBER;
+            case IValueMeta.TYPE_INTEGER -> Const.NULL_INTEGER;
+            case IValueMeta.TYPE_DATE -> Const.NULL_DATE;
+            case IValueMeta.TYPE_BINARY -> Const.NULL_BINARY;
+            default -> Const.NULL_NONE;
+          };
+    }
+
+    // See if we need to convert a null value into a String
+    // For example, we might want to convert null into "Empty".
+    //
+    if (!Utils.isEmpty(ifNull)
+        && (Utils.isEmpty(pol)
+            || pol.equalsIgnoreCase(Const.rightPad(new StringBuilder(nullValue), pol.length())))) {
+      // Note that you can't pull the pad method up here as a nullComp variable
+      // because you could get an NPE since you haven't checked isEmpty(pol)
+      // yet!
+      pol = ifNull;
+    }
+
+    // See if the polled value is empty
+    // In that case, we have a null value on our hands...
+    //
+    if (Utils.isEmpty(pol)) {
+      return null;
+    } else {
+      // if the null_value is specified, we try to match with that.
+      //
+      if (!Utils.isEmpty(nullValue)) {
+        if (nullValue.length() <= pol.length()
+            && pol.equalsIgnoreCase(Const.rightPad(new StringBuilder(nullValue), pol.length()))) {
+          // If the polled value is equal to the spaces right-padded null_value,
+          // we have a match
+          //
+          return null;
+        }
+      } else {
+        // Verify if there are only spaces in the polled value...
+        // We consider that empty as well...
+        //
+        if (Const.onlySpaces(pol)) {
+          return null;
+        }
+      }
+    }
+
+    StringBuilder strpol;
+    // Trimming
+    switch (trimType) {
+      case IValueMeta.TRIM_TYPE_LEFT:
+        strpol = new StringBuilder(pol);
+        while (!strpol.isEmpty() && strpol.charAt(0) == ' ') {
+          strpol.deleteCharAt(0);
+        }
+        pol = strpol.toString();
+
+        break;
+      case IValueMeta.TRIM_TYPE_RIGHT:
+        strpol = new StringBuilder(pol);
+        while (!strpol.isEmpty() && strpol.charAt(strpol.length() - 1) == ' ') {
+          strpol.deleteCharAt(strpol.length() - 1);
+        }
+        pol = strpol.toString();
+
+        break;
+      case IValueMeta.TRIM_TYPE_BOTH:
+        strpol = new StringBuilder(pol);
+        while (!strpol.isEmpty() && strpol.charAt(0) == ' ') {
+          strpol.deleteCharAt(0);
+        }
+        while (!strpol.isEmpty() && strpol.charAt(strpol.length() - 1) == ' ') {
+          strpol.deleteCharAt(strpol.length() - 1);
+        }
+        pol = strpol.toString();
+        break;
+      default:
+        break;
+    }
+
+    // On with the regular program...
+    // Simply call the ValueMeta routines to do the conversion
+    // We need to do some effort here: copy all
+    //
+    return convertData(convertMeta, pol);
+  }
+
+  /**
+   * Convert the specified data to the data type specified in this object.
+   *
+   * @param meta2 the metadata of the object to be converted
+   * @param data2 the data of the object to be converted
+   * @return the object in the data type of this value metadata object
+   * @throws HopValueException in case there is a data conversion error
+   */
+  @Override
+  public Object convertData(IValueMeta meta2, Object data2) throws HopValueException {
+    return switch (meta2.getType()) {
+      case TYPE_STRING -> convertStringToInternetAddress(meta2.getString(data2));
+      case TYPE_INTEGER -> convertIntegerToInternetAddress(meta2.getInteger(data2));
+      case TYPE_NUMBER -> convertNumberToInternetAddress(meta2.getNumber(data2));
+      case TYPE_BIGNUMBER -> convertBigNumberToInternetAddress(meta2.getBigNumber(data2));
+      case TYPE_INET -> ((ValueMetaInternetAddress) meta2).getInternetAddress(data2);
+      default ->
+          throw new HopValueException(
+              meta2.toStringMeta() + " : can't be converted to an Internet Address");
+    };
+  }
+
+  @Override
+  public Object cloneValueData(Object object) throws HopValueException {
+    InetAddress inetAddress = getInternetAddress(object);
+    if (inetAddress == null) {
+      return null;
+    }
+
+    try {
+      return InetAddress.getByAddress(inetAddress.getAddress());
+    } catch (Exception e) {
+      throw new HopValueException("Unable to clone Internet Address", e);
+    }
+  }
+
+  /**
+   * @deprecated Superseded by {@link org.apache.hop.core.database.types.StandardJdbcTypeMapper}.
+   *     This mapping had no callers left in Hop and had drifted from the one the engine actually
+   *     uses; use the mapper instead.
+   */
+  @Deprecated(since = "2.20")
+  @Override
+  public IValueMeta getMetadataPreview(
+      IVariables variables, DatabaseMeta databaseMeta, ResultSet rs) throws HopDatabaseException {
+
+    try {
+      if ("INET".equalsIgnoreCase(rs.getString("TYPE_NAME"))) {
+        IValueMeta vmi = super.getMetadataPreview(variables, databaseMeta, rs);
+        IValueMeta valueMeta = new ValueMetaInternetAddress(name);
+        valueMeta.setLength(vmi.getLength());
+        valueMeta.setOriginalColumnType(vmi.getOriginalColumnType());
+        valueMeta.setOriginalColumnTypeName(vmi.getOriginalColumnTypeName());
+        valueMeta.setOriginalNullable(vmi.getOriginalNullable());
+        valueMeta.setOriginalPrecision(vmi.getOriginalPrecision());
+        valueMeta.setOriginalScale(vmi.getOriginalScale());
+        valueMeta.setOriginalSigned(vmi.getOriginalSigned());
+        return valueMeta;
+      }
+    } catch (SQLException e) {
+      throw new HopDatabaseException(e);
+    }
+    return null;
+  }
+
+  /**
+   * @deprecated Superseded by {@link org.apache.hop.core.database.types.StandardJdbcTypeMapper},
+   *     which carries the single copy of these rules. This is one of three implementations that had
+   *     drifted apart; callers will be migrated to the mapper and this method removed in a later
+   *     release.
+   */
+  @Deprecated(since = "2.20")
+  @Override
+  public IValueMeta getValueFromSqlType(
+      IVariables variables,
+      DatabaseMeta databaseMeta,
+      String name,
+      ResultSetMetaData rm,
+      int index,
+      boolean ignoreLength,
+      boolean lazyConversion)
+      throws HopDatabaseException {
+
+    try {
+      int type = rm.getColumnType(index);
+      if (type == Types.OTHER) {
+
+        String columnTypeName = rm.getColumnTypeName(index);
+        if ("INET".equalsIgnoreCase(columnTypeName)) {
+
+          ValueMetaInternetAddress valueMeta = new ValueMetaInternetAddress(name);
+
+          // Also get original column details, comment, etc.
+          //
+          getOriginalColumnMetadata(valueMeta, rm, index, ignoreLength);
+          return valueMeta;
+        }
+      }
+      return null;
+    } catch (Exception e) {
+      throw new HopDatabaseException("Error evaluating Internet address value metadata", e);
+    }
+  }
+
+  @Override
+  public Object getValueFromResultSet(IDatabase iDatabase, ResultSet resultSet, int index)
+      throws HopDatabaseException {
+
+    try {
+
+      return convertStringToInternetAddress(resultSet.getString(index + 1));
+
+    } catch (Exception e) {
+      throw new HopDatabaseException(
+          toStringMeta() + " : Unable to get Internet Address from resultset at index " + index, e);
+    }
+  }
+
+  @Override
+  public void setPreparedStatementValue(
+      DatabaseMeta databaseMeta, PreparedStatement preparedStatement, int index, Object data)
+      throws HopDatabaseException {
+
+    try {
+
+      String address = getString(data);
+      if (address == null) {
+        // A null of the type the neutral handling writes, which is a string. Types.OTHER is what
+        // a database with a native address type wants, and it says so with a binding of its own;
+        // Oracle rejects it outright with "invalid column type".
+        preparedStatement.setNull(index, Types.VARCHAR);
+      } else {
+        preparedStatement.setString(index, address);
+      }
+
+    } catch (Exception e) {
+      throw new HopDatabaseException(
+          toStringMeta()
+              + " : Unable to set Internet address value on prepared statement on index "
+              + index,
+          e);
+    }
+  }
+
+  @Override
+  public String getDatabaseColumnTypeDefinition(
+      IDatabase iDatabase,
+      String tk,
+      String pk,
+      boolean useAutoIncrement,
+      boolean addFieldName,
+      boolean addCr) {
+
+    // No neutral spelling for an internet address: the dialects that have a column type for it
+    // say so in their own type rules.
+    return null;
+  }
+
+  @Override
+  public Object getNativeDataType(Object object) throws HopValueException {
+    return getInternetAddress(object);
+  }
+
+  @Override
+  public Class<?> getNativeDataTypeClass() throws HopValueException {
+    return InetAddress.class;
+  }
+}
